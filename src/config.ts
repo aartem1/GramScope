@@ -7,13 +7,15 @@ export type Config = {
   ownerUserId: string;
 };
 
-function required(env: NodeJS.ProcessEnv, name: string): string {
+type Env = Record<string, string | undefined>;
+
+function required(env: Env, name: string): string {
   const value = env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+export function loadConfig(env: Env = process.env): Config {
   const rawApiId = required(env, "TELEGRAM_API_ID");
   const telegramApiId = Number(rawApiId);
   if (!Number.isInteger(telegramApiId)) {

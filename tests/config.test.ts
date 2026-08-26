@@ -12,21 +12,19 @@ const complete = {
 
 describe("loadConfig", () => {
   it("parses a complete environment", () => {
-    const config = loadConfig(complete as NodeJS.ProcessEnv);
+    const config = loadConfig(complete);
     expect(config.telegramApiId).toBe(12345);
     expect(config.ownerUserId).toBe("user_123");
   });
 
   it("names the missing variable", () => {
     const { OWNER_USER_ID, ...partial } = complete;
-    expect(() => loadConfig(partial as NodeJS.ProcessEnv)).toThrow(
-      /OWNER_USER_ID/,
-    );
+    expect(() => loadConfig(partial)).toThrow(/OWNER_USER_ID/);
   });
 
   it("rejects a non-numeric api id", () => {
     expect(() =>
-      loadConfig({ ...complete, TELEGRAM_API_ID: "nope" } as NodeJS.ProcessEnv),
+      loadConfig({ ...complete, TELEGRAM_API_ID: "nope" }),
     ).toThrow(/TELEGRAM_API_ID/);
   });
 });
