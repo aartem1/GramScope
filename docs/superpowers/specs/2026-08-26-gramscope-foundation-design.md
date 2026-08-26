@@ -47,7 +47,7 @@ These were open in brief §25 and are settled. Reopen only on new evidence.
 | --- | --- | --- |
 | Telegram library | `teleproto` | Maintained TypeScript fork of GramJS. `telegram` (GramJS) last published 2025-02-12; teleproto v1.229.0 published 2026-08-25, pure JS, no native build step, installs on serverless runtimes. Same `StringSession` API, so brief assumptions carry over. |
 | MCP auth | OAuth via WorkOS AuthKit with static client credentials | ChatGPT supports only OAuth, No Authentication, and Mixed — no API-key option — but accepts static credentials, so neither DCR nor CIMD is required. AuthKit publishes `/.well-known/oauth-authorization-server` and a JWKS URL. |
-| Transport | Stateless Streamable HTTP via `mcp-handler` | The 2026-07-28 MCP revision removed HTTP+SSE and protocol-level sessions, which is what makes Vercel Functions viable. |
+| Transport | Stateless Streamable HTTP via `mcp-handler` ^2.1.1 + `@modelcontextprotocol/server` ^2.0.0 | The 2026-07-28 MCP revision removed HTTP+SSE and protocol-level sessions, which is what makes Vercel Functions viable. |
 | Connection model | Module-scope client reuse, per-request connect as cold path | Per-request handshake on every tool call is wasteful and invites `FLOOD_WAIT`. Hidden behind `withTelegram` so the policy can change without touching tools. |
 | Folder classification | Folders are reading lanes; meta-channel tags are judgement metadata | Folders cap at 10 (20 Premium), 100 chats each (200 Premium), and are client-side peer groupings with no server-side history-by-folder. One `getDialogFilters` call resolves every lane. Tags are unbounded and cross-cutting. Neither replaces the other. Applies to sub-projects 5 and 6. |
 
@@ -87,7 +87,12 @@ get_channel  { id | username | url }   // exactly one
 ```
 
 `TelegramSource` follows brief §8, minus `note` (sub-project 6). Every tool declares a
-zod `outputSchema` and returns `structuredContent`, supported by MCP SDK 1.30.
+zod `outputSchema` and returns `structuredContent`, and carries
+`annotations: { readOnlyHint: true }` so the read-safety invariant of §8 is declared on
+the wire, not only tested.
+
+The MCP dependency is `@modelcontextprotocol/server` ^2.0.0 — the peer dependency of
+`mcp-handler` ^2.1.1 — not `@modelcontextprotocol/sdk`.
 
 `list_folders` is in this sub-project because `list_dialogs(folder_id=…)` cannot be
 used without a way to discover valid IDs, and `getDialogFilters` is already called to

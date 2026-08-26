@@ -9,6 +9,7 @@ created: 2026-08-26
 # Open questions
 - [x] 2026-08-26 → resolved: Telegram library is `teleproto` (maintained TypeScript fork of GramJS), not GramJS. GramJS `telegram` last published 2025-02-12; teleproto v1.229.0 published 2026-08-25 and is pure JS with no native build step.
 - [x] 2026-08-26 → resolved: MCP auth is OAuth via WorkOS AuthKit with **static client credentials** pasted into ChatGPT. ChatGPT offers only OAuth / No Authentication / Mixed — no API-key option — but accepts static credentials, so neither DCR nor CIMD is required.
+- [x] 2026-08-26 → resolved in the Foundation plan: `list_dialogs(folder_id)` honors a folder's included minus excluded peers only, and ignores its exclude-muted / exclude-read / chat-type flags, because those depend on live state and would make output non-reproducible. The tool description says so explicitly.
 - [ ] 2026-08-26 → design: source-note serialization in the private `Source Meta` channel — human-readable post vs compact structured block; must keep stable lookup by numeric Telegram source ID.
 - [ ] 2026-08-26 → owner: practical limits of global Telegram search (pagination, paid/global-search constraints) on the real dedicated account.
 - [ ] 2026-08-26 → owner: which linked-discussion/comment cases are reliably reachable via the chosen Telegram library.
@@ -24,5 +25,5 @@ created: 2026-08-26
 # Links
 - brief: README.md
 - spec (sub-project 1, Foundation): docs/superpowers/specs/2026-08-26-gramscope-foundation-design.md
-- plan: (not created)
+- plan (sub-project 1, Foundation): docs/superpowers/plans/2026-08-26-gramscope-foundation.md
 - ledger: (not created)
