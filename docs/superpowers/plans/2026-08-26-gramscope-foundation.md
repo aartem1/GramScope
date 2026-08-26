@@ -1390,7 +1390,15 @@ describe("mapDialog", () => {
 });
 
 describe("listDialogs cursor advance", () => {
-  function dialogAt(id: number, date: number, unread: number) {
+  // messageId defaults to date for convenience, but the two are distinct
+  // fields: pagination resumes on date AND message id, so a test about tying
+  // dates must be able to vary them independently.
+  function dialogAt(
+    id: number,
+    date: number,
+    unread: number,
+    messageId: number = date,
+  ) {
     return {
       id: { value: BigInt(id) },
       title: `Chat ${id}`,
@@ -1399,7 +1407,7 @@ describe("listDialogs cursor advance", () => {
       isGroup: false,
       isUser: false,
       date,
-      message: { id: date },
+      message: { id: messageId },
       entity: { className: "Channel" },
       dialog: { readInboxMaxId: 0 },
     };
@@ -1445,9 +1453,16 @@ describe("listDialogs cursor advance", () => {
   });
 
   it("keeps both dialogs when their dates tie across a page boundary", async () => {
-    // The cursor paginates on date + id. Equal dates are therefore only safe
-    // because the message id disambiguates them; this pins that behavior.
-    const all = [dialogAt(1, 100, 5), dialogAt(2, 100, 5), dialogAt(3, 90, 5)];
+    // The cursor paginates on date AND message id. Equal dates are therefore
+    // safe precisely because the message id still separates the rows — dialogs
+    // 1 and 2 share a date but carry different message ids. (Rows tying on
+    // BOTH is the limitation documented on DialogCursor, which needs
+    // offset_peer to resolve and is left to the live suite.)
+    const all = [
+      dialogAt(1, 100, 5, 20),
+      dialogAt(2, 100, 5, 19),
+      dialogAt(3, 90, 5, 18),
+    ];
     __setClientFactoryForTests(async () => ({
       connected: true,
       connect: async () => true,
