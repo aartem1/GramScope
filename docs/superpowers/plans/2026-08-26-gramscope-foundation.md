@@ -840,6 +840,7 @@ git commit -m "feat: add source and folder schemas with response size cap"
 - Produces: from `src/telegram/client.ts`:
   - `type TelegramLike = { connected?: boolean; connect(): Promise<boolean>; invoke(request: unknown): Promise<unknown>; getDialogs(params: Record<string, unknown>): Promise<unknown[]>; getEntity(entity: string): Promise<Record<string, unknown>> }`
   - `withTelegram<T>(fn: (client: TelegramLike) => Promise<T>): Promise<T>`
+  - `getApi(): Promise<ApiNamespace>` — the TL request namespace; the only sanctioned way to reach `Api` outside this module
   - `__setClientFactoryForTests(factory: (() => Promise<TelegramLike>) | undefined): void`
   - `__resetClientForTests(): void`
 
@@ -965,6 +966,20 @@ export type TelegramLike = {
 
 type Factory = () => Promise<TelegramLike>;
 
+type ApiNamespace = (typeof import("teleproto"))["Api"];
+
+let apiNamespace: ApiNamespace | undefined;
+
+/**
+ * The TL request namespace. This module is the ONLY one permitted to import
+ * teleproto; every other module reaches MTProto through withTelegram and this
+ * accessor, so the client can be swapped or faked in one place.
+ */
+export async function getApi(): Promise<ApiNamespace> {
+  apiNamespace ??= (await import("teleproto")).Api;
+  return apiNamespace;
+}
+
 // Module scope: on a warm Vercel instance this survives between invocations,
 // which is the point — a fresh MTProto handshake per tool call is wasteful and
 // invites FLOOD_WAIT.
@@ -1038,11 +1053,14 @@ git commit -m "feat: add withTelegram connection lifecycle with reuse and error 
 ### Task 6: Dialog filters — `list_folders` data layer
 
 **Files:**
+- Create: `src/telegram/peer-id.ts`
 - Create: `src/telegram/folders.ts`
 - Test: `tests/telegram-folders.test.ts`
 
 **Interfaces:**
 - Consumes: `withTelegram` from `src/telegram/client.ts`; `TelegramFolder` from `src/schemas/folder.ts`.
+- Produces:
+  - `readBigId(value: unknown): string | undefined` from `src/telegram/peer-id.ts` — unwraps teleproto's BigInteger wrappers to a decimal string. Task 7 imports the same helper rather than redefining it.
 - Produces: from `src/telegram/folders.ts`:
   - `peerId(peer: unknown): string | undefined` — normalizes an `InputPeer` to a decimal id string.
   - `mapDialogFilters(raw: unknown): TelegramFolder[]`
@@ -1136,15 +1154,17 @@ describe("mapDialogFilters", () => {
 Run: `npm test -- tests/telegram-folders.test.ts`
 Expected: FAIL — cannot resolve `@/telegram/folders`.
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 3: Write the shared id helper**
 
-`src/telegram/folders.ts`:
+`src/telegram/peer-id.ts`:
 
 ```typescript
-import { withTelegram } from "./client";
-import type { TelegramFolder } from "../schemas/folder";
-
-function readBigId(value: unknown): string | undefined {
+/**
+ * Unwraps the shapes teleproto uses for Telegram ids — bigint, number, string,
+ * or a BigInteger-like `{ value }` wrapper — into a decimal string. Shared so
+ * folders and dialogs cannot drift apart on id handling.
+ */
+export function readBigId(value: unknown): string | undefined {
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number") return String(value);
   if (typeof value === "string") return value;
@@ -1153,6 +1173,16 @@ function readBigId(value: unknown): string | undefined {
   }
   return undefined;
 }
+```
+
+- [ ] **Step 4: Write the implementation**
+
+`src/telegram/folders.ts`:
+
+```typescript
+import { getApi, withTelegram } from "./client";
+import { readBigId } from "./peer-id";
+import type { TelegramFolder } from "../schemas/folder";
 
 /** Normalizes any InputPeer variant to a decimal id string. */
 export function peerId(peer: unknown): string | undefined {
@@ -1207,22 +1237,22 @@ export function mapDialogFilters(raw: unknown): TelegramFolder[] {
 
 export async function fetchFolders(): Promise<TelegramFolder[]> {
   return withTelegram(async (client) => {
-    const { Api } = await import("teleproto");
+    const Api = await getApi();
     const raw = await client.invoke(new Api.messages.GetDialogFilters());
     return mapDialogFilters(raw);
   });
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npm test -- tests/telegram-folders.test.ts`
 Expected: PASS (8 tests).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add -A
+git add src/telegram/peer-id.ts src/telegram/folders.ts tests/telegram-folders.test.ts
 git commit -m "feat: map Telegram dialog filters to folders"
 ```
 
@@ -1252,12 +1282,19 @@ git commit -m "feat: map Telegram dialog filters to folders"
 
 ```typescript
 import { afterEach, describe, expect, it } from "vitest";
-import { dialogType, foldersByPeer, listDialogs, mapDialog } from "@/telegram/dialogs";
+import {
+  dialogType,
+  foldersByPeer,
+  getChannel,
+  listDialogs,
+  mapDialog,
+} from "@/telegram/dialogs";
 import {
   __resetClientForTests,
   __setClientFactoryForTests,
 } from "@/telegram/client";
-import { decodeCursor } from "@/pagination";
+import { decodeCursor, encodeCursor } from "@/pagination";
+import { GramScopeError } from "@/errors/taxonomy";
 
 const channelDialog = {
   id: { value: 111n },
@@ -1403,6 +1440,88 @@ describe("listDialogs cursor advance", () => {
     const page = await listDialogs({ limit: 50 });
     expect(page.next_cursor).toBeUndefined();
   });
+
+  it("forwards the whole offset triple to getDialogs", async () => {
+    // Telegram resumes from offset_date + offset_id + offset_peer. Dropping the
+    // peer silently degrades pagination to date precision.
+    const calls: Record<string, unknown>[] = [];
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async (params: Record<string, unknown>) => {
+        calls.push(params);
+        return [];
+      },
+      getEntity: async () => ({}),
+    }));
+    await listDialogs({
+      limit: 10,
+      cursor: encodeCursor({ offsetDate: 100, offsetId: 5, offsetPeerId: "777" }),
+    });
+    expect(calls[0]).toMatchObject({
+      offsetDate: 100,
+      offsetId: 5,
+      offsetPeer: "777",
+    });
+  });
+});
+
+describe("getChannel", () => {
+  function installEntity(entity: Record<string, unknown>) {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => [],
+      getEntity: async () => entity,
+    }));
+  }
+
+  afterEach(() => {
+    __resetClientForTests();
+    __setClientFactoryForTests(undefined);
+  });
+
+  it("rejects when no identifier is given", async () => {
+    installEntity({});
+    await expect(getChannel({})).rejects.toBeInstanceOf(GramScopeError);
+  });
+
+  it("rejects when more than one identifier is given", async () => {
+    installEntity({});
+    await expect(
+      getChannel({ id: "1", username: "two" }),
+    ).rejects.toBeInstanceOf(GramScopeError);
+  });
+
+  it("rejects a URL that is not a Telegram link", async () => {
+    installEntity({});
+    await expect(
+      getChannel({ url: "https://example.com/nope" }),
+    ).rejects.toBeInstanceOf(GramScopeError);
+  });
+
+  it("accepts both the plain and the /s/ t.me URL forms", async () => {
+    installEntity({
+      className: "Channel",
+      id: { value: 111n },
+      title: "AI News",
+      username: "ainews",
+    });
+    expect((await getChannel({ url: "https://t.me/ainews" })).id).toBe("111");
+    expect((await getChannel({ url: "https://t.me/s/ainews" })).id).toBe("111");
+  });
+
+  it("classifies a megagroup as a group, not a channel", async () => {
+    installEntity({
+      className: "Channel",
+      id: { value: 222n },
+      title: "Chat",
+      megagroup: true,
+    });
+    expect((await getChannel({ id: "222" })).type).toBe("group");
+  });
 });
 ```
 
@@ -1418,6 +1537,7 @@ Expected: FAIL — cannot resolve `@/telegram/dialogs`.
 ```typescript
 import { withTelegram } from "./client";
 import { fetchFolders } from "./folders";
+import { readBigId } from "./peer-id";
 import type { TelegramFolder } from "../schemas/folder";
 import type { TelegramSource } from "../schemas/source";
 import { decodeCursor, encodeCursor } from "../pagination";
@@ -1431,16 +1551,6 @@ export type ListDialogsInput = {
   limit: number;
   cursor?: string;
 };
-
-function readBigId(value: unknown): string | undefined {
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
-  if (typeof value === "object" && value !== null && "value" in value) {
-    return readBigId((value as { value: unknown }).value);
-  }
-  return undefined;
-}
 
 export function dialogType(dialog: unknown): "channel" | "group" | "chat" {
   const d = dialog as Record<string, unknown>;
@@ -1523,8 +1633,15 @@ export async function listDialogs(
   const raw = await withTelegram(async (client) =>
     client.getDialogs({
       limit: batchSize,
+      // offsetPeer matters: Telegram resumes from the offset_date + offset_id +
+      // offset_peer triple. Sending only the first two degrades pagination to
+      // date precision, which skips or repeats dialogs whose dates tie.
       ...(cursor
-        ? { offsetDate: cursor.offsetDate, offsetId: cursor.offsetId }
+        ? {
+            offsetDate: cursor.offsetDate,
+            offsetId: cursor.offsetId,
+            ...(cursor.offsetPeerId ? { offsetPeer: cursor.offsetPeerId } : {}),
+          }
         : {}),
     }),
   );
@@ -1632,7 +1749,7 @@ export async function getChannel(input: {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npm test -- tests/telegram-dialogs.test.ts`
-Expected: PASS (11 tests).
+Expected: PASS (17 tests).
 
 - [ ] **Step 5: Commit**
 
