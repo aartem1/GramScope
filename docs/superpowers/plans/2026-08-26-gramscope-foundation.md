@@ -503,7 +503,7 @@ git commit -m "feat: add error taxonomy and MTProto error mapping"
 **Interfaces:**
 - Consumes: `GramScopeError` from `src/errors/taxonomy.ts`.
 - Produces: from `src/pagination.ts`:
-  - `type DialogCursor = { offsetDate: number; offsetId: number; offsetPeerId: string }`
+  - `type DialogCursor = { offsetDate: number; offsetId: number }`
   - `encodeCursor(cursor: DialogCursor): string`
   - `decodeCursor(raw: string): DialogCursor` — throws `GramScopeError("INVALID_CURSOR", …)`
   - `const CURSOR_VERSION = 1`
@@ -520,7 +520,6 @@ import { GramScopeError } from "@/errors/taxonomy";
 const cursor: DialogCursor = {
   offsetDate: 1735689600,
   offsetId: 42,
-  offsetPeerId: "-1001234567890",
 };
 
 describe("cursors", () => {
@@ -545,9 +544,9 @@ describe("cursors", () => {
   });
 
   it("rejects a future cursor version", () => {
-    const forged = Buffer.from(
-      JSON.stringify({ v: 99, d: 1, i: 2, p: "3" }),
-    ).toString("base64url");
+    const forged = Buffer.from(JSON.stringify({ v: 99, d: 1, i: 2 })).toString(
+      "base64url",
+    );
     expect(() => decodeCursor(forged)).toThrowError(/INVALID_CURSOR|version/i);
   });
 
@@ -575,17 +574,23 @@ import { GramScopeError } from "./errors/taxonomy";
 
 export const CURSOR_VERSION = 1;
 
+/**
+ * Telegram resumes getDialogs from offset_date + offset_id + offset_peer, but
+ * offset_peer must be a real InputPeer TL object carrying an access hash, and
+ * a stateless server has no entity cache to rebuild one from. We therefore
+ * paginate on date + id only. The cost is that dialogs sharing an exact
+ * last-message timestamp may tie at a page boundary; Task 11's live
+ * disjoint-pages test is the guard on whether that ever bites in practice.
+ */
 export type DialogCursor = {
   offsetDate: number;
   offsetId: number;
-  offsetPeerId: string;
 };
 
 const payloadSchema = z.object({
   v: z.literal(CURSOR_VERSION),
   d: z.number().int(),
   i: z.number().int(),
-  p: z.string(),
 });
 
 export function encodeCursor(cursor: DialogCursor): string {
@@ -593,7 +598,6 @@ export function encodeCursor(cursor: DialogCursor): string {
     v: CURSOR_VERSION,
     d: cursor.offsetDate,
     i: cursor.offsetId,
-    p: cursor.offsetPeerId,
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
@@ -617,7 +621,6 @@ export function decodeCursor(raw: string): DialogCursor {
   return {
     offsetDate: result.data.d,
     offsetId: result.data.i,
-    offsetPeerId: result.data.p,
   };
 }
 ```
@@ -1441,9 +1444,9 @@ describe("listDialogs cursor advance", () => {
     expect(page.next_cursor).toBeUndefined();
   });
 
-  it("forwards the whole offset triple to getDialogs", async () => {
-    // Telegram resumes from offset_date + offset_id + offset_peer. Dropping the
-    // peer silently degrades pagination to date precision.
+  it("forwards the cursor offsets to getDialogs", async () => {
+    // The cursor must actually reach the query; a cursor that round-trips but
+    // is never sent silently re-serves page one forever.
     const calls: Record<string, unknown>[] = [];
     __setClientFactoryForTests(async () => ({
       connected: true,
@@ -1457,13 +1460,9 @@ describe("listDialogs cursor advance", () => {
     }));
     await listDialogs({
       limit: 10,
-      cursor: encodeCursor({ offsetDate: 100, offsetId: 5, offsetPeerId: "777" }),
+      cursor: encodeCursor({ offsetDate: 100, offsetId: 5 }),
     });
-    expect(calls[0]).toMatchObject({
-      offsetDate: 100,
-      offsetId: 5,
-      offsetPeer: "777",
-    });
+    expect(calls[0]).toMatchObject({ offsetDate: 100, offsetId: 5 });
   });
 });
 
@@ -1633,15 +1632,12 @@ export async function listDialogs(
   const raw = await withTelegram(async (client) =>
     client.getDialogs({
       limit: batchSize,
-      // offsetPeer matters: Telegram resumes from the offset_date + offset_id +
-      // offset_peer triple. Sending only the first two degrades pagination to
-      // date precision, which skips or repeats dialogs whose dates tie.
+      // Only date and id: teleproto forwards offsetPeer straight into
+      // Api.messages.GetDialogs without resolving it, so it must be a real
+      // InputPeer object, which a stateless server cannot rebuild. See the
+      // note on DialogCursor.
       ...(cursor
-        ? {
-            offsetDate: cursor.offsetDate,
-            offsetId: cursor.offsetId,
-            ...(cursor.offsetPeerId ? { offsetPeer: cursor.offsetPeerId } : {}),
-          }
+        ? { offsetDate: cursor.offsetDate, offsetId: cursor.offsetId }
         : {}),
     }),
   );
@@ -1685,7 +1681,6 @@ export async function listDialogs(
     next_cursor: encodeCursor({
       offsetDate: typeof last.date === "number" ? last.date : 0,
       offsetId: typeof message?.id === "number" ? message.id : 0,
-      offsetPeerId: readBigId(last.id) ?? "",
     }),
   };
 }
