@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  dialogType,
   foldersByPeer,
   getChannel,
   listDialogs,
@@ -13,39 +12,41 @@ import {
 import { decodeCursor, encodeCursor } from "@/pagination";
 import { GramScopeError } from "@/errors/taxonomy";
 
+// Real ids, in both representations. A Dialog's `id` is teleproto's MARKED
+// form; the entity inside it, and every InputPeer in a folder, carry the BARE
+// form. The fixture below used to give a CHANNEL dialog `id: 111n`, which
+// teleproto cannot produce, and that is precisely why the folder/dialog id
+// mismatch went unnoticed.
+const AI_NEWS_BARE = 1234567890n;
+const AI_NEWS_ID = "-1001234567890";
+
 const channelDialog = {
-  id: { value: 111n },
+  id: { value: -1001234567890n },
   title: "AI News",
   unreadCount: 5,
   isChannel: true,
   isGroup: false,
   isUser: false,
-  entity: { className: "Channel", username: "ainews", participantsCount: 4200 },
+  entity: {
+    className: "Channel",
+    id: { value: AI_NEWS_BARE },
+    username: "ainews",
+    participantsCount: 4200,
+  },
   dialog: { readInboxMaxId: 900 },
 };
 
-describe("dialogType", () => {
-  it("classifies a broadcast channel", () => {
-    expect(dialogType(channelDialog)).toBe("channel");
-  });
-
-  it("classifies a group", () => {
-    expect(
-      dialogType({ ...channelDialog, isChannel: false, isGroup: true }),
-    ).toBe("group");
-  });
-
-  it("classifies a private chat", () => {
-    expect(
-      dialogType({
-        ...channelDialog,
-        isChannel: false,
-        isGroup: false,
-        isUser: true,
-      }),
-    ).toBe("chat");
-  });
-});
+/** invoke() fake that answers GetDialogFilters and GetFullChannel apart. */
+function invoker(filters: unknown[], full?: unknown) {
+  return async (request: unknown) => {
+    const name = (request as { className?: string }).className ?? "";
+    if (name.includes("GetFullChannel")) {
+      if (full instanceof Error) throw full;
+      return full ?? {};
+    }
+    return { filters };
+  };
+}
 
 describe("foldersByPeer", () => {
   it("inverts folder membership, honoring exclusions", () => {
@@ -53,28 +54,28 @@ describe("foldersByPeer", () => {
       {
         id: "2",
         title: "AI",
-        included_peer_ids: ["111", "222"],
-        excluded_peer_ids: ["222"],
+        included_peer_ids: [AI_NEWS_ID, "-987654321"],
+        excluded_peer_ids: ["-987654321"],
         order: 0,
       },
       {
         id: "3",
         title: "Tech",
-        included_peer_ids: ["111"],
+        included_peer_ids: [AI_NEWS_ID],
         excluded_peer_ids: [],
         order: 1,
       },
     ]);
-    expect(index.get("111")).toEqual(["2", "3"]);
-    expect(index.get("222")).toBeUndefined();
+    expect(index.get(AI_NEWS_ID)).toEqual(["2", "3"]);
+    expect(index.get("-987654321")).toBeUndefined();
   });
 });
 
 describe("mapDialog", () => {
   it("maps a channel to a source", () => {
-    const source = mapDialog(channelDialog, new Map([["111", ["2"]]]));
+    const source = mapDialog(channelDialog, new Map([[AI_NEWS_ID, ["2"]]]));
     expect(source).toMatchObject({
-      id: "111",
+      id: AI_NEWS_ID,
       title: "AI News",
       username: "ainews",
       type: "channel",
@@ -85,21 +86,125 @@ describe("mapDialog", () => {
     });
   });
 
+  it("emits the marked id, which is what folder peer lists are keyed on", () => {
+    expect(mapDialog(channelDialog, new Map()).id).toBe(AI_NEWS_ID);
+  });
+
+  it("derives the marked id from the entity when the dialog has none", () => {
+    const withoutId = { ...channelDialog, id: undefined };
+    expect(mapDialog(withoutId, new Map()).id).toBe(AI_NEWS_ID);
+  });
+
   it("builds a t.me url from the username", () => {
     expect(mapDialog(channelDialog, new Map()).url).toBe("https://t.me/ainews");
   });
 
   it("omits url and username for a private channel", () => {
     const source = mapDialog(
-      { ...channelDialog, entity: { className: "Channel" } },
+      {
+        ...channelDialog,
+        entity: { className: "Channel", id: { value: AI_NEWS_BARE } },
+      },
       new Map(),
     );
     expect(source.username).toBeUndefined();
     expect(source.url).toBeUndefined();
   });
 
+  it("classifies a megagroup dialog as a group", () => {
+    const source = mapDialog(
+      {
+        ...channelDialog,
+        isGroup: true,
+        entity: {
+          className: "Channel",
+          megagroup: true,
+          id: { value: AI_NEWS_BARE },
+        },
+      },
+      new Map(),
+    );
+    expect(source.type).toBe("group");
+  });
+
+  it("classifies a user dialog as a chat", () => {
+    const source = mapDialog(
+      {
+        id: { value: 555000111n },
+        title: "Ada",
+        isChannel: false,
+        isGroup: false,
+        isUser: true,
+        entity: { className: "User", id: { value: 555000111n } },
+      },
+      new Map(),
+    );
+    expect(source.type).toBe("chat");
+    expect(source.id).toBe("555000111");
+  });
+
   it("omits folder_ids when the peer is in no folder", () => {
     expect(mapDialog(channelDialog, new Map()).folder_ids).toBeUndefined();
+  });
+});
+
+describe("folder membership reaches a channel dialog", () => {
+  // The regression guard for the two-representation bug: the folder comes back
+  // holding a BARE channelId, the dialog comes back holding a MARKED id, and
+  // these must still describe the same peer. When they did not, folder_ids was
+  // silently never populated and folder_id filtering returned empty pages.
+  const filters = [
+    {
+      className: "DialogFilter",
+      id: 2,
+      title: { className: "TextWithEntities", text: "AI", entities: [] },
+      includePeers: [
+        { className: "InputPeerChannel", channelId: { value: AI_NEWS_BARE } },
+      ],
+      excludePeers: [],
+    },
+  ];
+
+  afterEach(() => {
+    __resetClientForTests();
+    __setClientFactoryForTests(undefined);
+  });
+
+  function install() {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: invoker(filters),
+      getDialogs: async () => [{ ...channelDialog, date: 100, message: { id: 7 } }],
+      getEntity: async () => channelDialog.entity,
+    }));
+  }
+
+  it("populates folder_ids for a channel that is a folder member", async () => {
+    install();
+    const { sources } = await listDialogs({ limit: 10 });
+    expect(sources[0]!.folder_ids).toEqual(["2"]);
+  });
+
+  it("returns the channel when filtering by that folder", async () => {
+    install();
+    const { sources } = await listDialogs({ folder_id: "2", limit: 10 });
+    expect(sources.map((s) => s.id)).toEqual([AI_NEWS_ID]);
+  });
+
+  it("gives get_channel the same id list_dialogs emitted", async () => {
+    install();
+    const listed = (await listDialogs({ limit: 10 })).sources[0]!;
+    const detail = await getChannel({ id: listed.id });
+    expect(detail.id).toBe(listed.id);
+    expect(detail.folder_ids).toEqual(["2"]);
+  });
+
+  it("rejects an unknown folder id", async () => {
+    install();
+    await expect(listDialogs({ folder_id: "99", limit: 10 })).rejects.toThrow(
+      GramScopeError,
+    );
   });
 });
 
@@ -114,7 +219,7 @@ describe("listDialogs cursor advance", () => {
     messageId: number = date,
   ) {
     return {
-      id: { value: BigInt(id) },
+      id: { value: BigInt(`-100${id}`) },
       title: `Chat ${id}`,
       unreadCount: unread,
       isChannel: true,
@@ -122,7 +227,7 @@ describe("listDialogs cursor advance", () => {
       isUser: false,
       date,
       message: { id: messageId },
-      entity: { className: "Channel" },
+      entity: { className: "Channel", id: { value: BigInt(id) } },
       dialog: { readInboxMaxId: 0 },
     };
   }
@@ -131,7 +236,7 @@ describe("listDialogs cursor advance", () => {
     __setClientFactoryForTests(async () => ({
       connected: true,
       connect: async () => true,
-      invoke: async () => ({ filters: [] }),
+      invoke: invoker([]),
       getDialogs: async () => dialogs,
       getEntity: async () => ({}),
     }));
@@ -156,7 +261,7 @@ describe("listDialogs cursor advance", () => {
     // would point at row 1 and re-serve row 2 forever.
     install([dialogAt(1, 100, 0), dialogAt(2, 90, 5), dialogAt(3, 80, 5)]);
     const first = await listDialogs({ limit: 2, unread_only: true });
-    expect(first.sources.map((s) => s.id)).toEqual(["2", "3"]);
+    expect(first.sources.map((s) => s.id)).toEqual(["-1002", "-1003"]);
     expect(decodeCursor(first.next_cursor!).offsetDate).toBe(80);
   });
 
@@ -180,7 +285,7 @@ describe("listDialogs cursor advance", () => {
     __setClientFactoryForTests(async () => ({
       connected: true,
       connect: async () => true,
-      invoke: async () => ({ filters: [] }),
+      invoke: invoker([]),
       getDialogs: async (params: Record<string, unknown>) => {
         const afterId = params.offsetId as number | undefined;
         const rows = afterId
@@ -199,7 +304,7 @@ describe("listDialogs cursor advance", () => {
       if (!result.next_cursor) break;
       cursor = result.next_cursor;
     }
-    expect(seen).toEqual(["1", "2", "3"]);
+    expect(seen).toEqual(["-1001", "-1002", "-1003"]);
   });
 
   it("forwards the cursor offsets to getDialogs", async () => {
@@ -209,7 +314,7 @@ describe("listDialogs cursor advance", () => {
     __setClientFactoryForTests(async () => ({
       connected: true,
       connect: async () => true,
-      invoke: async () => ({ filters: [] }),
+      invoke: invoker([]),
       getDialogs: async (params: Record<string, unknown>) => {
         calls.push(params);
         return [];
@@ -222,14 +327,40 @@ describe("listDialogs cursor advance", () => {
     });
     expect(calls[0]).toMatchObject({ offsetDate: 100, offsetId: 5 });
   });
-});
 
-describe("getChannel", () => {
-  function installEntity(entity: Record<string, unknown>) {
+  it("excludes pinned dialogs on a continuation page but not on the first", async () => {
+    // Telegram returns pinned dialogs whatever the offset, so a stateless
+    // resume that leaves excludePinned false serves a pinned dialog twice
+    // once its top message falls behind the offset.
+    const calls: Record<string, unknown>[] = [];
     __setClientFactoryForTests(async () => ({
       connected: true,
       connect: async () => true,
-      invoke: async () => ({ filters: [] }),
+      invoke: invoker([]),
+      getDialogs: async (params: Record<string, unknown>) => {
+        calls.push(params);
+        return [];
+      },
+      getEntity: async () => ({}),
+    }));
+
+    await listDialogs({ limit: 10 });
+    await listDialogs({
+      limit: 10,
+      cursor: encodeCursor({ offsetDate: 100, offsetId: 5 }),
+    });
+
+    expect(calls[0]).toMatchObject({ ignorePinned: false });
+    expect(calls[1]).toMatchObject({ ignorePinned: true });
+  });
+});
+
+describe("getChannel", () => {
+  function installEntity(entity: Record<string, unknown>, full?: unknown) {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: invoker([], full),
       getDialogs: async () => [],
       getEntity: async () => entity,
     }));
@@ -262,12 +393,16 @@ describe("getChannel", () => {
   it("accepts both the plain and the /s/ t.me URL forms", async () => {
     installEntity({
       className: "Channel",
-      id: { value: 111n },
+      id: { value: AI_NEWS_BARE },
       title: "AI News",
       username: "ainews",
     });
-    expect((await getChannel({ url: "https://t.me/ainews" })).id).toBe("111");
-    expect((await getChannel({ url: "https://t.me/s/ainews" })).id).toBe("111");
+    expect((await getChannel({ url: "https://t.me/ainews" })).id).toBe(
+      AI_NEWS_ID,
+    );
+    expect((await getChannel({ url: "https://t.me/s/ainews" })).id).toBe(
+      AI_NEWS_ID,
+    );
   });
 
   it("classifies a megagroup as a group, not a channel", async () => {
@@ -277,6 +412,78 @@ describe("getChannel", () => {
       title: "Chat",
       megagroup: true,
     });
-    expect((await getChannel({ id: "222" })).type).toBe("group");
+    expect((await getChannel({ id: "-100222" })).type).toBe("group");
+  });
+
+  it("fills description and linked_discussion_id from channels.getFullChannel", async () => {
+    // Api.Channel has neither field, so without the full fetch get_channel
+    // returned strictly less than its own output schema advertises.
+    installEntity(
+      {
+        className: "Channel",
+        id: { value: AI_NEWS_BARE },
+        title: "AI News",
+        username: "ainews",
+      },
+      {
+        className: "messages.ChatFull",
+        fullChat: {
+          className: "ChannelFull",
+          about: "Daily AI links",
+          linkedChatId: { value: 2233445566n },
+        },
+      },
+    );
+
+    const source = await getChannel({ id: AI_NEWS_ID });
+    expect(source.description).toBe("Daily AI links");
+    expect(source.linked_discussion_id).toBe("-1002233445566");
+  });
+
+  it("still answers from the basic entity when the full fetch fails", async () => {
+    installEntity(
+      {
+        className: "Channel",
+        id: { value: AI_NEWS_BARE },
+        title: "AI News",
+        username: "ainews",
+      },
+      Object.assign(new Error("CHANNEL_PRIVATE"), {
+        errorMessage: "CHANNEL_PRIVATE",
+      }),
+    );
+
+    const source = await getChannel({ id: AI_NEWS_ID });
+    expect(source.id).toBe(AI_NEWS_ID);
+    expect(source.title).toBe("AI News");
+    expect(source.description).toBeUndefined();
+    expect(source.linked_discussion_id).toBeUndefined();
+  });
+
+  it("does not attempt a full fetch for a user", async () => {
+    let fullFetches = 0;
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async (request: unknown) => {
+        const name = (request as { className?: string }).className ?? "";
+        if (name.includes("GetFullChannel")) fullFetches += 1;
+        return { filters: [] };
+      },
+      getDialogs: async () => [],
+      getEntity: async () => ({
+        className: "User",
+        id: { value: 555000111n },
+        firstName: "Ada",
+      }),
+    }));
+
+    const source = await getChannel({ id: "555000111" });
+    expect(source).toMatchObject({
+      id: "555000111",
+      title: "Ada",
+      type: "chat",
+    });
+    expect(fullFetches).toBe(0);
   });
 });

@@ -1,14 +1,15 @@
 import { getApi, withTelegram } from "./client";
-import { readBigId } from "./peer-id";
+import { inputPeerMarkedId } from "./peer-id";
 import type { TelegramFolder } from "../schemas/folder";
 
-/** Normalizes any InputPeer variant to a decimal id string. */
+/**
+ * Normalizes any InputPeer variant to the MARKED id string, which is the form
+ * `TelegramSource.id` uses. Returning the bare `channelId` here is what made
+ * `folder_ids` and `list_dialogs(folder_id=…)` silently empty for every
+ * channel and group.
+ */
 export function peerId(peer: unknown): string | undefined {
-  if (typeof peer !== "object" || peer === null) return undefined;
-  const p = peer as Record<string, unknown>;
-  return (
-    readBigId(p.channelId) ?? readBigId(p.chatId) ?? readBigId(p.userId)
-  );
+  return inputPeerMarkedId(peer);
 }
 
 function titleText(title: unknown): string {

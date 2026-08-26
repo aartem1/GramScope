@@ -1,6 +1,11 @@
-import { withTelegram } from "./client";
+import { getApi, withTelegram, type TelegramLike } from "./client";
 import { fetchFolders } from "./folders";
-import { readBigId } from "./peer-id";
+import {
+  entityMarkedId,
+  markedChannelId,
+  readBigId,
+  sourceType,
+} from "./peer-id";
 import type { TelegramFolder } from "../schemas/folder";
 import type { TelegramSource } from "../schemas/source";
 import { decodeCursor, encodeCursor } from "../pagination";
@@ -14,13 +19,6 @@ export type ListDialogsInput = {
   limit: number;
   cursor?: string;
 };
-
-export function dialogType(dialog: unknown): "channel" | "group" | "chat" {
-  const d = dialog as Record<string, unknown>;
-  if (d.isChannel === true && d.isGroup !== true) return "channel";
-  if (d.isGroup === true) return "group";
-  return "chat";
-}
 
 export function foldersByPeer(
   folders: TelegramFolder[],
@@ -38,36 +36,90 @@ export function foldersByPeer(
   return index;
 }
 
-export function mapDialog(
-  dialog: unknown,
-  folderIdsByPeer: Map<string, string[]>,
-): TelegramSource {
-  const d = dialog as Record<string, unknown>;
-  const entity = (d.entity ?? {}) as Record<string, unknown>;
-  const inner = (d.dialog ?? {}) as Record<string, unknown>;
+/**
+ * Facts a caller knows that the entity itself does not carry: a dialog's
+ * unread state, or the extra fields only `channels.getFullChannel` returns.
+ */
+export type SourceDetails = {
+  /** Marked id, when the caller has an authoritative one (a Dialog does). */
+  id?: string;
+  /** Display name, when the caller has a better one than `entity.title`. */
+  title?: string;
+  unreadCount?: number;
+  readInboxMaxId?: number;
+  description?: string;
+  linkedDiscussionId?: string;
+};
 
-  const id = readBigId(d.id) ?? "";
-  const username =
-    typeof entity.username === "string" ? entity.username : undefined;
+/**
+ * The single `TelegramSource` constructor. Both `list_dialogs` and
+ * `get_channel` build their result here so the two can never again disagree
+ * about a peer's id, type, or which fields it carries.
+ */
+export function toSource(
+  entity: unknown,
+  folderIdsByPeer: Map<string, string[]>,
+  details: SourceDetails = {},
+): TelegramSource {
+  const e = (entity ?? {}) as Record<string, unknown>;
+
+  const id = details.id ?? entityMarkedId(e) ?? "";
+  const username = typeof e.username === "string" ? e.username : undefined;
+  const description =
+    details.description ?? (typeof e.about === "string" ? e.about : undefined);
+  const title =
+    details.title ??
+    (typeof e.title === "string"
+      ? e.title
+      : typeof e.firstName === "string"
+        ? e.firstName
+        : "");
   const folderIds = folderIdsByPeer.get(id);
 
   return {
     id,
-    title: typeof d.title === "string" ? d.title : "",
-    type: dialogType(dialog),
+    title,
+    type: sourceType(e),
     ...(username ? { username, url: `https://t.me/${username}` } : {}),
-    ...(typeof entity.about === "string" ? { description: entity.about } : {}),
-    ...(typeof entity.participantsCount === "number"
-      ? { subscriber_count: entity.participantsCount }
+    ...(description ? { description } : {}),
+    ...(typeof e.participantsCount === "number"
+      ? { subscriber_count: e.participantsCount }
       : {}),
-    ...(typeof d.unreadCount === "number"
-      ? { unread_count: d.unreadCount }
+    ...(typeof details.unreadCount === "number"
+      ? { unread_count: details.unreadCount }
       : {}),
-    ...(typeof inner.readInboxMaxId === "number"
-      ? { read_inbox_max_id: inner.readInboxMaxId }
+    ...(typeof details.readInboxMaxId === "number"
+      ? { read_inbox_max_id: details.readInboxMaxId }
+      : {}),
+    ...(details.linkedDiscussionId
+      ? { linked_discussion_id: details.linkedDiscussionId }
       : {}),
     ...(folderIds ? { folder_ids: folderIds } : {}),
   };
+}
+
+export function mapDialog(
+  dialog: unknown,
+  folderIdsByPeer: Map<string, string[]>,
+): TelegramSource {
+  const d = (dialog ?? {}) as Record<string, unknown>;
+  const entity = (d.entity ?? {}) as Record<string, unknown>;
+  const inner = (d.dialog ?? {}) as Record<string, unknown>;
+
+  // Dialog.id is teleproto's own marked id, so it wins over re-deriving one
+  // from the entity; the derivation is the fallback, not the rule.
+  const id = readBigId(d.id);
+
+  return toSource(entity, folderIdsByPeer, {
+    ...(id !== undefined ? { id } : {}),
+    ...(typeof d.title === "string" ? { title: d.title } : {}),
+    ...(typeof d.unreadCount === "number"
+      ? { unreadCount: d.unreadCount }
+      : {}),
+    ...(typeof inner.readInboxMaxId === "number"
+      ? { readInboxMaxId: inner.readInboxMaxId }
+      : {}),
+  });
 }
 
 export async function listDialogs(
@@ -96,6 +148,12 @@ export async function listDialogs(
   const raw = await withTelegram(async (client) =>
     client.getDialogs({
       limit: batchSize,
+      // Telegram returns pinned dialogs regardless of the offset, so a
+      // continuation page must exclude them or a pinned dialog whose top
+      // message predates the offset is served twice. teleproto sets
+      // excludePinned on its own continuation chunks for exactly this reason;
+      // our resume is stateless, so we set it per request instead.
+      ignorePinned: cursor !== undefined,
       // Only date and id: teleproto forwards offsetPeer straight into
       // Api.messages.GetDialogs without resolving it, so it must be a real
       // InputPeer object, which a stateless server cannot rebuild. See the
@@ -149,6 +207,40 @@ export async function listDialogs(
   };
 }
 
+/**
+ * `channels.getFullChannel` is the only source of `about` and the linked
+ * discussion chat: the `Api.Channel` that `getEntity` returns carries neither.
+ */
+async function fetchChannelDetails(
+  client: TelegramLike,
+  entity: unknown,
+): Promise<SourceDetails> {
+  const Api = await getApi();
+  const raw = await client.invoke(
+    new Api.channels.GetFullChannel({ channel: entity as never }),
+  );
+
+  const fullChat =
+    typeof raw === "object" && raw !== null
+      ? ((raw as { fullChat?: unknown }).fullChat as
+          | Record<string, unknown>
+          | undefined)
+      : undefined;
+  if (!fullChat) return {};
+
+  const about = typeof fullChat.about === "string" ? fullChat.about : undefined;
+  const linked = readBigId(fullChat.linkedChatId);
+
+  return {
+    ...(about ? { description: about } : {}),
+    // linkedChatId is bare, and a linked discussion chat is always a
+    // megagroup, so it marks as a channel.
+    ...(linked !== undefined
+      ? { linkedDiscussionId: markedChannelId(linked) }
+      : {}),
+  };
+}
+
 export async function getChannel(input: {
   id?: string;
   username?: string;
@@ -176,30 +268,15 @@ export async function getChannel(input: {
 
   return withTelegram(async (client) => {
     const entity = await client.getEntity(target);
-    const id = readBigId(entity.id) ?? "";
-    const username =
-      typeof entity.username === "string" ? entity.username : undefined;
-    const folderIds = index.get(id);
 
-    return {
-      id,
-      title:
-        typeof entity.title === "string"
-          ? entity.title
-          : typeof entity.firstName === "string"
-            ? entity.firstName
-            : "",
-      type:
-        entity.className === "Channel" && entity.megagroup !== true
-          ? "channel"
-          : entity.className === "Channel" || entity.className === "Chat"
-            ? "group"
-            : "chat",
-      ...(username ? { username, url: `https://t.me/${username}` } : {}),
-      ...(typeof entity.participantsCount === "number"
-        ? { subscriber_count: entity.participantsCount }
-        : {}),
-      ...(folderIds ? { folder_ids: folderIds } : {}),
-    };
+    // Broadcast channels and megagroups have more to say than the entity
+    // carries. A failure here costs those extra fields, never the call: the
+    // basic entity is still a valid answer.
+    const details: SourceDetails =
+      entity.className === "Channel"
+        ? await fetchChannelDetails(client, entity).catch(() => ({}))
+        : {};
+
+    return toSource(entity, index, details);
   });
 }
