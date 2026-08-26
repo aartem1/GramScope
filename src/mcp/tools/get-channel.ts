@@ -11,10 +11,28 @@ export function registerGetChannel(server: McpServer): void {
       title: "Get a Telegram source",
       description:
         "Get details for one channel, group or chat by numeric id, @username, or t.me URL. Provide exactly one identifier. Read-only.",
+      // The "exactly one" rule is enforced in getChannel, but a runtime-only
+      // rule is invisible to the caller: it has to be in the JSON Schema
+      // ChatGPT reads, or it is discovered by failing a call.
       inputSchema: z.object({
-        id: z.string().optional(),
-        username: z.string().optional(),
-        url: z.string().optional(),
+        id: z
+          .string()
+          .optional()
+          .describe(
+            "Numeric peer id as returned by list_dialogs. Provide exactly one of id, username, or url.",
+          ),
+        username: z
+          .string()
+          .optional()
+          .describe(
+            "Public @username, with or without the @. Provide exactly one of id, username, or url.",
+          ),
+        url: z
+          .string()
+          .optional()
+          .describe(
+            "A t.me link, e.g. https://t.me/example. Provide exactly one of id, username, or url.",
+          ),
       }),
       outputSchema: telegramSourceSchema,
       annotations: { readOnlyHint: true },

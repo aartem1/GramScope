@@ -4,6 +4,14 @@ import { GramScopeError } from "./errors/taxonomy";
 export const CURSOR_VERSION = 1;
 
 /**
+ * Cursors from different tools share this envelope shape, so without a
+ * discriminator a message or search cursor would decode cleanly here and
+ * silently return the wrong page. Spec §6.3 forbids that; §7 requires a
+ * foreign cursor to be rejected as INVALID_CURSOR.
+ */
+export const DIALOG_CURSOR_KIND = "dialogs";
+
+/**
  * Telegram resumes getDialogs from offset_date + offset_id + offset_peer, but
  * offset_peer must be a real InputPeer TL object carrying an access hash, and
  * a stateless server has no entity cache to rebuild one from. We therefore
@@ -18,6 +26,7 @@ export type DialogCursor = {
 
 const payloadSchema = z.object({
   v: z.literal(CURSOR_VERSION),
+  k: z.literal(DIALOG_CURSOR_KIND),
   d: z.number().int(),
   i: z.number().int(),
 });
@@ -25,6 +34,7 @@ const payloadSchema = z.object({
 export function encodeCursor(cursor: DialogCursor): string {
   const payload = {
     v: CURSOR_VERSION,
+    k: DIALOG_CURSOR_KIND,
     d: cursor.offsetDate,
     i: cursor.offsetId,
   };
@@ -43,7 +53,7 @@ export function decodeCursor(raw: string): DialogCursor {
   if (!result.success) {
     throw new GramScopeError(
       "INVALID_CURSOR",
-      "Cursor is malformed or from an unsupported version",
+      "Cursor is malformed, from another tool, or from an unsupported version",
     );
   }
 
