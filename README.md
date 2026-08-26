@@ -930,6 +930,8 @@ Provide a local one-time script:
 npm run telegram:login
 ```
 
+Run `./scripts/provision.sh` first — the login script reads its credentials from `.env.local`, so that file must already exist.
+
 Expected flow:
 1. enter Telegram phone number;
 2. enter Telegram login code;
