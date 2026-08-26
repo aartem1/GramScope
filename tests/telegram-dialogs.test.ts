@@ -307,6 +307,77 @@ describe("listDialogs cursor advance", () => {
     expect(seen).toEqual(["-1001", "-1002", "-1003"]);
   });
 
+  it("does not re-serve the boundary dialog on the next page", async () => {
+    // Telegram returns dialogs with date <= offset_date, INCLUSIVE, and the
+    // offset_peer that would disambiguate the boundary cannot be rebuilt by a
+    // stateless server. So the last dialog of a page comes back as the first
+    // of the next one unless we drop it ourselves. Observed against the real
+    // account: page 1 ended with -1005555555555 and page 2 began with it.
+    const all = [
+      dialogAt(1, 300, 5, 30),
+      dialogAt(2, 200, 5, 20),
+      dialogAt(3, 100, 5, 10),
+    ];
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async (params: Record<string, unknown>) => {
+        const offsetDate = params.offsetDate as number | undefined;
+        const rows =
+          offsetDate === undefined
+            ? all
+            : all.filter((d) => d.date <= offsetDate);
+        return rows.slice(0, params.limit as number);
+      },
+      getEntity: async () => ({}),
+    }));
+
+    const first = await listDialogs({ limit: 2 });
+    expect(first.sources.map((s) => s.id)).toEqual(["-1001", "-1002"]);
+
+    const second = await listDialogs({ limit: 2, cursor: first.next_cursor! });
+    expect(second.sources.map((s) => s.id)).toEqual(["-1003"]);
+  });
+
+  it("drops every dialog that tied on the boundary timestamp", async () => {
+    // Several dialogs can share the boundary date; all of the ones already
+    // served must be dropped, not just the last.
+    const all = [
+      dialogAt(1, 200, 5, 30),
+      dialogAt(2, 200, 5, 20),
+      dialogAt(3, 200, 5, 10),
+      dialogAt(4, 100, 5, 5),
+    ];
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async (params: Record<string, unknown>) => {
+        const offsetDate = params.offsetDate as number | undefined;
+        const rows =
+          offsetDate === undefined
+            ? all
+            : all.filter((d) => d.date <= offsetDate);
+        return rows.slice(0, params.limit as number);
+      },
+      getEntity: async () => ({}),
+    }));
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 6; page += 1) {
+      const result = await listDialogs({
+        limit: 2,
+        ...(cursor ? { cursor } : {}),
+      });
+      seen.push(...result.sources.map((s) => s.id));
+      if (!result.next_cursor) break;
+      cursor = result.next_cursor;
+    }
+    expect(seen).toEqual(["-1001", "-1002", "-1003", "-1004"]);
+  });
+
   it("forwards the cursor offsets to getDialogs", async () => {
     // The cursor must actually reach the query; a cursor that round-trips but
     // is never sent silently re-serves page one forever.

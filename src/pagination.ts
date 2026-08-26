@@ -22,6 +22,13 @@ export const DIALOG_CURSOR_KIND = "dialogs";
 export type DialogCursor = {
   offsetDate: number;
   offsetId: number;
+  /**
+   * Ids already served whose dialog shares offsetDate. Telegram returns
+   * dialogs with date <= offset_date INCLUSIVE, and offset_peer — the field
+   * that would disambiguate the boundary — cannot be rebuilt by a stateless
+   * server. Without this the boundary dialog is served twice.
+   */
+  boundaryIds: string[];
 };
 
 const payloadSchema = z.object({
@@ -29,6 +36,7 @@ const payloadSchema = z.object({
   k: z.literal(DIALOG_CURSOR_KIND),
   d: z.number().int(),
   i: z.number().int(),
+  b: z.array(z.string()).default([]),
 });
 
 export function encodeCursor(cursor: DialogCursor): string {
@@ -37,6 +45,7 @@ export function encodeCursor(cursor: DialogCursor): string {
     k: DIALOG_CURSOR_KIND,
     d: cursor.offsetDate,
     i: cursor.offsetId,
+    b: cursor.boundaryIds,
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
@@ -60,5 +69,6 @@ export function decodeCursor(raw: string): DialogCursor {
   return {
     offsetDate: result.data.d,
     offsetId: result.data.i,
+    boundaryIds: result.data.b,
   };
 }

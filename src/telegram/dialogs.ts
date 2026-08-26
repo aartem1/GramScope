@@ -147,7 +147,10 @@ export async function listDialogs(
   const batchSize = input.limit + 1;
   const raw = await withTelegram(async (client) =>
     client.getDialogs({
-      limit: batchSize,
+      // Ask for extra rows to cover the boundary dialogs we already served and
+      // are about to drop. Without this a page whose whole window is made of
+      // repeats comes back empty and pagination stalls before the end.
+      limit: batchSize + (cursor?.boundaryIds.length ?? 0),
       // Telegram returns pinned dialogs regardless of the offset, so a
       // continuation page must exclude them or a pinned dialog whose top
       // message predates the offset is served twice. teleproto sets
@@ -168,10 +171,22 @@ export async function listDialogs(
   // dialog it came from: the cursor is derived from how far we consumed the
   // RAW batch, never from the filtered page's length.
   type Row = { raw: Record<string, unknown>; source: TelegramSource };
-  const rows: Row[] = raw.map((dialog) => ({
+  let rows: Row[] = raw.map((dialog) => ({
     raw: (dialog ?? {}) as Record<string, unknown>,
     source: mapDialog(dialog, folderIndex),
   }));
+
+  // Telegram's offset_date is inclusive, so the dialogs that sat exactly on
+  // the previous page's boundary come back. Drop the ones already served.
+  // This happens before any filtering, so re-served rows do not consume the
+  // page budget.
+  if (cursor && cursor.boundaryIds.length > 0) {
+    const alreadySeen = new Set(cursor.boundaryIds);
+    rows = rows.filter(
+      (r) =>
+        !(r.raw.date === cursor.offsetDate && alreadySeen.has(r.source.id)),
+    );
+  }
 
   let kept = rows;
   if (allowed) kept = kept.filter((r) => allowed.has(r.source.id));
@@ -198,11 +213,26 @@ export async function listDialogs(
 
   const last = lastExamined.raw;
   const message = last.message as Record<string, unknown> | undefined;
+  const boundaryDate = typeof last.date === "number" ? last.date : 0;
   return {
     sources,
     next_cursor: encodeCursor({
-      offsetDate: typeof last.date === "number" ? last.date : 0,
+      offsetDate: boundaryDate,
       offsetId: typeof message?.id === "number" ? message.id : 0,
+      // Every row served on the boundary timestamp, so the next page can drop
+      // them when Telegram returns them again. These accumulate while the
+      // boundary date holds and reset once it moves on, so the list stays
+      // bounded by however many dialogs share a single second.
+      boundaryIds: [
+        ...new Set([
+          ...(cursor && cursor.offsetDate === boundaryDate
+            ? cursor.boundaryIds
+            : []),
+          ...page
+            .filter((r) => r.raw.date === boundaryDate)
+            .map((r) => r.source.id),
+        ]),
+      ],
     }),
   };
 }

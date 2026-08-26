@@ -5,6 +5,7 @@ import { GramScopeError } from "@/errors/taxonomy";
 const cursor: DialogCursor = {
   offsetDate: 1735689600,
   offsetId: 42,
+  boundaryIds: ["-1001", "-1002"],
 };
 
 describe("cursors", () => {
