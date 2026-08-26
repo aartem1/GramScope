@@ -1,0 +1,67 @@
+import { loadConfig } from "../config";
+import { mapTelegramError } from "../errors/from-telegram";
+
+export type TelegramLike = {
+  connected?: boolean;
+  connect(): Promise<boolean>;
+  invoke(request: unknown): Promise<unknown>;
+  getDialogs(params: Record<string, unknown>): Promise<unknown[]>;
+  getEntity(entity: string): Promise<Record<string, unknown>>;
+};
+
+type Factory = () => Promise<TelegramLike>;
+
+// Module scope: on a warm Vercel instance this survives between invocations,
+// which is the point — a fresh MTProto handshake per tool call is wasteful and
+// invites FLOOD_WAIT.
+let cached: TelegramLike | undefined;
+let testFactory: Factory | undefined;
+
+const defaultFactory: Factory = async () => {
+  const config = loadConfig();
+  const { TelegramClient } = await import("teleproto");
+  const { StringSession } = await import("teleproto/sessions");
+  return new TelegramClient(
+    new StringSession(config.telegramSession),
+    config.telegramApiId,
+    config.telegramApiHash,
+    { connectionRetries: 3 },
+  ) as unknown as TelegramLike;
+};
+
+export function __setClientFactoryForTests(factory: Factory | undefined): void {
+  testFactory = factory;
+}
+
+export function __resetClientForTests(): void {
+  cached = undefined;
+}
+
+/**
+ * The only path to MTProto. No tool may import a Telegram client directly.
+ */
+export async function withTelegram<T>(
+  fn: (client: TelegramLike) => Promise<T>,
+): Promise<T> {
+  const factory = testFactory ?? defaultFactory;
+
+  let client = cached;
+  if (!client) {
+    client = await factory();
+    cached = client;
+  }
+
+  try {
+    if (!client.connected) await client.connect();
+  } catch (err) {
+    // A client that cannot connect must not be reused.
+    cached = undefined;
+    throw mapTelegramError(err);
+  }
+
+  try {
+    return await fn(client);
+  } catch (err) {
+    throw mapTelegramError(err);
+  }
+}
