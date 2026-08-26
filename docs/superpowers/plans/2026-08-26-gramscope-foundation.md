@@ -70,7 +70,7 @@ git checkout -b gramscope-mcp
     "lint": "eslint .",
     "test": "vitest run --exclude '**/*.live.test.ts'",
     "test:live": "vitest run tests/live",
-    "telegram:login": "tsx scripts/create-telegram-session.ts"
+    "telegram:login": "tsx --env-file=.env.local scripts/create-telegram-session.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
@@ -2602,7 +2602,8 @@ async function main() {
   const apiHash = process.env.TELEGRAM_API_HASH;
   if (!Number.isInteger(apiId) || !apiHash) {
     throw new Error(
-      "Set TELEGRAM_API_ID and TELEGRAM_API_HASH before running this script",
+      "TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env.local. " +
+        "Run ./scripts/provision.sh first, which creates it.",
     );
   }
 
@@ -2610,27 +2611,31 @@ async function main() {
     connectionRetries: 3,
   });
 
-  await client.start({
+  try {
+    await client.start({
     phoneNumber: () => rl.question("Phone number (with country code): "),
     phoneCode: () => rl.question("Login code from Telegram: "),
     password: () => rl.question("Two-factor password (blank if unset): "),
-    onError: (err) => {
-      console.error("Login failed:", err.message);
-    },
-  });
+      onError: (err) => {
+        console.error("Login failed:", err.message);
+      },
+    });
 
-  console.log("\nLogin succeeded.\n");
-  console.log(
-    "Copy the session string below into TELEGRAM_SESSION. It grants FULL",
-  );
-  console.log("access to this Telegram account — treat it like a password.\n");
-  console.log(client.session.save());
-  console.log(
-    "\nStore it now with:  vercel env add TELEGRAM_SESSION production\n",
-  );
-
-  await client.disconnect();
-  rl.close();
+    console.log("\nLogin succeeded.\n");
+    console.log(
+      "Copy the session string below into TELEGRAM_SESSION. It grants FULL",
+    );
+    console.log("access to this Telegram account — treat it like a password.\n");
+    console.log(client.session.save());
+    console.log(
+      "\nStore it now with:  vercel env add TELEGRAM_SESSION production\n",
+    );
+  } finally {
+    // Runs on the failure path too, so a failed login does not leave the
+    // MTProto connection and the readline handle open.
+    await client.disconnect().catch(() => undefined);
+    rl.close();
+  }
 }
 
 main().catch((err: unknown) => {
@@ -2689,6 +2694,12 @@ read -r -p "WORKOS_JWKS_URL: " WORKOS_JWKS_URL
 read -r -p "OWNER_USER_ID (your WorkOS user id, the token 'sub'): " OWNER_USER_ID
 
 step "4/5  Telegram session string"
+# Create the file restricted BEFORE any secret goes into it. Writing first and
+# chmod-ing after leaves a window where it is group/other readable under a
+# default umask.
+umask 077
+: > .env.local
+chmod 600 .env.local
 cat > .env.local <<ENVFILE
 TELEGRAM_API_ID=${TELEGRAM_API_ID}
 TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
@@ -2698,11 +2709,14 @@ WORKOS_JWKS_URL=${WORKOS_JWKS_URL}
 OWNER_USER_ID=${OWNER_USER_ID}
 MCP_RESOURCE_URL=
 ENVFILE
-chmod 600 .env.local
 echo "Wrote .env.local (chmod 600, gitignored)."
 echo
-echo "Now run:  npm run telegram:login"
-echo "Then paste the printed session string into TELEGRAM_SESSION in .env.local."
+echo "In a SECOND terminal, run:  npm run telegram:login"
+echo "(this wizard is holding this terminal until you press Enter)"
+echo
+echo "That prints a session string. Paste it into TELEGRAM_SESSION in"
+echo ".env.local. It grants full access to the account — treat it like a"
+echo "password, and do not paste it anywhere else."
 pause
 
 step "5/5  Vercel"
