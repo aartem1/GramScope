@@ -41,7 +41,7 @@ Two further shape traps confirmed against `teleproto` 1.229.0 types:
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `loadConfig(env?: NodeJS.ProcessEnv): Config` from `src/config.ts`, where
+- Produces: `loadConfig(env?: Record<string, string | undefined>): Config` from `src/config.ts`, where
   `type Config = { telegramApiId: number; telegramApiHash: string; telegramSession: string; workosIssuer: string; workosJwksUrl: string; ownerUserId: string }`.
   Throws `Error` naming the missing variable when any is absent.
 
@@ -70,7 +70,7 @@ git checkout -b gramscope-mcp
     "lint": "eslint .",
     "test": "vitest run --exclude '**/*.live.test.ts'",
     "test:live": "vitest run tests/live",
-    "telegram:login": "tsx scripts/create-telegram-session.ts"
+    "telegram:login": "tsx --env-file=.env.local scripts/create-telegram-session.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
@@ -80,7 +80,7 @@ git checkout -b gramscope-mcp
     "react-dom": "^19.0.0",
     "teleproto": "^1.229.0",
     "jose": "^5.9.0",
-    "zod": "^3.23.0"
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -185,21 +185,19 @@ const complete = {
 
 describe("loadConfig", () => {
   it("parses a complete environment", () => {
-    const config = loadConfig(complete as NodeJS.ProcessEnv);
+    const config = loadConfig(complete);
     expect(config.telegramApiId).toBe(12345);
     expect(config.ownerUserId).toBe("user_123");
   });
 
   it("names the missing variable", () => {
     const { OWNER_USER_ID, ...partial } = complete;
-    expect(() => loadConfig(partial as NodeJS.ProcessEnv)).toThrow(
-      /OWNER_USER_ID/,
-    );
+    expect(() => loadConfig(partial)).toThrow(/OWNER_USER_ID/);
   });
 
   it("rejects a non-numeric api id", () => {
     expect(() =>
-      loadConfig({ ...complete, TELEGRAM_API_ID: "nope" } as NodeJS.ProcessEnv),
+      loadConfig({ ...complete, TELEGRAM_API_ID: "nope" }),
     ).toThrow(/TELEGRAM_API_ID/);
   });
 });
@@ -224,13 +222,15 @@ export type Config = {
   ownerUserId: string;
 };
 
-function required(env: NodeJS.ProcessEnv, name: string): string {
+type Env = Record<string, string | undefined>;
+
+function required(env: Env, name: string): string {
   const value = env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+export function loadConfig(env: Env = process.env): Config {
   const rawApiId = required(env, "TELEGRAM_API_ID");
   const telegramApiId = Number(rawApiId);
   if (!Number.isInteger(telegramApiId)) {
@@ -339,6 +339,28 @@ describe("mapTelegramError", () => {
     const mapped = mapTelegramError(new Error("session=SECRETVALUE"));
     expect(mapped.message).not.toContain("SECRETVALUE");
   });
+
+  it("passes through an unmapped but well-formed Telegram code", () => {
+    const mapped = mapTelegramError(new FakeRpcError("SOME_UNKNOWN_ERROR", 400));
+    expect(mapped.code).toBe("INTERNAL_ERROR");
+    expect(mapped.message).toContain("SOME_UNKNOWN_ERROR");
+  });
+
+  it("never echoes an errorMessage that is free text rather than a code", () => {
+    const mapped = mapTelegramError(
+      new FakeRpcError("unexpected: session=SECRETVALUE", 500),
+    );
+    expect(mapped.code).toBe("INTERNAL_ERROR");
+    expect(mapped.message).not.toContain("SECRETVALUE");
+  });
+
+  it("does not resolve inherited Object.prototype names as error codes", () => {
+    for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
+      const mapped = mapTelegramError(new FakeRpcError(name, 400));
+      expect(typeof mapped.code).toBe("string");
+      expect(mapped.code).toBe("INTERNAL_ERROR");
+    }
+  });
 });
 ```
 
@@ -403,6 +425,11 @@ export class GramScopeError extends Error {
 ```typescript
 import { GramScopeError, type ErrorCode } from "./taxonomy";
 
+// Real MTProto error codes are conventionally UPPER_SNAKE_CASE. Anything that
+// does not match this shape is free text, which may embed a session string,
+// and is never echoed back to the caller.
+const SAFE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+
 const EXACT: Record<string, ErrorCode> = {
   CHANNEL_INVALID: "CHANNEL_NOT_FOUND",
   CHANNEL_PRIVATE: "PRIVATE_CHANNEL_NOT_ACCESSIBLE",
@@ -436,9 +463,16 @@ export function mapTelegramError(err: unknown): GramScopeError {
         seconds,
       );
     }
-    const mapped = EXACT[raw];
-    if (mapped) return new GramScopeError(mapped, `Telegram error: ${raw}`);
-    return new GramScopeError("INTERNAL_ERROR", `Telegram error: ${raw}`);
+    // Object.hasOwn, not `EXACT[raw]`: a bare index lookup resolves inherited
+    // Object.prototype members, so errorMessage "constructor" would return a
+    // function where an ErrorCode is declared.
+    if (Object.hasOwn(EXACT, raw)) {
+      return new GramScopeError(EXACT[raw]!, `Telegram error: ${raw}`);
+    }
+    if (SAFE_CODE.test(raw)) {
+      return new GramScopeError("INTERNAL_ERROR", `Telegram error: ${raw}`);
+    }
+    return new GramScopeError("INTERNAL_ERROR", "Unexpected internal error");
   }
 
   // Unknown failure: the original message may embed secrets, so it is dropped.
@@ -449,7 +483,7 @@ export function mapTelegramError(err: unknown): GramScopeError {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npm test -- tests/errors.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (10 tests).
 
 - [ ] **Step 6: Commit**
 
@@ -469,7 +503,7 @@ git commit -m "feat: add error taxonomy and MTProto error mapping"
 **Interfaces:**
 - Consumes: `GramScopeError` from `src/errors/taxonomy.ts`.
 - Produces: from `src/pagination.ts`:
-  - `type DialogCursor = { offsetDate: number; offsetId: number; offsetPeerId: string }`
+  - `type DialogCursor = { offsetDate: number; offsetId: number }`
   - `encodeCursor(cursor: DialogCursor): string`
   - `decodeCursor(raw: string): DialogCursor` — throws `GramScopeError("INVALID_CURSOR", …)`
   - `const CURSOR_VERSION = 1`
@@ -486,7 +520,6 @@ import { GramScopeError } from "@/errors/taxonomy";
 const cursor: DialogCursor = {
   offsetDate: 1735689600,
   offsetId: 42,
-  offsetPeerId: "-1001234567890",
 };
 
 describe("cursors", () => {
@@ -511,9 +544,9 @@ describe("cursors", () => {
   });
 
   it("rejects a future cursor version", () => {
-    const forged = Buffer.from(
-      JSON.stringify({ v: 99, d: 1, i: 2, p: "3" }),
-    ).toString("base64url");
+    const forged = Buffer.from(JSON.stringify({ v: 99, d: 1, i: 2 })).toString(
+      "base64url",
+    );
     expect(() => decodeCursor(forged)).toThrowError(/INVALID_CURSOR|version/i);
   });
 
@@ -541,17 +574,23 @@ import { GramScopeError } from "./errors/taxonomy";
 
 export const CURSOR_VERSION = 1;
 
+/**
+ * Telegram resumes getDialogs from offset_date + offset_id + offset_peer, but
+ * offset_peer must be a real InputPeer TL object carrying an access hash, and
+ * a stateless server has no entity cache to rebuild one from. We therefore
+ * paginate on date + id only. The cost is that dialogs sharing an exact
+ * last-message timestamp may tie at a page boundary; Task 11's live
+ * disjoint-pages test is the guard on whether that ever bites in practice.
+ */
 export type DialogCursor = {
   offsetDate: number;
   offsetId: number;
-  offsetPeerId: string;
 };
 
 const payloadSchema = z.object({
   v: z.literal(CURSOR_VERSION),
   d: z.number().int(),
   i: z.number().int(),
-  p: z.string(),
 });
 
 export function encodeCursor(cursor: DialogCursor): string {
@@ -559,7 +598,6 @@ export function encodeCursor(cursor: DialogCursor): string {
     v: CURSOR_VERSION,
     d: cursor.offsetDate,
     i: cursor.offsetId,
-    p: cursor.offsetPeerId,
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
@@ -583,7 +621,6 @@ export function decodeCursor(raw: string): DialogCursor {
   return {
     offsetDate: result.data.d,
     offsetId: result.data.i,
-    offsetPeerId: result.data.p,
   };
 }
 ```
@@ -806,6 +843,7 @@ git commit -m "feat: add source and folder schemas with response size cap"
 - Produces: from `src/telegram/client.ts`:
   - `type TelegramLike = { connected?: boolean; connect(): Promise<boolean>; invoke(request: unknown): Promise<unknown>; getDialogs(params: Record<string, unknown>): Promise<unknown[]>; getEntity(entity: string): Promise<Record<string, unknown>> }`
   - `withTelegram<T>(fn: (client: TelegramLike) => Promise<T>): Promise<T>`
+  - `getApi(): Promise<ApiNamespace>` — the TL request namespace; the only sanctioned way to reach `Api` outside this module
   - `__setClientFactoryForTests(factory: (() => Promise<TelegramLike>) | undefined): void`
   - `__resetClientForTests(): void`
 
@@ -931,6 +969,20 @@ export type TelegramLike = {
 
 type Factory = () => Promise<TelegramLike>;
 
+type ApiNamespace = (typeof import("teleproto"))["Api"];
+
+let apiNamespace: ApiNamespace | undefined;
+
+/**
+ * The TL request namespace. This module is the ONLY one permitted to import
+ * teleproto; every other module reaches MTProto through withTelegram and this
+ * accessor, so the client can be swapped or faked in one place.
+ */
+export async function getApi(): Promise<ApiNamespace> {
+  apiNamespace ??= (await import("teleproto")).Api;
+  return apiNamespace;
+}
+
 // Module scope: on a warm Vercel instance this survives between invocations,
 // which is the point — a fresh MTProto handshake per tool call is wasteful and
 // invites FLOOD_WAIT.
@@ -1004,11 +1056,14 @@ git commit -m "feat: add withTelegram connection lifecycle with reuse and error 
 ### Task 6: Dialog filters — `list_folders` data layer
 
 **Files:**
+- Create: `src/telegram/peer-id.ts`
 - Create: `src/telegram/folders.ts`
 - Test: `tests/telegram-folders.test.ts`
 
 **Interfaces:**
 - Consumes: `withTelegram` from `src/telegram/client.ts`; `TelegramFolder` from `src/schemas/folder.ts`.
+- Produces:
+  - `readBigId(value: unknown): string | undefined` from `src/telegram/peer-id.ts` — unwraps teleproto's BigInteger wrappers to a decimal string. Task 7 imports the same helper rather than redefining it.
 - Produces: from `src/telegram/folders.ts`:
   - `peerId(peer: unknown): string | undefined` — normalizes an `InputPeer` to a decimal id string.
   - `mapDialogFilters(raw: unknown): TelegramFolder[]`
@@ -1102,15 +1157,17 @@ describe("mapDialogFilters", () => {
 Run: `npm test -- tests/telegram-folders.test.ts`
 Expected: FAIL — cannot resolve `@/telegram/folders`.
 
-- [ ] **Step 3: Write the implementation**
+- [ ] **Step 3: Write the shared id helper**
 
-`src/telegram/folders.ts`:
+`src/telegram/peer-id.ts`:
 
 ```typescript
-import { withTelegram } from "./client";
-import type { TelegramFolder } from "../schemas/folder";
-
-function readBigId(value: unknown): string | undefined {
+/**
+ * Unwraps the shapes teleproto uses for Telegram ids — bigint, number, string,
+ * or a BigInteger-like `{ value }` wrapper — into a decimal string. Shared so
+ * folders and dialogs cannot drift apart on id handling.
+ */
+export function readBigId(value: unknown): string | undefined {
   if (typeof value === "bigint") return value.toString();
   if (typeof value === "number") return String(value);
   if (typeof value === "string") return value;
@@ -1119,6 +1176,16 @@ function readBigId(value: unknown): string | undefined {
   }
   return undefined;
 }
+```
+
+- [ ] **Step 4: Write the implementation**
+
+`src/telegram/folders.ts`:
+
+```typescript
+import { getApi, withTelegram } from "./client";
+import { readBigId } from "./peer-id";
+import type { TelegramFolder } from "../schemas/folder";
 
 /** Normalizes any InputPeer variant to a decimal id string. */
 export function peerId(peer: unknown): string | undefined {
@@ -1173,22 +1240,22 @@ export function mapDialogFilters(raw: unknown): TelegramFolder[] {
 
 export async function fetchFolders(): Promise<TelegramFolder[]> {
   return withTelegram(async (client) => {
-    const { Api } = await import("teleproto");
+    const Api = await getApi();
     const raw = await client.invoke(new Api.messages.GetDialogFilters());
     return mapDialogFilters(raw);
   });
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npm test -- tests/telegram-folders.test.ts`
 Expected: PASS (8 tests).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add -A
+git add src/telegram/peer-id.ts src/telegram/folders.ts tests/telegram-folders.test.ts
 git commit -m "feat: map Telegram dialog filters to folders"
 ```
 
@@ -1217,8 +1284,20 @@ git commit -m "feat: map Telegram dialog filters to folders"
 `tests/telegram-dialogs.test.ts`:
 
 ```typescript
-import { describe, expect, it } from "vitest";
-import { dialogType, foldersByPeer, mapDialog } from "@/telegram/dialogs";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  dialogType,
+  foldersByPeer,
+  getChannel,
+  listDialogs,
+  mapDialog,
+} from "@/telegram/dialogs";
+import {
+  __resetClientForTests,
+  __setClientFactoryForTests,
+} from "@/telegram/client";
+import { decodeCursor, encodeCursor } from "@/pagination";
+import { GramScopeError } from "@/errors/taxonomy";
 
 const channelDialog = {
   id: { value: 111n },
@@ -1309,6 +1388,184 @@ describe("mapDialog", () => {
     expect(mapDialog(channelDialog, new Map()).folder_ids).toBeUndefined();
   });
 });
+
+describe("listDialogs cursor advance", () => {
+  // messageId defaults to date for convenience, but the two are distinct
+  // fields: pagination resumes on date AND message id, so a test about tying
+  // dates must be able to vary them independently.
+  function dialogAt(
+    id: number,
+    date: number,
+    unread: number,
+    messageId: number = date,
+  ) {
+    return {
+      id: { value: BigInt(id) },
+      title: `Chat ${id}`,
+      unreadCount: unread,
+      isChannel: true,
+      isGroup: false,
+      isUser: false,
+      date,
+      message: { id: messageId },
+      entity: { className: "Channel" },
+      dialog: { readInboxMaxId: 0 },
+    };
+  }
+
+  function install(dialogs: unknown[]) {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => dialogs,
+      getEntity: async () => ({}),
+    }));
+  }
+
+  afterEach(() => {
+    __resetClientForTests();
+    __setClientFactoryForTests(undefined);
+  });
+
+  it("still returns a cursor when every row is filtered out", async () => {
+    // All read, so unread_only removes everything. Without a cursor the caller
+    // can never reach the unread dialogs further down the list.
+    install([dialogAt(1, 100, 0), dialogAt(2, 90, 0), dialogAt(3, 80, 0)]);
+    const page = await listDialogs({ limit: 2, unread_only: true });
+    expect(page.sources).toEqual([]);
+    expect(page.next_cursor).toBeTruthy();
+  });
+
+  it("derives the cursor from the raw batch, not the filtered length", async () => {
+    // Row 1 is filtered out, so a cursor built from the filtered page length
+    // would point at row 1 and re-serve row 2 forever.
+    install([dialogAt(1, 100, 0), dialogAt(2, 90, 5), dialogAt(3, 80, 5)]);
+    const first = await listDialogs({ limit: 2, unread_only: true });
+    expect(first.sources.map((s) => s.id)).toEqual(["2", "3"]);
+    expect(decodeCursor(first.next_cursor!).offsetDate).toBe(80);
+  });
+
+  it("omits the cursor when the batch is exhausted and nothing was trimmed", async () => {
+    install([dialogAt(1, 100, 5)]);
+    const page = await listDialogs({ limit: 50 });
+    expect(page.next_cursor).toBeUndefined();
+  });
+
+  it("keeps both dialogs when their dates tie across a page boundary", async () => {
+    // The cursor paginates on date AND message id. Equal dates are therefore
+    // safe precisely because the message id still separates the rows — dialogs
+    // 1 and 2 share a date but carry different message ids. (Rows tying on
+    // BOTH is the limitation documented on DialogCursor, which needs
+    // offset_peer to resolve and is left to the live suite.)
+    const all = [
+      dialogAt(1, 100, 5, 20),
+      dialogAt(2, 100, 5, 19),
+      dialogAt(3, 90, 5, 18),
+    ];
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async (params: Record<string, unknown>) => {
+        const afterId = params.offsetId as number | undefined;
+        const rows = afterId
+          ? all.filter((d) => (d.message.id as number) < afterId)
+          : all;
+        return rows.slice(0, params.limit as number);
+      },
+      getEntity: async () => ({}),
+    }));
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 5; page += 1) {
+      const result = await listDialogs({ limit: 1, ...(cursor ? { cursor } : {}) });
+      seen.push(...result.sources.map((s) => s.id));
+      if (!result.next_cursor) break;
+      cursor = result.next_cursor;
+    }
+    expect(seen).toEqual(["1", "2", "3"]);
+  });
+
+  it("forwards the cursor offsets to getDialogs", async () => {
+    // The cursor must actually reach the query; a cursor that round-trips but
+    // is never sent silently re-serves page one forever.
+    const calls: Record<string, unknown>[] = [];
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async (params: Record<string, unknown>) => {
+        calls.push(params);
+        return [];
+      },
+      getEntity: async () => ({}),
+    }));
+    await listDialogs({
+      limit: 10,
+      cursor: encodeCursor({ offsetDate: 100, offsetId: 5 }),
+    });
+    expect(calls[0]).toMatchObject({ offsetDate: 100, offsetId: 5 });
+  });
+});
+
+describe("getChannel", () => {
+  function installEntity(entity: Record<string, unknown>) {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => [],
+      getEntity: async () => entity,
+    }));
+  }
+
+  afterEach(() => {
+    __resetClientForTests();
+    __setClientFactoryForTests(undefined);
+  });
+
+  it("rejects when no identifier is given", async () => {
+    installEntity({});
+    await expect(getChannel({})).rejects.toBeInstanceOf(GramScopeError);
+  });
+
+  it("rejects when more than one identifier is given", async () => {
+    installEntity({});
+    await expect(
+      getChannel({ id: "1", username: "two" }),
+    ).rejects.toBeInstanceOf(GramScopeError);
+  });
+
+  it("rejects a URL that is not a Telegram link", async () => {
+    installEntity({});
+    await expect(
+      getChannel({ url: "https://example.com/nope" }),
+    ).rejects.toBeInstanceOf(GramScopeError);
+  });
+
+  it("accepts both the plain and the /s/ t.me URL forms", async () => {
+    installEntity({
+      className: "Channel",
+      id: { value: 111n },
+      title: "AI News",
+      username: "ainews",
+    });
+    expect((await getChannel({ url: "https://t.me/ainews" })).id).toBe("111");
+    expect((await getChannel({ url: "https://t.me/s/ainews" })).id).toBe("111");
+  });
+
+  it("classifies a megagroup as a group, not a channel", async () => {
+    installEntity({
+      className: "Channel",
+      id: { value: 222n },
+      title: "Chat",
+      megagroup: true,
+    });
+    expect((await getChannel({ id: "222" })).type).toBe("group");
+  });
+});
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
@@ -1323,6 +1580,7 @@ Expected: FAIL — cannot resolve `@/telegram/dialogs`.
 ```typescript
 import { withTelegram } from "./client";
 import { fetchFolders } from "./folders";
+import { readBigId } from "./peer-id";
 import type { TelegramFolder } from "../schemas/folder";
 import type { TelegramSource } from "../schemas/source";
 import { decodeCursor, encodeCursor } from "../pagination";
@@ -1336,16 +1594,6 @@ export type ListDialogsInput = {
   limit: number;
   cursor?: string;
 };
-
-function readBigId(value: unknown): string | undefined {
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
-  if (typeof value === "object" && value !== null && "value" in value) {
-    return readBigId((value as { value: unknown }).value);
-  }
-  return undefined;
-}
 
 export function dialogType(dialog: unknown): "channel" | "group" | "chat" {
   const d = dialog as Record<string, unknown>;
@@ -1407,7 +1655,7 @@ export async function listDialogs(
 ): Promise<{ sources: TelegramSource[]; next_cursor?: string }> {
   const cursor = input.cursor ? decodeCursor(input.cursor) : undefined;
   const folders = await fetchFolders();
-  const index = foldersByPeer(folders);
+  const folderIndex = foldersByPeer(folders);
 
   let allowed: Set<string> | undefined;
   if (input.folder_id) {
@@ -1424,44 +1672,59 @@ export async function listDialogs(
     );
   }
 
-  const raw = await withTelegram(async (client) => {
-    return client.getDialogs({
-      limit: input.limit + 1,
+  const batchSize = input.limit + 1;
+  const raw = await withTelegram(async (client) =>
+    client.getDialogs({
+      limit: batchSize,
+      // Only date and id: teleproto forwards offsetPeer straight into
+      // Api.messages.GetDialogs without resolving it, so it must be a real
+      // InputPeer object, which a stateless server cannot rebuild. See the
+      // note on DialogCursor.
       ...(cursor
         ? { offsetDate: cursor.offsetDate, offsetId: cursor.offsetId }
         : {}),
-    });
-  });
+    }),
+  );
 
-  let mapped = raw.map((dialog) => mapDialog(dialog, index));
-  if (allowed) mapped = mapped.filter((s) => allowed.has(s.id));
+  // Filters below are client-side, so a row must keep its link to the raw
+  // dialog it came from: the cursor is derived from how far we consumed the
+  // RAW batch, never from the filtered page's length.
+  type Row = { raw: Record<string, unknown>; source: TelegramSource };
+  const rows: Row[] = raw.map((dialog) => ({
+    raw: (dialog ?? {}) as Record<string, unknown>,
+    source: mapDialog(dialog, folderIndex),
+  }));
+
+  let kept = rows;
+  if (allowed) kept = kept.filter((r) => allowed.has(r.source.id));
   if (input.unread_only) {
-    mapped = mapped.filter((s) => (s.unread_count ?? 0) > 0);
+    kept = kept.filter((r) => (r.source.unread_count ?? 0) > 0);
   }
-  if (input.type) mapped = mapped.filter((s) => s.type === input.type);
+  if (input.type) kept = kept.filter((r) => r.source.type === input.type);
 
-  const hasMore = mapped.length > input.limit;
-  let page = mapped.slice(0, input.limit);
+  const limited = kept.slice(0, input.limit);
+  const fit = fitToSizeCap(
+    limited.map((r) => r.source),
+    (items) => ({ sources: items }),
+  );
+  const page = limited.slice(0, fit);
+  const sources = page.map((r) => r.source);
 
-  const kept = fitToSizeCap(page, (items) => ({ sources: items }));
-  const trimmedBySize = kept < page.length;
-  page = page.slice(0, kept);
+  // Truncated inside the batch: resume after the last row we actually
+  // returned. Otherwise we consumed the whole batch: resume after its end.
+  const truncated = page.length < kept.length;
+  const lastExamined = truncated ? page[page.length - 1] : rows[rows.length - 1];
+  const hasMore = truncated || raw.length >= batchSize;
 
-  if (!hasMore && !trimmedBySize) return { sources: page };
+  if (!hasMore || !lastExamined) return { sources };
 
-  const lastRaw = raw[page.length - 1] as Record<string, unknown> | undefined;
-  if (!lastRaw) return { sources: page };
-
+  const last = lastExamined.raw;
+  const message = last.message as Record<string, unknown> | undefined;
   return {
-    sources: page,
+    sources,
     next_cursor: encodeCursor({
-      offsetDate: typeof lastRaw.date === "number" ? lastRaw.date : 0,
-      offsetId:
-        typeof (lastRaw.message as Record<string, unknown> | undefined)?.id ===
-        "number"
-          ? ((lastRaw.message as Record<string, unknown>).id as number)
-          : 0,
-      offsetPeerId: readBigId(lastRaw.id) ?? "",
+      offsetDate: typeof last.date === "number" ? last.date : 0,
+      offsetId: typeof message?.id === "number" ? message.id : 0,
     }),
   };
 }
@@ -1525,7 +1788,7 @@ export async function getChannel(input: {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npm test -- tests/telegram-dialogs.test.ts`
-Expected: PASS (8 tests).
+Expected: PASS (18 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -1584,7 +1847,7 @@ function env() {
     WORKOS_JWKS_URL: `${ISSUER}/jwks`,
     OWNER_USER_ID: "user_owner",
     MCP_RESOURCE_URL: AUDIENCE,
-  } as NodeJS.ProcessEnv;
+  };
 }
 
 async function token(sub: string, overrides: Record<string, string> = {}) {
@@ -1863,6 +2126,7 @@ Expected: FAIL — cannot resolve `@/mcp/tool-result`.
 ```typescript
 import { GramScopeError, type StructuredError } from "../errors/taxonomy";
 import { mapTelegramError } from "../errors/from-telegram";
+import { logToolCall } from "./logging";
 
 export type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -1887,6 +2151,53 @@ export function errorResult(err: unknown): ToolResult {
     isError: true,
   };
 }
+
+function countOf(data: unknown): number | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  for (const key of ["sources", "folders"]) {
+    const value = (data as Record<string, unknown>)[key];
+    if (Array.isArray(value)) return value.length;
+  }
+  return undefined;
+}
+
+/**
+ * Runs one tool: times it, converts the outcome into a ToolResult, and records
+ * a log line naming the tool. Every tool body goes through this, so no handler
+ * can throw out into the transport and none is missing from the logs.
+ */
+export async function runTool<T>(
+  name: string,
+  run: () => Promise<T>,
+  sink?: (line: string) => void,
+): Promise<ToolResult> {
+  const started = Date.now();
+  try {
+    const data = await run();
+    logToolCall(
+      {
+        name,
+        durationMs: Date.now() - started,
+        status: "success",
+        ...(countOf(data) !== undefined ? { count: countOf(data) } : {}),
+      },
+      sink,
+    );
+    return okResult(data);
+  } catch (err) {
+    const result = errorResult(err);
+    logToolCall(
+      {
+        name,
+        durationMs: Date.now() - started,
+        status: "error",
+        code: (result.structuredContent as StructuredError).code,
+      },
+      sink,
+    );
+    return result;
+  }
+}
 ```
 
 - [ ] **Step 4: Write the three tools**
@@ -1898,7 +2209,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { fetchFolders } from "../../telegram/folders";
 import { telegramFolderSchema } from "../../schemas/folder";
-import { errorResult, okResult } from "../tool-result";
+import { runTool } from "../tool-result";
 
 export function registerListFolders(server: McpServer): void {
   server.registerTool(
@@ -1911,13 +2222,9 @@ export function registerListFolders(server: McpServer): void {
       outputSchema: z.object({ folders: z.array(telegramFolderSchema) }),
       annotations: { readOnlyHint: true },
     },
-    async () => {
-      try {
-        return okResult({ folders: await fetchFolders() });
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
+    async () => runTool("list_folders", async () => ({
+      folders: await fetchFolders(),
+    })),
   );
 }
 ```
@@ -1929,7 +2236,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { listDialogs } from "../../telegram/dialogs";
 import { telegramSourceSchema } from "../../schemas/source";
-import { errorResult, okResult } from "../tool-result";
+import { runTool } from "../tool-result";
 
 export function registerListDialogs(server: McpServer): void {
   server.registerTool(
@@ -1951,13 +2258,7 @@ export function registerListDialogs(server: McpServer): void {
       }),
       annotations: { readOnlyHint: true },
     },
-    async (input) => {
-      try {
-        return okResult(await listDialogs(input));
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
+    async (input) => runTool("list_dialogs", () => listDialogs(input)),
   );
 }
 ```
@@ -1969,7 +2270,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { getChannel } from "../../telegram/dialogs";
 import { telegramSourceSchema } from "../../schemas/source";
-import { errorResult, okResult } from "../tool-result";
+import { runTool } from "../tool-result";
 
 export function registerGetChannel(server: McpServer): void {
   server.registerTool(
@@ -1986,13 +2287,7 @@ export function registerGetChannel(server: McpServer): void {
       outputSchema: telegramSourceSchema,
       annotations: { readOnlyHint: true },
     },
-    async (input) => {
-      try {
-        return okResult(await getChannel(input));
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
+    async (input) => runTool("get_channel", () => getChannel(input)),
   );
 }
 ```
@@ -2023,6 +2318,8 @@ surfaces this through its `onEvent` callback.
 ```typescript
 import { describe, expect, it, vi } from "vitest";
 import { formatEvent, logEvent } from "@/mcp/logging";
+import { runTool } from "@/mcp/tool-result";
+import { GramScopeError } from "@/errors/taxonomy";
 
 describe("formatEvent", () => {
   it("reports tool name, duration and result count on completion", () => {
@@ -2079,6 +2376,59 @@ describe("formatEvent", () => {
       sink,
     );
     expect(sink).toHaveBeenCalledOnce();
+  });
+});
+
+describe("runTool logging", () => {
+  it("names the tool and counts the results on success", async () => {
+    const sink = vi.fn();
+    const result = await runTool(
+      "list_dialogs",
+      async () => ({ sources: [{ id: "1" }, { id: "2" }] }),
+      sink,
+    );
+    expect(result.isError).toBeUndefined();
+    const line = sink.mock.calls[0]![0] as string;
+    expect(line).toContain("tool=list_dialogs");
+    expect(line).toContain("status=success");
+    expect(line).toContain("count=2");
+    expect(line).toMatch(/duration_ms=\d+/);
+  });
+
+  it("logs the error code and returns a structured error", async () => {
+    const sink = vi.fn();
+    const result = await runTool(
+      "get_channel",
+      async () => {
+        throw new GramScopeError("CHANNEL_NOT_FOUND", "nope");
+      },
+      sink,
+    );
+    expect(result.isError).toBe(true);
+    const line = sink.mock.calls[0]![0] as string;
+    expect(line).toContain("tool=get_channel");
+    expect(line).toContain("code=CHANNEL_NOT_FOUND");
+  });
+
+  it("never writes payload bodies into the log line", async () => {
+    const sink = vi.fn();
+    await runTool(
+      "list_dialogs",
+      async () => ({
+        sources: [{ id: "1", title: "Secret Channel Name" }],
+      }),
+      sink,
+    );
+    expect(sink.mock.calls[0]![0]).not.toContain("Secret Channel Name");
+  });
+
+  it("contains a throw rather than letting it reach the transport", async () => {
+    const sink = vi.fn();
+    await expect(
+      runTool("list_folders", async () => {
+        throw new Error("boom");
+      }, sink),
+    ).resolves.toMatchObject({ isError: true });
   });
 });
 ```
@@ -2153,12 +2503,44 @@ export function logEvent(
   const line = formatEvent(event);
   if (line) sink(line);
 }
+
+export type ToolCallLog = {
+  name: string;
+  durationMs: number;
+  status: "success" | "error";
+  count?: number;
+  code?: string;
+};
+
+/**
+ * Tool-level logging. mcp-handler's REQUEST_COMPLETED event carries only the
+ * generic JSON-RPC method ("tools/call") and no result, so the tool name,
+ * result count and error class are not derivable from it. They are recorded
+ * here instead, where the call actually happens.
+ */
+export function formatToolCall(entry: ToolCallLog): string {
+  const parts = [
+    `mcp tool=${entry.name}`,
+    `status=${entry.status}`,
+    `duration_ms=${entry.durationMs}`,
+  ];
+  if (entry.count !== undefined) parts.push(`count=${entry.count}`);
+  if (entry.code) parts.push(`code=${entry.code}`);
+  return parts.join(" ");
+}
+
+export function logToolCall(
+  entry: ToolCallLog,
+  sink: (line: string) => void = console.log,
+): void {
+  sink(formatToolCall(entry));
+}
 ```
 
 - [ ] **Step 8: Run the test to verify it passes**
 
 Run: `npm test -- tests/logging.test.ts`
-Expected: PASS (5 tests).
+Expected: PASS (9 tests).
 
 - [ ] **Step 9: Write the routes**
 
@@ -2196,10 +2578,22 @@ import {
   protectedResourceHandler,
 } from "mcp-handler";
 
-const issuer = process.env.WORKOS_ISSUER;
-if (!issuer) throw new Error("Missing required environment variable: WORKOS_ISSUER");
+// Read the issuer per request, not at module scope. Next imports every route
+// module during "Collecting page data", so a top-level throw fails the whole
+// build wherever env vars are injected at runtime rather than build time —
+// fork preview builds, local builds, and secret-at-runtime pipelines. This
+// also matches how loadConfig and verifyOwnerToken read their env.
+export function GET(req: Request): Response {
+  const issuer = process.env.WORKOS_ISSUER;
+  if (!issuer) {
+    return Response.json(
+      { error: "server_misconfigured" },
+      { status: 500 },
+    );
+  }
+  return protectedResourceHandler({ authServerUrls: [issuer] })(req);
+}
 
-export const GET = protectedResourceHandler({ authServerUrls: [issuer] });
 export const OPTIONS = metadataCorsOptionsRequestHandler();
 ```
 
@@ -2252,7 +2646,8 @@ async function main() {
   const apiHash = process.env.TELEGRAM_API_HASH;
   if (!Number.isInteger(apiId) || !apiHash) {
     throw new Error(
-      "Set TELEGRAM_API_ID and TELEGRAM_API_HASH before running this script",
+      "TELEGRAM_API_ID and TELEGRAM_API_HASH must be set in .env.local. " +
+        "Run ./scripts/provision.sh first, which creates it.",
     );
   }
 
@@ -2260,27 +2655,31 @@ async function main() {
     connectionRetries: 3,
   });
 
-  await client.start({
+  try {
+    await client.start({
     phoneNumber: () => rl.question("Phone number (with country code): "),
     phoneCode: () => rl.question("Login code from Telegram: "),
     password: () => rl.question("Two-factor password (blank if unset): "),
-    onError: (err) => {
-      console.error("Login failed:", err.message);
-    },
-  });
+      onError: (err) => {
+        console.error("Login failed:", err.message);
+      },
+    });
 
-  console.log("\nLogin succeeded.\n");
-  console.log(
-    "Copy the session string below into TELEGRAM_SESSION. It grants FULL",
-  );
-  console.log("access to this Telegram account — treat it like a password.\n");
-  console.log(client.session.save());
-  console.log(
-    "\nStore it now with:  vercel env add TELEGRAM_SESSION production\n",
-  );
-
-  await client.disconnect();
-  rl.close();
+    console.log("\nLogin succeeded.\n");
+    console.log(
+      "Copy the session string below into TELEGRAM_SESSION. It grants FULL",
+    );
+    console.log("access to this Telegram account — treat it like a password.\n");
+    console.log(client.session.save());
+    console.log(
+      "\nStore it now with:  vercel env add TELEGRAM_SESSION production\n",
+    );
+  } finally {
+    // Runs on the failure path too, so a failed login does not leave the
+    // MTProto connection and the readline handle open.
+    await client.disconnect().catch(() => undefined);
+    rl.close();
+  }
 }
 
 main().catch((err: unknown) => {
@@ -2339,6 +2738,12 @@ read -r -p "WORKOS_JWKS_URL: " WORKOS_JWKS_URL
 read -r -p "OWNER_USER_ID (your WorkOS user id, the token 'sub'): " OWNER_USER_ID
 
 step "4/5  Telegram session string"
+# Create the file restricted BEFORE any secret goes into it. Writing first and
+# chmod-ing after leaves a window where it is group/other readable under a
+# default umask.
+umask 077
+: > .env.local
+chmod 600 .env.local
 cat > .env.local <<ENVFILE
 TELEGRAM_API_ID=${TELEGRAM_API_ID}
 TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
@@ -2348,11 +2753,14 @@ WORKOS_JWKS_URL=${WORKOS_JWKS_URL}
 OWNER_USER_ID=${OWNER_USER_ID}
 MCP_RESOURCE_URL=
 ENVFILE
-chmod 600 .env.local
 echo "Wrote .env.local (chmod 600, gitignored)."
 echo
-echo "Now run:  npm run telegram:login"
-echo "Then paste the printed session string into TELEGRAM_SESSION in .env.local."
+echo "In a SECOND terminal, run:  npm run telegram:login"
+echo "(this wizard is holding this terminal until you press Enter)"
+echo
+echo "That prints a session string. Paste it into TELEGRAM_SESSION in"
+echo ".env.local. It grants full access to the account — treat it like a"
+echo "password, and do not paste it anywhere else."
 pause
 
 step "5/5  Vercel"
@@ -2453,9 +2861,12 @@ suite("Foundation against the real account", () => {
     expect(sources[0]!.id).toBeTruthy();
   });
 
-  it("paginates into disjoint pages", async () => {
+  it("paginates into disjoint pages", async (ctx) => {
     const first = await listDialogs({ limit: 3 });
-    if (!first.next_cursor) return;
+    // Skip visibly rather than pass silently: with fewer than four dialogs
+    // there is no second page to compare, and a green tick here would be
+    // mistaken for evidence that pagination works.
+    if (!first.next_cursor) ctx.skip();
     const second = await listDialogs({ limit: 3, cursor: first.next_cursor });
     const firstIds = new Set(first.sources.map((s) => s.id));
     for (const source of second.sources) {
@@ -2470,9 +2881,9 @@ suite("Foundation against the real account", () => {
     ).toBeLessThanOrEqual(MAX_RESPONSE_BYTES);
   });
 
-  it("agrees between folder membership and folder_ids", async () => {
+  it("agrees between folder membership and folder_ids", async (ctx) => {
     const folders = await fetchFolders();
-    if (folders.length === 0) return;
+    if (folders.length === 0) ctx.skip();
     const folder = folders[0]!;
     const { sources } = await listDialogs({
       folder_id: folder.id,
@@ -2483,10 +2894,10 @@ suite("Foundation against the real account", () => {
     }
   });
 
-  it("resolves the same source by id, username and url", async () => {
+  it("resolves the same source by id, username and url", async (ctx) => {
     const { sources } = await listDialogs({ type: "channel", limit: 50 });
     const withUsername = sources.find((s) => s.username);
-    if (!withUsername) return;
+    if (!withUsername) ctx.skip();
 
     const byId = await getChannel({ id: withUsername.id });
     const byUsername = await getChannel({ username: withUsername.username! });
@@ -2500,8 +2911,19 @@ suite("Foundation against the real account", () => {
   it("does not advance any read pointer", async () => {
     const before = await listDialogs({ limit: 50 });
     const pointers = new Map(
-      before.sources.map((s) => [s.id, s.read_inbox_max_id]),
+      before.sources
+        .filter((s) => s.read_inbox_max_id !== undefined)
+        .map((s) => [s.id, s.read_inbox_max_id]),
     );
+
+    // Refuse to pass vacuously. If no dialog reports a read pointer, the
+    // comparison below would be undefined === undefined for every source and
+    // would "pass" while proving nothing. This is the invariant every later
+    // mark_read workflow rests on, so an unverifiable run must fail loudly.
+    expect(
+      pointers.size,
+      "no dialog reported read_inbox_max_id, so read-safety cannot be verified",
+    ).toBeGreaterThan(0);
 
     await fetchFolders();
     for (const source of before.sources.slice(0, 5)) {
@@ -2509,10 +2931,14 @@ suite("Foundation against the real account", () => {
     }
 
     const after = await listDialogs({ limit: 50 });
+    let compared = 0;
     for (const source of after.sources) {
-      if (!pointers.has(source.id)) continue;
-      expect(source.read_inbox_max_id).toBe(pointers.get(source.id));
+      const expected = pointers.get(source.id);
+      if (expected === undefined) continue;
+      expect(source.read_inbox_max_id).toBe(expected);
+      compared += 1;
     }
+    expect(compared).toBeGreaterThan(0);
   });
 });
 ```
@@ -2520,7 +2946,7 @@ suite("Foundation against the real account", () => {
 - [ ] **Step 2: Run the live suite**
 
 Run: `GRAMSCOPE_LIVE=1 npm run test:live`
-Expected: PASS (6 tests). If the account has no folders or no public channels, the relevant tests return early — that is expected, not a failure.
+Expected: PASS (6 tests). Tests whose preconditions the account does not meet report as SKIPPED, not passed — a green tick always means the property was actually checked. Investigate any skip before treating the suite as evidence.
 
 - [ ] **Step 3: Confirm the fast suite still excludes live tests**
 

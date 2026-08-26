@@ -22,6 +22,19 @@ created: 2026-08-26
 
 - 2026-08-26 — owner will provide Telegram credentials (once the account exists), GitHub, and Vercel access, so the live-tier tests and deployment run in-session rather than by hand. Acceptance steps performed inside the ChatGPT connector UI remain owner-run. Secret hygiene agreed: gitignored `.env.local` locally, `vercel env add` for deploys, never in chat, commits, specs, or plans; the StringSession is full account access and is never printed.
 
+# Blocked — awaiting owner
+- [ ] Create the dedicated Telegram account (needs its own phone number), then run `./scripts/provision.sh` and `npm run telegram:login` to produce `TELEGRAM_SESSION`.
+- [ ] Run the live suite: `GRAMSCOPE_LIVE=1 npm run test:live`. Six tests; unmet preconditions report as SKIPPED, never as passed, so investigate any skip.
+- [ ] Deploy to Vercel and confirm `/.well-known/oauth-protected-resource` names the AuthKit issuer and that `/api/mcp` returns 401 unauthenticated.
+- [ ] Acceptance criteria 3 and 4 run inside ChatGPT's connector UI and cannot be automated.
+- [ ] First live run must confirm `get_channel` by marked id resolves on a cold serverless instance — teleproto looks the peer up in a session entity cache that `StringSession` does not persist.
+
+# Decisions carried into later sub-projects
+- `TelegramSource.id` is Telegram's MARKED id (`-100…` for channels). Every later tool joins on this field, and sub-project 6 keys source notes by it.
+- Cursors carry a kind discriminator (`k`); each new paginated tool must use its own, or a foreign cursor silently returns a wrong page.
+- There is no access-hash story yet. A stateless instance has no entity cache, which blocks every write tool in sub-projects 5 and 6. Resolve before designing `mark_read`, folder edits, and joins — the answer may change what `id` means.
+- `readOnlyHint` is currently uniform and unenforced. When write tools land, derive the annotation from the same value that drives behavior.
+
 # Links
 - brief: README.md
 - spec (sub-project 1, Foundation): docs/superpowers/specs/2026-08-26-gramscope-foundation-design.md

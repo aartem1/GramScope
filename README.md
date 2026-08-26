@@ -930,6 +930,8 @@ Provide a local one-time script:
 npm run telegram:login
 ```
 
+Run `./scripts/provision.sh` first — the login script reads its credentials from `.env.local`, so that file must already exist.
+
 Expected flow:
 1. enter Telegram phone number;
 2. enter Telegram login code;
@@ -1152,3 +1154,27 @@ Treat these as accepted unless new evidence gives a concrete reason to revisit t
 Do not predict every workflow.
 
 Expose good primitives, preserve Telegram state, and let ChatGPT compose the workflows.
+
+---
+
+## Setup
+
+```bash
+./scripts/provision.sh
+```
+
+One pass, start to finish: Telegram credentials, the Telegram login, the first
+Vercel deploy (which is what assigns your address), the WorkOS configuration
+that depends on that address, then the variables and a redeploy. Re-running it
+keeps whatever you already provided, so it is safe to resume after a failure.
+Pass `--skip-deploy` to handle Vercel yourself.
+
+The Telegram session is written straight into `.env.local` (mode 600,
+gitignored) and is never printed. That file grants full access to the account —
+treat it like a password. Production values live in Vercel environment
+variables; nothing is stored in this repository.
+
+One value must match in three places, or every request fails with 401: the
+resource identifier. The wizard prints it and registers it for you in
+`MCP_RESOURCE_URL`; you paste the same string into WorkOS under
+Connect → Configuration → Resource Indicators.

@@ -1,0 +1,45 @@
+import { createMcpHandler, withMcpAuth } from "mcp-handler";
+import { registerTools } from "@/mcp/server";
+import { verifyOwnerToken } from "@/mcp/auth";
+import { logEvent } from "@/mcp/logging";
+
+const handler = createMcpHandler(
+  (server) => {
+    registerTools(server);
+  },
+  {
+    serverInfo: { name: "gramscope", version: "0.1.0" },
+    onEvent: (event) => logEvent(event),
+  },
+);
+
+/**
+ * Pins the origin the 401 challenge advertises, instead of letting
+ * mcp-handler derive it from the X-Forwarded-Host header a client controls.
+ *
+ * mcp-handler concatenates `${origin}${resourceMetadataPath}`, so it wants the
+ * ORIGIN — MCP_RESOURCE_URL is the full resource identifier (origin +
+ * /api/mcp), hence the URL parse. Read defensively rather than through
+ * loadConfig: Next imports every route module during "Collecting page data",
+ * where runtime-only env vars are absent, and a module-scope throw would fail
+ * the build.
+ */
+function resourceOrigin(): string | undefined {
+  const raw = process.env.MCP_RESOURCE_URL;
+  if (!raw) return undefined;
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+const origin = resourceOrigin();
+
+const authed = withMcpAuth(handler, verifyOwnerToken, {
+  required: true,
+  resourceMetadataPath: "/.well-known/oauth-protected-resource",
+  ...(origin ? { resourceUrl: origin } : {}),
+});
+
+export { authed as GET, authed as POST };
