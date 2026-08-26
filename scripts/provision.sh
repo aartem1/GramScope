@@ -43,6 +43,12 @@ read -r -p "WORKOS_JWKS_URL: " WORKOS_JWKS_URL
 read -r -p "OWNER_USER_ID (your WorkOS user id, the token 'sub'): " OWNER_USER_ID
 
 step "4/5  Telegram session string"
+# Create the file restricted BEFORE any secret goes into it. Writing first and
+# chmod-ing after leaves a window where it is group/other readable under a
+# default umask.
+umask 077
+: > .env.local
+chmod 600 .env.local
 cat > .env.local <<ENVFILE
 TELEGRAM_API_ID=${TELEGRAM_API_ID}
 TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
@@ -52,11 +58,14 @@ WORKOS_JWKS_URL=${WORKOS_JWKS_URL}
 OWNER_USER_ID=${OWNER_USER_ID}
 MCP_RESOURCE_URL=
 ENVFILE
-chmod 600 .env.local
 echo "Wrote .env.local (chmod 600, gitignored)."
 echo
-echo "Now run:  npm run telegram:login"
-echo "Then paste the printed session string into TELEGRAM_SESSION in .env.local."
+echo "In a SECOND terminal, run:  npm run telegram:login"
+echo "(this wizard is holding this terminal until you press Enter)"
+echo
+echo "That prints a session string. Paste it into TELEGRAM_SESSION in"
+echo ".env.local. It grants full access to the account — treat it like a"
+echo "password, and do not paste it anywhere else."
 pause
 
 step "5/5  Vercel"

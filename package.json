@@ -12,7 +12,7 @@
     "lint": "eslint .",
     "test": "vitest run --exclude '**/*.live.test.ts'",
     "test:live": "vitest run tests/live",
-    "telegram:login": "tsx scripts/create-telegram-session.ts"
+    "telegram:login": "tsx --env-file=.env.local scripts/create-telegram-session.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
