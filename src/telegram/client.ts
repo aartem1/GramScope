@@ -11,6 +11,20 @@ export type TelegramLike = {
 
 type Factory = () => Promise<TelegramLike>;
 
+type ApiNamespace = (typeof import("teleproto"))["Api"];
+
+let apiNamespace: ApiNamespace | undefined;
+
+/**
+ * The TL request namespace. This module is the ONLY one permitted to import
+ * teleproto; every other module reaches MTProto through withTelegram and this
+ * accessor, so the client can be swapped or faked in one place.
+ */
+export async function getApi(): Promise<ApiNamespace> {
+  apiNamespace ??= (await import("teleproto")).Api;
+  return apiNamespace;
+}
+
 // Module scope: on a warm Vercel instance this survives between invocations,
 // which is the point — a fresh MTProto handshake per tool call is wasteful and
 // invites FLOOD_WAIT.

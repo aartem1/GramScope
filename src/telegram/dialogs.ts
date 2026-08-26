@@ -1,5 +1,6 @@
 import { withTelegram } from "./client";
 import { fetchFolders } from "./folders";
+import { readBigId } from "./peer-id";
 import type { TelegramFolder } from "../schemas/folder";
 import type { TelegramSource } from "../schemas/source";
 import { decodeCursor, encodeCursor } from "../pagination";
@@ -13,16 +14,6 @@ export type ListDialogsInput = {
   limit: number;
   cursor?: string;
 };
-
-function readBigId(value: unknown): string | undefined {
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
-  if (typeof value === "object" && value !== null && "value" in value) {
-    return readBigId((value as { value: unknown }).value);
-  }
-  return undefined;
-}
 
 export function dialogType(dialog: unknown): "channel" | "group" | "chat" {
   const d = dialog as Record<string, unknown>;
@@ -105,8 +96,15 @@ export async function listDialogs(
   const raw = await withTelegram(async (client) =>
     client.getDialogs({
       limit: batchSize,
+      // offsetPeer matters: Telegram resumes from the offset_date + offset_id +
+      // offset_peer triple. Sending only the first two degrades pagination to
+      // date precision, which skips or repeats dialogs whose dates tie.
       ...(cursor
-        ? { offsetDate: cursor.offsetDate, offsetId: cursor.offsetId }
+        ? {
+            offsetDate: cursor.offsetDate,
+            offsetId: cursor.offsetId,
+            ...(cursor.offsetPeerId ? { offsetPeer: cursor.offsetPeerId } : {}),
+          }
         : {}),
     }),
   );

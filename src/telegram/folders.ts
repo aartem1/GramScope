@@ -1,15 +1,6 @@
-import { withTelegram } from "./client";
+import { getApi, withTelegram } from "./client";
+import { readBigId } from "./peer-id";
 import type { TelegramFolder } from "../schemas/folder";
-
-function readBigId(value: unknown): string | undefined {
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
-  if (typeof value === "object" && value !== null && "value" in value) {
-    return readBigId((value as { value: unknown }).value);
-  }
-  return undefined;
-}
 
 /** Normalizes any InputPeer variant to a decimal id string. */
 export function peerId(peer: unknown): string | undefined {
@@ -64,7 +55,7 @@ export function mapDialogFilters(raw: unknown): TelegramFolder[] {
 
 export async function fetchFolders(): Promise<TelegramFolder[]> {
   return withTelegram(async (client) => {
-    const { Api } = await import("teleproto");
+    const Api = await getApi();
     const raw = await client.invoke(new Api.messages.GetDialogFilters());
     return mapDialogFilters(raw);
   });

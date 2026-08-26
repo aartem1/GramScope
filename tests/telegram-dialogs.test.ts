@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { dialogType, foldersByPeer, listDialogs, mapDialog } from "@/telegram/dialogs";
+import {
+  dialogType,
+  foldersByPeer,
+  getChannel,
+  listDialogs,
+  mapDialog,
+} from "@/telegram/dialogs";
 import {
   __resetClientForTests,
   __setClientFactoryForTests,
 } from "@/telegram/client";
-import { decodeCursor } from "@/pagination";
+import { decodeCursor, encodeCursor } from "@/pagination";
+import { GramScopeError } from "@/errors/taxonomy";
 
 const channelDialog = {
   id: { value: 111n },
@@ -149,5 +156,87 @@ describe("listDialogs cursor advance", () => {
     install([dialogAt(1, 100, 5)]);
     const page = await listDialogs({ limit: 50 });
     expect(page.next_cursor).toBeUndefined();
+  });
+
+  it("forwards the whole offset triple to getDialogs", async () => {
+    // Telegram resumes from offset_date + offset_id + offset_peer. Dropping the
+    // peer silently degrades pagination to date precision.
+    const calls: Record<string, unknown>[] = [];
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async (params: Record<string, unknown>) => {
+        calls.push(params);
+        return [];
+      },
+      getEntity: async () => ({}),
+    }));
+    await listDialogs({
+      limit: 10,
+      cursor: encodeCursor({ offsetDate: 100, offsetId: 5, offsetPeerId: "777" }),
+    });
+    expect(calls[0]).toMatchObject({
+      offsetDate: 100,
+      offsetId: 5,
+      offsetPeer: "777",
+    });
+  });
+});
+
+describe("getChannel", () => {
+  function installEntity(entity: Record<string, unknown>) {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => [],
+      getEntity: async () => entity,
+    }));
+  }
+
+  afterEach(() => {
+    __resetClientForTests();
+    __setClientFactoryForTests(undefined);
+  });
+
+  it("rejects when no identifier is given", async () => {
+    installEntity({});
+    await expect(getChannel({})).rejects.toBeInstanceOf(GramScopeError);
+  });
+
+  it("rejects when more than one identifier is given", async () => {
+    installEntity({});
+    await expect(
+      getChannel({ id: "1", username: "two" }),
+    ).rejects.toBeInstanceOf(GramScopeError);
+  });
+
+  it("rejects a URL that is not a Telegram link", async () => {
+    installEntity({});
+    await expect(
+      getChannel({ url: "https://example.com/nope" }),
+    ).rejects.toBeInstanceOf(GramScopeError);
+  });
+
+  it("accepts both the plain and the /s/ t.me URL forms", async () => {
+    installEntity({
+      className: "Channel",
+      id: { value: 111n },
+      title: "AI News",
+      username: "ainews",
+    });
+    expect((await getChannel({ url: "https://t.me/ainews" })).id).toBe("111");
+    expect((await getChannel({ url: "https://t.me/s/ainews" })).id).toBe("111");
+  });
+
+  it("classifies a megagroup as a group, not a channel", async () => {
+    installEntity({
+      className: "Channel",
+      id: { value: 222n },
+      title: "Chat",
+      megagroup: true,
+    });
+    expect((await getChannel({ id: "222" })).type).toBe("group");
   });
 });
