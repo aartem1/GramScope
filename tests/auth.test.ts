@@ -42,14 +42,19 @@ function env() {
   };
 }
 
-async function token(sub: string, overrides: Record<string, string> = {}) {
-  return new SignJWT({})
+async function token(
+  sub: string,
+  overrides: { iss?: string; aud?: string | null } = {},
+) {
+  const jwt = new SignJWT({})
     .setProtectedHeader({ alg: "RS256", kid: "test-key" })
     .setIssuer(overrides.iss ?? ISSUER)
-    .setAudience(overrides.aud ?? AUDIENCE)
     .setSubject(sub)
-    .setExpirationTime("5m")
-    .sign(privateKey);
+    .setExpirationTime("5m");
+  // null means "mint it with no aud claim at all" — the shape that used to be
+  // accepted whenever MCP_RESOURCE_URL happened to be unset.
+  if (overrides.aud !== null) jwt.setAudience(overrides.aud ?? AUDIENCE);
+  return jwt.sign(privateKey);
 }
 
 beforeAll(() => {
@@ -96,14 +101,23 @@ describe("verifyOwnerToken", () => {
     ).rejects.toBeTruthy();
   });
 
-  it("rejects a token for the wrong audience", async () => {
+  it("rejects a token minted for another application's audience", async () => {
+    // The owner may authorize several apps in one WorkOS environment. Without
+    // this check any of them reaches full Telegram read access.
     await withLocalKeys();
     await expect(
       verifyOwnerToken(
         request,
         await token("user_owner", { aud: "https://other.example.app" }),
       ),
-    ).rejects.toBeTruthy();
+    ).rejects.toThrow(/aud/);
+  });
+
+  it("rejects a token that carries no audience claim", async () => {
+    await withLocalKeys();
+    await expect(
+      verifyOwnerToken(request, await token("user_owner", { aud: null })),
+    ).rejects.toThrow(/aud/);
   });
 
   it("rejects a garbage token", async () => {

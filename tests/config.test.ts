@@ -8,6 +8,7 @@ const complete = {
   WORKOS_ISSUER: "https://auth.example.com",
   WORKOS_JWKS_URL: "https://auth.example.com/jwks",
   OWNER_USER_ID: "user_123",
+  MCP_RESOURCE_URL: "https://gramscope.example.app/api/mcp",
 };
 
 describe("loadConfig", () => {
@@ -18,8 +19,21 @@ describe("loadConfig", () => {
   });
 
   it("names the missing variable", () => {
-    const { OWNER_USER_ID, ...partial } = complete;
-    expect(() => loadConfig(partial)).toThrow(/OWNER_USER_ID/);
+    expect(() =>
+      loadConfig({ ...complete, OWNER_USER_ID: undefined }),
+    ).toThrow(/OWNER_USER_ID/);
+  });
+
+  it("requires MCP_RESOURCE_URL, the audience every token is checked against", () => {
+    expect(() =>
+      loadConfig({ ...complete, MCP_RESOURCE_URL: undefined }),
+    ).toThrow(/MCP_RESOURCE_URL/);
+  });
+
+  it("exposes the resource url to the audience check", () => {
+    expect(loadConfig(complete).mcpResourceUrl).toBe(
+      "https://gramscope.example.app/api/mcp",
+    );
   });
 
   it("rejects a non-numeric api id", () => {

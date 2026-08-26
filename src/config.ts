@@ -5,6 +5,13 @@ export type Config = {
   workosIssuer: string;
   workosJwksUrl: string;
   ownerUserId: string;
+  /**
+   * The resource identifier this server accepts tokens for (the deployed
+   * origin + /api/mcp). Required: without it the audience check cannot run,
+   * and any other application in the same WorkOS environment would be
+   * accepted.
+   */
+  mcpResourceUrl: string;
 };
 
 type Env = Record<string, string | undefined>;
@@ -28,5 +35,6 @@ export function loadConfig(env: Env = process.env): Config {
     workosIssuer: required(env, "WORKOS_ISSUER"),
     workosJwksUrl: required(env, "WORKOS_JWKS_URL"),
     ownerUserId: required(env, "OWNER_USER_ID"),
+    mcpResourceUrl: required(env, "MCP_RESOURCE_URL"),
   };
 }

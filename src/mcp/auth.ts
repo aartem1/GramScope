@@ -33,14 +33,16 @@ export async function verifyOwnerToken(
   if (!bearerToken) return undefined;
 
   const config = loadConfig();
-  const audience = process.env.MCP_RESOURCE_URL;
 
+  // Audience is checked unconditionally. Skipping it when unconfigured meant
+  // a token minted for any other application in the same WorkOS environment —
+  // or a token with no `aud` at all — reached full Telegram read access.
   const { payload } = await jwtVerify(
     bearerToken,
     resolver(config.workosJwksUrl),
     {
       issuer: config.workosIssuer,
-      ...(audience ? { audience } : {}),
+      audience: config.mcpResourceUrl,
     },
   );
 

@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Resolve the repo root from this script's own location. Writing .env.local
+# relative to $PWD put it wherever the wizard happened to be invoked from,
+# where nothing reads it.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="$ROOT/.env.local"
+
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 pause() { read -r -p "Press Enter when done... " _; }
 
@@ -10,6 +16,20 @@ GramScope setup.
 This walks through the accounts only you can create. Nothing here is stored in
 the repository: secrets go into .env.local (gitignored) and Vercel.
 INTRO
+
+# Refuse to clobber an existing .env.local without being told to. It holds
+# TELEGRAM_SESSION, which costs an interactive Telegram login to regenerate.
+if [ -e "$ENV_FILE" ]; then
+  echo
+  echo "WARNING: $ENV_FILE already exists."
+  echo "Continuing OVERWRITES it, including any TELEGRAM_SESSION it holds."
+  echo "Regenerating that session requires another interactive Telegram login."
+  read -r -p "Type 'overwrite' to replace it, anything else to abort: " CONFIRM
+  if [ "$CONFIRM" != "overwrite" ]; then
+    echo "Aborted. Nothing was changed."
+    exit 1
+  fi
+fi
 
 step "1/5  Dedicated Telegram account"
 cat <<'TXT'
@@ -47,18 +67,17 @@ step "4/5  Telegram session string"
 # chmod-ing after leaves a window where it is group/other readable under a
 # default umask.
 umask 077
-: > .env.local
-chmod 600 .env.local
-cat > .env.local <<ENVFILE
+: > "$ENV_FILE"
+chmod 600 "$ENV_FILE"
+cat > "$ENV_FILE" <<ENVFILE
 TELEGRAM_API_ID=${TELEGRAM_API_ID}
 TELEGRAM_API_HASH=${TELEGRAM_API_HASH}
 TELEGRAM_SESSION=
 WORKOS_ISSUER=${WORKOS_ISSUER}
 WORKOS_JWKS_URL=${WORKOS_JWKS_URL}
 OWNER_USER_ID=${OWNER_USER_ID}
-MCP_RESOURCE_URL=
 ENVFILE
-echo "Wrote .env.local (chmod 600, gitignored)."
+echo "Wrote $ENV_FILE (chmod 600, gitignored)."
 echo
 echo "In a SECOND terminal, run:  npm run telegram:login"
 echo "(this wizard is holding this terminal until you press Enter)"
@@ -70,19 +89,40 @@ pause
 
 step "5/5  Vercel"
 cat <<'TXT'
-Deploy, then set MCP_RESOURCE_URL to the deployed origin + /api/mcp and push
-every variable to Vercel:
+Deploy once to learn the deployment URL:
 
   vercel link
   vercel deploy --prod
+
+TXT
+pause
+
+# MCP_RESOURCE_URL is the audience every access token is checked against, and
+# it is required — the server refuses to start without it, because an
+# unchecked audience lets any other app in the same WorkOS environment in.
+read -r -p "Deployment origin (e.g. https://gramscope.vercel.app): " DEPLOY_URL
+DEPLOY_URL="${DEPLOY_URL%/}"
+case "$DEPLOY_URL" in
+  */api/mcp) MCP_RESOURCE_URL="$DEPLOY_URL" ;;
+  *) MCP_RESOURCE_URL="$DEPLOY_URL/api/mcp" ;;
+esac
+printf 'MCP_RESOURCE_URL=%s\n' "$MCP_RESOURCE_URL" >> "$ENV_FILE"
+echo "Set MCP_RESOURCE_URL=$MCP_RESOURCE_URL"
+echo
+cat <<'TXT'
+Now push every variable to Vercel and redeploy:
+
   for v in TELEGRAM_API_ID TELEGRAM_API_HASH TELEGRAM_SESSION \
            WORKOS_ISSUER WORKOS_JWKS_URL OWNER_USER_ID MCP_RESOURCE_URL; do
     vercel env add "$v" production
   done
   vercel deploy --prod
 
+In WorkOS, make sure the Connect client requests this same resource URL as its
+audience; a token minted for anything else is rejected.
+
 Finally, in ChatGPT: Settings -> Connectors -> add a custom connector pointing
-at https://<your-deployment>/api/mcp, choose OAuth, and paste the WorkOS Connect
+at <your deployment>/api/mcp, choose OAuth, and paste the WorkOS Connect
 client id and secret.
 TXT
 echo "Setup walkthrough complete."
