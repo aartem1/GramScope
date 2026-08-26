@@ -1444,6 +1444,35 @@ describe("listDialogs cursor advance", () => {
     expect(page.next_cursor).toBeUndefined();
   });
 
+  it("keeps both dialogs when their dates tie across a page boundary", async () => {
+    // The cursor paginates on date + id. Equal dates are therefore only safe
+    // because the message id disambiguates them; this pins that behavior.
+    const all = [dialogAt(1, 100, 5), dialogAt(2, 100, 5), dialogAt(3, 90, 5)];
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async (params: Record<string, unknown>) => {
+        const afterId = params.offsetId as number | undefined;
+        const rows = afterId
+          ? all.filter((d) => (d.message.id as number) < afterId)
+          : all;
+        return rows.slice(0, params.limit as number);
+      },
+      getEntity: async () => ({}),
+    }));
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 5; page += 1) {
+      const result = await listDialogs({ limit: 1, ...(cursor ? { cursor } : {}) });
+      seen.push(...result.sources.map((s) => s.id));
+      if (!result.next_cursor) break;
+      cursor = result.next_cursor;
+    }
+    expect(seen).toEqual(["1", "2", "3"]);
+  });
+
   it("forwards the cursor offsets to getDialogs", async () => {
     // The cursor must actually reach the query; a cursor that round-trips but
     // is never sent silently re-serves page one forever.
@@ -1744,7 +1773,7 @@ export async function getChannel(input: {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npm test -- tests/telegram-dialogs.test.ts`
-Expected: PASS (17 tests).
+Expected: PASS (18 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -2817,9 +2846,12 @@ suite("Foundation against the real account", () => {
     expect(sources[0]!.id).toBeTruthy();
   });
 
-  it("paginates into disjoint pages", async () => {
+  it("paginates into disjoint pages", async (ctx) => {
     const first = await listDialogs({ limit: 3 });
-    if (!first.next_cursor) return;
+    // Skip visibly rather than pass silently: with fewer than four dialogs
+    // there is no second page to compare, and a green tick here would be
+    // mistaken for evidence that pagination works.
+    if (!first.next_cursor) ctx.skip();
     const second = await listDialogs({ limit: 3, cursor: first.next_cursor });
     const firstIds = new Set(first.sources.map((s) => s.id));
     for (const source of second.sources) {
@@ -2834,9 +2866,9 @@ suite("Foundation against the real account", () => {
     ).toBeLessThanOrEqual(MAX_RESPONSE_BYTES);
   });
 
-  it("agrees between folder membership and folder_ids", async () => {
+  it("agrees between folder membership and folder_ids", async (ctx) => {
     const folders = await fetchFolders();
-    if (folders.length === 0) return;
+    if (folders.length === 0) ctx.skip();
     const folder = folders[0]!;
     const { sources } = await listDialogs({
       folder_id: folder.id,
@@ -2847,10 +2879,10 @@ suite("Foundation against the real account", () => {
     }
   });
 
-  it("resolves the same source by id, username and url", async () => {
+  it("resolves the same source by id, username and url", async (ctx) => {
     const { sources } = await listDialogs({ type: "channel", limit: 50 });
     const withUsername = sources.find((s) => s.username);
-    if (!withUsername) return;
+    if (!withUsername) ctx.skip();
 
     const byId = await getChannel({ id: withUsername.id });
     const byUsername = await getChannel({ username: withUsername.username! });
@@ -2864,8 +2896,19 @@ suite("Foundation against the real account", () => {
   it("does not advance any read pointer", async () => {
     const before = await listDialogs({ limit: 50 });
     const pointers = new Map(
-      before.sources.map((s) => [s.id, s.read_inbox_max_id]),
+      before.sources
+        .filter((s) => s.read_inbox_max_id !== undefined)
+        .map((s) => [s.id, s.read_inbox_max_id]),
     );
+
+    // Refuse to pass vacuously. If no dialog reports a read pointer, the
+    // comparison below would be undefined === undefined for every source and
+    // would "pass" while proving nothing. This is the invariant every later
+    // mark_read workflow rests on, so an unverifiable run must fail loudly.
+    expect(
+      pointers.size,
+      "no dialog reported read_inbox_max_id, so read-safety cannot be verified",
+    ).toBeGreaterThan(0);
 
     await fetchFolders();
     for (const source of before.sources.slice(0, 5)) {
@@ -2873,10 +2916,14 @@ suite("Foundation against the real account", () => {
     }
 
     const after = await listDialogs({ limit: 50 });
+    let compared = 0;
     for (const source of after.sources) {
-      if (!pointers.has(source.id)) continue;
-      expect(source.read_inbox_max_id).toBe(pointers.get(source.id));
+      const expected = pointers.get(source.id);
+      if (expected === undefined) continue;
+      expect(source.read_inbox_max_id).toBe(expected);
+      compared += 1;
     }
+    expect(compared).toBeGreaterThan(0);
   });
 });
 ```
@@ -2884,7 +2931,7 @@ suite("Foundation against the real account", () => {
 - [ ] **Step 2: Run the live suite**
 
 Run: `GRAMSCOPE_LIVE=1 npm run test:live`
-Expected: PASS (6 tests). If the account has no folders or no public channels, the relevant tests return early — that is expected, not a failure.
+Expected: PASS (6 tests). Tests whose preconditions the account does not meet report as SKIPPED, not passed — a green tick always means the property was actually checked. Investigate any skip before treating the suite as evidence.
 
 - [ ] **Step 3: Confirm the fast suite still excludes live tests**
 
