@@ -80,7 +80,7 @@ git checkout -b gramscope-mcp
     "react-dom": "^19.0.0",
     "teleproto": "^1.229.0",
     "jose": "^5.9.0",
-    "zod": "^3.23.0"
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
@@ -1217,8 +1217,13 @@ git commit -m "feat: map Telegram dialog filters to folders"
 `tests/telegram-dialogs.test.ts`:
 
 ```typescript
-import { describe, expect, it } from "vitest";
-import { dialogType, foldersByPeer, mapDialog } from "@/telegram/dialogs";
+import { afterEach, describe, expect, it } from "vitest";
+import { dialogType, foldersByPeer, listDialogs, mapDialog } from "@/telegram/dialogs";
+import {
+  __resetClientForTests,
+  __setClientFactoryForTests,
+} from "@/telegram/client";
+import { decodeCursor } from "@/pagination";
 
 const channelDialog = {
   id: { value: 111n },
@@ -1307,6 +1312,62 @@ describe("mapDialog", () => {
 
   it("omits folder_ids when the peer is in no folder", () => {
     expect(mapDialog(channelDialog, new Map()).folder_ids).toBeUndefined();
+  });
+});
+
+describe("listDialogs cursor advance", () => {
+  function dialogAt(id: number, date: number, unread: number) {
+    return {
+      id: { value: BigInt(id) },
+      title: `Chat ${id}`,
+      unreadCount: unread,
+      isChannel: true,
+      isGroup: false,
+      isUser: false,
+      date,
+      message: { id: date },
+      entity: { className: "Channel" },
+      dialog: { readInboxMaxId: 0 },
+    };
+  }
+
+  function install(dialogs: unknown[]) {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => dialogs,
+      getEntity: async () => ({}),
+    }));
+  }
+
+  afterEach(() => {
+    __resetClientForTests();
+    __setClientFactoryForTests(undefined);
+  });
+
+  it("still returns a cursor when every row is filtered out", async () => {
+    // All read, so unread_only removes everything. Without a cursor the caller
+    // can never reach the unread dialogs further down the list.
+    install([dialogAt(1, 100, 0), dialogAt(2, 90, 0), dialogAt(3, 80, 0)]);
+    const page = await listDialogs({ limit: 2, unread_only: true });
+    expect(page.sources).toEqual([]);
+    expect(page.next_cursor).toBeTruthy();
+  });
+
+  it("derives the cursor from the raw batch, not the filtered length", async () => {
+    // Row 1 is filtered out, so a cursor built from the filtered page length
+    // would point at row 1 and re-serve row 2 forever.
+    install([dialogAt(1, 100, 0), dialogAt(2, 90, 5), dialogAt(3, 80, 5)]);
+    const first = await listDialogs({ limit: 2, unread_only: true });
+    expect(first.sources.map((s) => s.id)).toEqual(["2", "3"]);
+    expect(decodeCursor(first.next_cursor!).offsetDate).toBe(80);
+  });
+
+  it("omits the cursor when the batch is exhausted and nothing was trimmed", async () => {
+    install([dialogAt(1, 100, 5)]);
+    const page = await listDialogs({ limit: 50 });
+    expect(page.next_cursor).toBeUndefined();
   });
 });
 ```
@@ -1407,7 +1468,7 @@ export async function listDialogs(
 ): Promise<{ sources: TelegramSource[]; next_cursor?: string }> {
   const cursor = input.cursor ? decodeCursor(input.cursor) : undefined;
   const folders = await fetchFolders();
-  const index = foldersByPeer(folders);
+  const folderIndex = foldersByPeer(folders);
 
   let allowed: Set<string> | undefined;
   if (input.folder_id) {
@@ -1424,44 +1485,56 @@ export async function listDialogs(
     );
   }
 
-  const raw = await withTelegram(async (client) => {
-    return client.getDialogs({
-      limit: input.limit + 1,
+  const batchSize = input.limit + 1;
+  const raw = await withTelegram(async (client) =>
+    client.getDialogs({
+      limit: batchSize,
       ...(cursor
         ? { offsetDate: cursor.offsetDate, offsetId: cursor.offsetId }
         : {}),
-    });
-  });
+    }),
+  );
 
-  let mapped = raw.map((dialog) => mapDialog(dialog, index));
-  if (allowed) mapped = mapped.filter((s) => allowed.has(s.id));
+  // Filters below are client-side, so a row must keep its link to the raw
+  // dialog it came from: the cursor is derived from how far we consumed the
+  // RAW batch, never from the filtered page's length.
+  type Row = { raw: Record<string, unknown>; source: TelegramSource };
+  const rows: Row[] = raw.map((dialog) => ({
+    raw: (dialog ?? {}) as Record<string, unknown>,
+    source: mapDialog(dialog, folderIndex),
+  }));
+
+  let kept = rows;
+  if (allowed) kept = kept.filter((r) => allowed.has(r.source.id));
   if (input.unread_only) {
-    mapped = mapped.filter((s) => (s.unread_count ?? 0) > 0);
+    kept = kept.filter((r) => (r.source.unread_count ?? 0) > 0);
   }
-  if (input.type) mapped = mapped.filter((s) => s.type === input.type);
+  if (input.type) kept = kept.filter((r) => r.source.type === input.type);
 
-  const hasMore = mapped.length > input.limit;
-  let page = mapped.slice(0, input.limit);
+  const limited = kept.slice(0, input.limit);
+  const fit = fitToSizeCap(
+    limited.map((r) => r.source),
+    (items) => ({ sources: items }),
+  );
+  const page = limited.slice(0, fit);
+  const sources = page.map((r) => r.source);
 
-  const kept = fitToSizeCap(page, (items) => ({ sources: items }));
-  const trimmedBySize = kept < page.length;
-  page = page.slice(0, kept);
+  // Truncated inside the batch: resume after the last row we actually
+  // returned. Otherwise we consumed the whole batch: resume after its end.
+  const truncated = page.length < kept.length;
+  const lastExamined = truncated ? page[page.length - 1] : rows[rows.length - 1];
+  const hasMore = truncated || raw.length >= batchSize;
 
-  if (!hasMore && !trimmedBySize) return { sources: page };
+  if (!hasMore || !lastExamined) return { sources };
 
-  const lastRaw = raw[page.length - 1] as Record<string, unknown> | undefined;
-  if (!lastRaw) return { sources: page };
-
+  const last = lastExamined.raw;
+  const message = last.message as Record<string, unknown> | undefined;
   return {
-    sources: page,
+    sources,
     next_cursor: encodeCursor({
-      offsetDate: typeof lastRaw.date === "number" ? lastRaw.date : 0,
-      offsetId:
-        typeof (lastRaw.message as Record<string, unknown> | undefined)?.id ===
-        "number"
-          ? ((lastRaw.message as Record<string, unknown>).id as number)
-          : 0,
-      offsetPeerId: readBigId(lastRaw.id) ?? "",
+      offsetDate: typeof last.date === "number" ? last.date : 0,
+      offsetId: typeof message?.id === "number" ? message.id : 0,
+      offsetPeerId: readBigId(last.id) ?? "",
     }),
   };
 }
@@ -1525,7 +1598,7 @@ export async function getChannel(input: {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npm test -- tests/telegram-dialogs.test.ts`
-Expected: PASS (8 tests).
+Expected: PASS (11 tests).
 
 - [ ] **Step 5: Commit**
 
