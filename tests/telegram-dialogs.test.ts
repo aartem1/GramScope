@@ -158,9 +158,9 @@ describe("listDialogs cursor advance", () => {
     expect(page.next_cursor).toBeUndefined();
   });
 
-  it("forwards the whole offset triple to getDialogs", async () => {
-    // Telegram resumes from offset_date + offset_id + offset_peer. Dropping the
-    // peer silently degrades pagination to date precision.
+  it("forwards the cursor offsets to getDialogs", async () => {
+    // The cursor must actually reach the query; a cursor that round-trips but
+    // is never sent silently re-serves page one forever.
     const calls: Record<string, unknown>[] = [];
     __setClientFactoryForTests(async () => ({
       connected: true,
@@ -174,13 +174,9 @@ describe("listDialogs cursor advance", () => {
     }));
     await listDialogs({
       limit: 10,
-      cursor: encodeCursor({ offsetDate: 100, offsetId: 5, offsetPeerId: "777" }),
+      cursor: encodeCursor({ offsetDate: 100, offsetId: 5 }),
     });
-    expect(calls[0]).toMatchObject({
-      offsetDate: 100,
-      offsetId: 5,
-      offsetPeer: "777",
-    });
+    expect(calls[0]).toMatchObject({ offsetDate: 100, offsetId: 5 });
   });
 });
 

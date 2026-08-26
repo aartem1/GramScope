@@ -3,17 +3,23 @@ import { GramScopeError } from "./errors/taxonomy";
 
 export const CURSOR_VERSION = 1;
 
+/**
+ * Telegram resumes getDialogs from offset_date + offset_id + offset_peer, but
+ * offset_peer must be a real InputPeer TL object carrying an access hash, and
+ * a stateless server has no entity cache to rebuild one from. We therefore
+ * paginate on date + id only. The cost is that dialogs sharing an exact
+ * last-message timestamp may tie at a page boundary; Task 11's live
+ * disjoint-pages test is the guard on whether that ever bites in practice.
+ */
 export type DialogCursor = {
   offsetDate: number;
   offsetId: number;
-  offsetPeerId: string;
 };
 
 const payloadSchema = z.object({
   v: z.literal(CURSOR_VERSION),
   d: z.number().int(),
   i: z.number().int(),
-  p: z.string(),
 });
 
 export function encodeCursor(cursor: DialogCursor): string {
@@ -21,7 +27,6 @@ export function encodeCursor(cursor: DialogCursor): string {
     v: CURSOR_VERSION,
     d: cursor.offsetDate,
     i: cursor.offsetId,
-    p: cursor.offsetPeerId,
   };
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
@@ -45,6 +50,5 @@ export function decodeCursor(raw: string): DialogCursor {
   return {
     offsetDate: result.data.d,
     offsetId: result.data.i,
-    offsetPeerId: result.data.p,
   };
 }

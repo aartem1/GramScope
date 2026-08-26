@@ -96,15 +96,12 @@ export async function listDialogs(
   const raw = await withTelegram(async (client) =>
     client.getDialogs({
       limit: batchSize,
-      // offsetPeer matters: Telegram resumes from the offset_date + offset_id +
-      // offset_peer triple. Sending only the first two degrades pagination to
-      // date precision, which skips or repeats dialogs whose dates tie.
+      // Only date and id: teleproto forwards offsetPeer straight into
+      // Api.messages.GetDialogs without resolving it, so it must be a real
+      // InputPeer object, which a stateless server cannot rebuild. See the
+      // note on DialogCursor.
       ...(cursor
-        ? {
-            offsetDate: cursor.offsetDate,
-            offsetId: cursor.offsetId,
-            ...(cursor.offsetPeerId ? { offsetPeer: cursor.offsetPeerId } : {}),
-          }
+        ? { offsetDate: cursor.offsetDate, offsetId: cursor.offsetId }
         : {}),
     }),
   );
@@ -148,7 +145,6 @@ export async function listDialogs(
     next_cursor: encodeCursor({
       offsetDate: typeof last.date === "number" ? last.date : 0,
       offsetId: typeof message?.id === "number" ? message.id : 0,
-      offsetPeerId: readBigId(last.id) ?? "",
     }),
   };
 }

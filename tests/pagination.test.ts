@@ -5,7 +5,6 @@ import { GramScopeError } from "@/errors/taxonomy";
 const cursor: DialogCursor = {
   offsetDate: 1735689600,
   offsetId: 42,
-  offsetPeerId: "-1001234567890",
 };
 
 describe("cursors", () => {
@@ -30,9 +29,9 @@ describe("cursors", () => {
   });
 
   it("rejects a future cursor version", () => {
-    const forged = Buffer.from(
-      JSON.stringify({ v: 99, d: 1, i: 2, p: "3" }),
-    ).toString("base64url");
+    const forged = Buffer.from(JSON.stringify({ v: 99, d: 1, i: 2 })).toString(
+      "base64url",
+    );
     expect(() => decodeCursor(forged)).toThrowError(/INVALID_CURSOR|version/i);
   });
 
