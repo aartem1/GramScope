@@ -52,4 +52,26 @@ describe("mapTelegramError", () => {
     const mapped = mapTelegramError(new Error("session=SECRETVALUE"));
     expect(mapped.message).not.toContain("SECRETVALUE");
   });
+
+  it("passes through an unmapped but well-formed Telegram code", () => {
+    const mapped = mapTelegramError(new FakeRpcError("SOME_UNKNOWN_ERROR", 400));
+    expect(mapped.code).toBe("INTERNAL_ERROR");
+    expect(mapped.message).toContain("SOME_UNKNOWN_ERROR");
+  });
+
+  it("never echoes an errorMessage that is free text rather than a code", () => {
+    const mapped = mapTelegramError(
+      new FakeRpcError("unexpected: session=SECRETVALUE", 500),
+    );
+    expect(mapped.code).toBe("INTERNAL_ERROR");
+    expect(mapped.message).not.toContain("SECRETVALUE");
+  });
+
+  it("does not resolve inherited Object.prototype names as error codes", () => {
+    for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
+      const mapped = mapTelegramError(new FakeRpcError(name, 400));
+      expect(typeof mapped.code).toBe("string");
+      expect(mapped.code).toBe("INTERNAL_ERROR");
+    }
+  });
 });
