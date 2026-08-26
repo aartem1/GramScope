@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { getChannel } from "../../telegram/dialogs";
 import { telegramSourceSchema } from "../../schemas/source";
-import { errorResult, okResult } from "../tool-result";
+import { runTool } from "../tool-result";
 
 export function registerGetChannel(server: McpServer): void {
   server.registerTool(
@@ -19,12 +19,6 @@ export function registerGetChannel(server: McpServer): void {
       outputSchema: telegramSourceSchema,
       annotations: { readOnlyHint: true },
     },
-    async (input) => {
-      try {
-        return okResult(await getChannel(input));
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
+    async (input) => runTool("get_channel", () => getChannel(input)),
   );
 }

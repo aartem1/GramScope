@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { listDialogs } from "../../telegram/dialogs";
 import { telegramSourceSchema } from "../../schemas/source";
-import { errorResult, okResult } from "../tool-result";
+import { runTool } from "../tool-result";
 
 export function registerListDialogs(server: McpServer): void {
   server.registerTool(
@@ -24,12 +24,6 @@ export function registerListDialogs(server: McpServer): void {
       }),
       annotations: { readOnlyHint: true },
     },
-    async (input) => {
-      try {
-        return okResult(await listDialogs(input));
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
+    async (input) => runTool("list_dialogs", () => listDialogs(input)),
   );
 }

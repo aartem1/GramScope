@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { fetchFolders } from "../../telegram/folders";
 import { telegramFolderSchema } from "../../schemas/folder";
-import { errorResult, okResult } from "../tool-result";
+import { runTool } from "../tool-result";
 
 export function registerListFolders(server: McpServer): void {
   server.registerTool(
@@ -15,12 +15,8 @@ export function registerListFolders(server: McpServer): void {
       outputSchema: z.object({ folders: z.array(telegramFolderSchema) }),
       annotations: { readOnlyHint: true },
     },
-    async () => {
-      try {
-        return okResult({ folders: await fetchFolders() });
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
+    async () => runTool("list_folders", async () => ({
+      folders: await fetchFolders(),
+    })),
   );
 }

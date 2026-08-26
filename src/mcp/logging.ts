@@ -58,3 +58,35 @@ export function logEvent(
   const line = formatEvent(event);
   if (line) sink(line);
 }
+
+export type ToolCallLog = {
+  name: string;
+  durationMs: number;
+  status: "success" | "error";
+  count?: number;
+  code?: string;
+};
+
+/**
+ * Tool-level logging. mcp-handler's REQUEST_COMPLETED event carries only the
+ * generic JSON-RPC method ("tools/call") and no result, so the tool name,
+ * result count and error class are not derivable from it. They are recorded
+ * here instead, where the call actually happens.
+ */
+export function formatToolCall(entry: ToolCallLog): string {
+  const parts = [
+    `mcp tool=${entry.name}`,
+    `status=${entry.status}`,
+    `duration_ms=${entry.durationMs}`,
+  ];
+  if (entry.count !== undefined) parts.push(`count=${entry.count}`);
+  if (entry.code) parts.push(`code=${entry.code}`);
+  return parts.join(" ");
+}
+
+export function logToolCall(
+  entry: ToolCallLog,
+  sink: (line: string) => void = console.log,
+): void {
+  sink(formatToolCall(entry));
+}
