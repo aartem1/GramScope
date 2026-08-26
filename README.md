@@ -1152,3 +1152,18 @@ Treat these as accepted unless new evidence gives a concrete reason to revisit t
 Do not predict every workflow.
 
 Expose good primitives, preserve Telegram state, and let ChatGPT compose the workflows.
+
+---
+
+## Setup
+
+```bash
+./scripts/provision.sh
+```
+
+The wizard walks through creating the dedicated Telegram account, its API
+credentials, and the WorkOS AuthKit client, then writes `.env.local`.
+
+Secrets never belong in this repository. `.env.local` is gitignored; production
+values live in Vercel environment variables. The Telegram session string grants
+full access to the account — treat it like a password.
