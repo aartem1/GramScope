@@ -8,8 +8,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="$ROOT/.env.local"
 cd "$ROOT"
 
-SKIP_DEPLOY=0
-[ "${1:-}" = "--skip-deploy" ] && SKIP_DEPLOY=1
+# git  — Vercel builds from GitHub on push to main (the default; matches a
+#        project created through Vercel's Git integration).
+# cli  — deploy straight from this machine with the Vercel CLI.
+# none — you handle deployment entirely yourself.
+DEPLOY_MODE=git
+case "${1:-}" in
+  --deploy=cli)  DEPLOY_MODE=cli ;;
+  --deploy=none|--skip-deploy) DEPLOY_MODE=none ;;
+  "") ;;
+  *) echo "unknown option: $1 (expected --deploy=cli or --deploy=none)"; exit 1 ;;
+esac
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 note() { printf '\033[2m%s\033[0m\n' "$1"; }
@@ -149,30 +158,52 @@ fi
 
 # ------------------------------------------------------------------ Vercel ---
 step "4/6  Deploy, to learn your address"
-if [ "$SKIP_DEPLOY" = "1" ]; then
-  note "--skip-deploy given; deploy yourself, then re-run to continue."
-  ask "Deployment origin (e.g. https://gramscope.vercel.app): " DEPLOY_URL
-else
-  cat <<'TXT'
-The app builds without any environment variables, so this first deploy exists
-only to assign the URL. It will not work yet — that is expected. Once we know
-the address we can configure WorkOS and fill in the variables.
+case "$DEPLOY_MODE" in
+  git)
+    cat <<'TXT'
+Deploying through GitHub. The app builds without any environment variables, so
+this first deploy exists only to assign the URL — it will not work yet.
 TXT
-  if confirm "Run 'vercel link' and deploy now?"; then
-    vercel link
-    vercel deploy --prod | tee /tmp/gramscope-deploy.log
-    DEPLOY_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.vercel\.app' /tmp/gramscope-deploy.log | tail -n 1 || true)"
-    rm -f /tmp/gramscope-deploy.log
-    if [ -n "${DEPLOY_URL:-}" ]; then
+    if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
       echo
-      echo "Detected deployment: $DEPLOY_URL"
-      confirm "Use this address?" || DEPLOY_URL=""
+      echo "Working tree has uncommitted changes. Vercel builds what is pushed,"
+      echo "not what is on your disk, so commit or stash first."
+      exit 1
     fi
-  fi
-  if [ -z "${DEPLOY_URL:-}" ]; then
+    branch="$(git rev-parse --abbrev-ref HEAD)"
+    if ! git diff --quiet "@{upstream}" 2>/dev/null; then
+      echo
+      echo "Branch '$branch' differs from its upstream. Push it before deploying:"
+      echo "    git push origin $branch"
+      exit 1
+    fi
+    cat <<'TXT'
+
+In Vercel: New Project -> import this GitHub repository -> production branch
+'main'. It detects Next.js on its own. Wait for the first build to finish.
+TXT
+    ask "Press Enter once the first deploy has finished... " _
     ask "Deployment origin (e.g. https://gramscope.vercel.app): " DEPLOY_URL
-  fi
-fi
+    ;;
+  cli)
+    if confirm "Run 'vercel link' and deploy from here?"; then
+      vercel link
+      vercel deploy --prod | tee /tmp/gramscope-deploy.log
+      DEPLOY_URL="$(grep -oE 'https://[a-zA-Z0-9.-]+\.vercel\.app' /tmp/gramscope-deploy.log | tail -n 1 || true)"
+      rm -f /tmp/gramscope-deploy.log
+      if [ -n "${DEPLOY_URL:-}" ]; then
+        echo
+        echo "Detected deployment: $DEPLOY_URL"
+        confirm "Use this address?" || DEPLOY_URL=""
+      fi
+    fi
+    [ -n "${DEPLOY_URL:-}" ] || ask "Deployment origin: " DEPLOY_URL
+    ;;
+  none)
+    note "Deploy handled by you."
+    ask "Deployment origin (e.g. https://gramscope.vercel.app): " DEPLOY_URL
+    ;;
+esac
 
 DEPLOY_URL="${DEPLOY_URL%/}"
 [ -n "$DEPLOY_URL" ] || { echo "A deployment address is required."; exit 1; }
@@ -214,22 +245,49 @@ ask_env OWNER_USER_ID   "OWNER_USER_ID (your WorkOS user id, the token 'sub'): "
 
 # ----------------------------------------------------------------- Publish ---
 step "6/6  Publish configuration and redeploy"
-if [ "$SKIP_DEPLOY" = "1" ]; then
-  note "--skip-deploy given; push the variables and redeploy yourself."
-elif confirm "Push all variables to Vercel production and redeploy?"; then
-  for v in TELEGRAM_API_ID TELEGRAM_API_HASH TELEGRAM_SESSION \
-           WORKOS_ISSUER WORKOS_JWKS_URL OWNER_USER_ID MCP_RESOURCE_URL; do
+cat <<'TXT'
+The variables are pushed with the Vercel CLI rather than pasted into the
+dashboard on purpose: `vercel env add` reads each value and sends it without
+displaying it, so TELEGRAM_SESSION never appears on your screen.
+TXT
+
+if [ "$DEPLOY_MODE" = "none" ]; then
+  note "Push the variables and redeploy yourself; they are all in $ENV_FILE."
+elif confirm "Push all variables to Vercel production now?"; then
+  if [ ! -d "$ROOT/.vercel" ]; then
+    note "Linking this directory to your Vercel project first."
+    vercel link
+  fi
+  for v in $REQUIRED_KEYS; do
     value="$(env_get "$v")"
     if [ -z "$value" ]; then
       echo "Missing $v — aborting before a half-configured deploy."
       exit 1
     fi
-    # Remove any previous value first; `vercel env add` does not replace.
+    # `vercel env add` does not replace an existing value, so remove first.
     vercel env rm "$v" production --yes >/dev/null 2>&1 || true
     printf '%s' "$value" | vercel env add "$v" production >/dev/null
     echo "  pushed $v"
   done
-  vercel deploy --prod
+
+  cat <<'TXT'
+
+Environment variables do NOT trigger a rebuild on their own. The running
+deployment still has none of them, so it must be redeployed now — otherwise
+every request keeps failing and it looks like the configuration did not take.
+TXT
+  if confirm "Redeploy production now?"; then
+    if [ "$DEPLOY_MODE" = "git" ]; then
+      # Rebuild the current production deployment rather than uploading from
+      # this machine, so the Git integration stays the source of truth.
+      vercel redeploy "$(vercel ls --prod 2>/dev/null | grep -oE 'https://[a-zA-Z0-9.-]+\.vercel\.app' | head -n 1)" 2>/dev/null \
+        || note "Could not redeploy from here — press Redeploy in the Vercel dashboard."
+    else
+      vercel deploy --prod
+    fi
+  else
+    note "Remember: press Redeploy in the Vercel dashboard before testing."
+  fi
 fi
 
 summarise
