@@ -2082,6 +2082,7 @@ Expected: FAIL — cannot resolve `@/mcp/tool-result`.
 ```typescript
 import { GramScopeError, type StructuredError } from "../errors/taxonomy";
 import { mapTelegramError } from "../errors/from-telegram";
+import { logToolCall } from "./logging";
 
 export type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
@@ -2106,6 +2107,53 @@ export function errorResult(err: unknown): ToolResult {
     isError: true,
   };
 }
+
+function countOf(data: unknown): number | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  for (const key of ["sources", "folders"]) {
+    const value = (data as Record<string, unknown>)[key];
+    if (Array.isArray(value)) return value.length;
+  }
+  return undefined;
+}
+
+/**
+ * Runs one tool: times it, converts the outcome into a ToolResult, and records
+ * a log line naming the tool. Every tool body goes through this, so no handler
+ * can throw out into the transport and none is missing from the logs.
+ */
+export async function runTool<T>(
+  name: string,
+  run: () => Promise<T>,
+  sink?: (line: string) => void,
+): Promise<ToolResult> {
+  const started = Date.now();
+  try {
+    const data = await run();
+    logToolCall(
+      {
+        name,
+        durationMs: Date.now() - started,
+        status: "success",
+        ...(countOf(data) !== undefined ? { count: countOf(data) } : {}),
+      },
+      sink,
+    );
+    return okResult(data);
+  } catch (err) {
+    const result = errorResult(err);
+    logToolCall(
+      {
+        name,
+        durationMs: Date.now() - started,
+        status: "error",
+        code: (result.structuredContent as StructuredError).code,
+      },
+      sink,
+    );
+    return result;
+  }
+}
 ```
 
 - [ ] **Step 4: Write the three tools**
@@ -2117,7 +2165,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { fetchFolders } from "../../telegram/folders";
 import { telegramFolderSchema } from "../../schemas/folder";
-import { errorResult, okResult } from "../tool-result";
+import { runTool } from "../tool-result";
 
 export function registerListFolders(server: McpServer): void {
   server.registerTool(
@@ -2130,13 +2178,9 @@ export function registerListFolders(server: McpServer): void {
       outputSchema: z.object({ folders: z.array(telegramFolderSchema) }),
       annotations: { readOnlyHint: true },
     },
-    async () => {
-      try {
-        return okResult({ folders: await fetchFolders() });
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
+    async () => runTool("list_folders", async () => ({
+      folders: await fetchFolders(),
+    })),
   );
 }
 ```
@@ -2148,7 +2192,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { listDialogs } from "../../telegram/dialogs";
 import { telegramSourceSchema } from "../../schemas/source";
-import { errorResult, okResult } from "../tool-result";
+import { runTool } from "../tool-result";
 
 export function registerListDialogs(server: McpServer): void {
   server.registerTool(
@@ -2170,13 +2214,7 @@ export function registerListDialogs(server: McpServer): void {
       }),
       annotations: { readOnlyHint: true },
     },
-    async (input) => {
-      try {
-        return okResult(await listDialogs(input));
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
+    async (input) => runTool("list_dialogs", () => listDialogs(input)),
   );
 }
 ```
@@ -2188,7 +2226,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { getChannel } from "../../telegram/dialogs";
 import { telegramSourceSchema } from "../../schemas/source";
-import { errorResult, okResult } from "../tool-result";
+import { runTool } from "../tool-result";
 
 export function registerGetChannel(server: McpServer): void {
   server.registerTool(
@@ -2205,13 +2243,7 @@ export function registerGetChannel(server: McpServer): void {
       outputSchema: telegramSourceSchema,
       annotations: { readOnlyHint: true },
     },
-    async (input) => {
-      try {
-        return okResult(await getChannel(input));
-      } catch (err) {
-        return errorResult(err);
-      }
-    },
+    async (input) => runTool("get_channel", () => getChannel(input)),
   );
 }
 ```
@@ -2242,6 +2274,8 @@ surfaces this through its `onEvent` callback.
 ```typescript
 import { describe, expect, it, vi } from "vitest";
 import { formatEvent, logEvent } from "@/mcp/logging";
+import { runTool } from "@/mcp/tool-result";
+import { GramScopeError } from "@/errors/taxonomy";
 
 describe("formatEvent", () => {
   it("reports tool name, duration and result count on completion", () => {
@@ -2298,6 +2332,59 @@ describe("formatEvent", () => {
       sink,
     );
     expect(sink).toHaveBeenCalledOnce();
+  });
+});
+
+describe("runTool logging", () => {
+  it("names the tool and counts the results on success", async () => {
+    const sink = vi.fn();
+    const result = await runTool(
+      "list_dialogs",
+      async () => ({ sources: [{ id: "1" }, { id: "2" }] }),
+      sink,
+    );
+    expect(result.isError).toBeUndefined();
+    const line = sink.mock.calls[0]![0] as string;
+    expect(line).toContain("tool=list_dialogs");
+    expect(line).toContain("status=success");
+    expect(line).toContain("count=2");
+    expect(line).toMatch(/duration_ms=\d+/);
+  });
+
+  it("logs the error code and returns a structured error", async () => {
+    const sink = vi.fn();
+    const result = await runTool(
+      "get_channel",
+      async () => {
+        throw new GramScopeError("CHANNEL_NOT_FOUND", "nope");
+      },
+      sink,
+    );
+    expect(result.isError).toBe(true);
+    const line = sink.mock.calls[0]![0] as string;
+    expect(line).toContain("tool=get_channel");
+    expect(line).toContain("code=CHANNEL_NOT_FOUND");
+  });
+
+  it("never writes payload bodies into the log line", async () => {
+    const sink = vi.fn();
+    await runTool(
+      "list_dialogs",
+      async () => ({
+        sources: [{ id: "1", title: "Secret Channel Name" }],
+      }),
+      sink,
+    );
+    expect(sink.mock.calls[0]![0]).not.toContain("Secret Channel Name");
+  });
+
+  it("contains a throw rather than letting it reach the transport", async () => {
+    const sink = vi.fn();
+    await expect(
+      runTool("list_folders", async () => {
+        throw new Error("boom");
+      }, sink),
+    ).resolves.toMatchObject({ isError: true });
   });
 });
 ```
@@ -2372,12 +2459,44 @@ export function logEvent(
   const line = formatEvent(event);
   if (line) sink(line);
 }
+
+export type ToolCallLog = {
+  name: string;
+  durationMs: number;
+  status: "success" | "error";
+  count?: number;
+  code?: string;
+};
+
+/**
+ * Tool-level logging. mcp-handler's REQUEST_COMPLETED event carries only the
+ * generic JSON-RPC method ("tools/call") and no result, so the tool name,
+ * result count and error class are not derivable from it. They are recorded
+ * here instead, where the call actually happens.
+ */
+export function formatToolCall(entry: ToolCallLog): string {
+  const parts = [
+    `mcp tool=${entry.name}`,
+    `status=${entry.status}`,
+    `duration_ms=${entry.durationMs}`,
+  ];
+  if (entry.count !== undefined) parts.push(`count=${entry.count}`);
+  if (entry.code) parts.push(`code=${entry.code}`);
+  return parts.join(" ");
+}
+
+export function logToolCall(
+  entry: ToolCallLog,
+  sink: (line: string) => void = console.log,
+): void {
+  sink(formatToolCall(entry));
+}
 ```
 
 - [ ] **Step 8: Run the test to verify it passes**
 
 Run: `npm test -- tests/logging.test.ts`
-Expected: PASS (5 tests).
+Expected: PASS (9 tests).
 
 - [ ] **Step 9: Write the routes**
 
@@ -2415,10 +2534,22 @@ import {
   protectedResourceHandler,
 } from "mcp-handler";
 
-const issuer = process.env.WORKOS_ISSUER;
-if (!issuer) throw new Error("Missing required environment variable: WORKOS_ISSUER");
+// Read the issuer per request, not at module scope. Next imports every route
+// module during "Collecting page data", so a top-level throw fails the whole
+// build wherever env vars are injected at runtime rather than build time —
+// fork preview builds, local builds, and secret-at-runtime pipelines. This
+// also matches how loadConfig and verifyOwnerToken read their env.
+export function GET(req: Request): Response {
+  const issuer = process.env.WORKOS_ISSUER;
+  if (!issuer) {
+    return Response.json(
+      { error: "server_misconfigured" },
+      { status: 500 },
+    );
+  }
+  return protectedResourceHandler({ authServerUrls: [issuer] })(req);
+}
 
-export const GET = protectedResourceHandler({ authServerUrls: [issuer] });
 export const OPTIONS = metadataCorsOptionsRequestHandler();
 ```
 
