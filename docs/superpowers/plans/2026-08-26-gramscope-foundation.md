@@ -339,6 +339,28 @@ describe("mapTelegramError", () => {
     const mapped = mapTelegramError(new Error("session=SECRETVALUE"));
     expect(mapped.message).not.toContain("SECRETVALUE");
   });
+
+  it("passes through an unmapped but well-formed Telegram code", () => {
+    const mapped = mapTelegramError(new FakeRpcError("SOME_UNKNOWN_ERROR", 400));
+    expect(mapped.code).toBe("INTERNAL_ERROR");
+    expect(mapped.message).toContain("SOME_UNKNOWN_ERROR");
+  });
+
+  it("never echoes an errorMessage that is free text rather than a code", () => {
+    const mapped = mapTelegramError(
+      new FakeRpcError("unexpected: session=SECRETVALUE", 500),
+    );
+    expect(mapped.code).toBe("INTERNAL_ERROR");
+    expect(mapped.message).not.toContain("SECRETVALUE");
+  });
+
+  it("does not resolve inherited Object.prototype names as error codes", () => {
+    for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
+      const mapped = mapTelegramError(new FakeRpcError(name, 400));
+      expect(typeof mapped.code).toBe("string");
+      expect(mapped.code).toBe("INTERNAL_ERROR");
+    }
+  });
 });
 ```
 
@@ -403,6 +425,11 @@ export class GramScopeError extends Error {
 ```typescript
 import { GramScopeError, type ErrorCode } from "./taxonomy";
 
+// Real MTProto error codes are conventionally UPPER_SNAKE_CASE. Anything that
+// does not match this shape is free text, which may embed a session string,
+// and is never echoed back to the caller.
+const SAFE_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+
 const EXACT: Record<string, ErrorCode> = {
   CHANNEL_INVALID: "CHANNEL_NOT_FOUND",
   CHANNEL_PRIVATE: "PRIVATE_CHANNEL_NOT_ACCESSIBLE",
@@ -436,9 +463,16 @@ export function mapTelegramError(err: unknown): GramScopeError {
         seconds,
       );
     }
-    const mapped = EXACT[raw];
-    if (mapped) return new GramScopeError(mapped, `Telegram error: ${raw}`);
-    return new GramScopeError("INTERNAL_ERROR", `Telegram error: ${raw}`);
+    // Object.hasOwn, not `EXACT[raw]`: a bare index lookup resolves inherited
+    // Object.prototype members, so errorMessage "constructor" would return a
+    // function where an ErrorCode is declared.
+    if (Object.hasOwn(EXACT, raw)) {
+      return new GramScopeError(EXACT[raw]!, `Telegram error: ${raw}`);
+    }
+    if (SAFE_CODE.test(raw)) {
+      return new GramScopeError("INTERNAL_ERROR", `Telegram error: ${raw}`);
+    }
+    return new GramScopeError("INTERNAL_ERROR", "Unexpected internal error");
   }
 
   // Unknown failure: the original message may embed secrets, so it is dropped.
@@ -449,7 +483,7 @@ export function mapTelegramError(err: unknown): GramScopeError {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npm test -- tests/errors.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (10 tests).
 
 - [ ] **Step 6: Commit**
 
