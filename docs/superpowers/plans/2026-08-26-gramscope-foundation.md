@@ -41,7 +41,7 @@ Two further shape traps confirmed against `teleproto` 1.229.0 types:
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `loadConfig(env?: NodeJS.ProcessEnv): Config` from `src/config.ts`, where
+- Produces: `loadConfig(env?: Record<string, string | undefined>): Config` from `src/config.ts`, where
   `type Config = { telegramApiId: number; telegramApiHash: string; telegramSession: string; workosIssuer: string; workosJwksUrl: string; ownerUserId: string }`.
   Throws `Error` naming the missing variable when any is absent.
 
@@ -185,21 +185,19 @@ const complete = {
 
 describe("loadConfig", () => {
   it("parses a complete environment", () => {
-    const config = loadConfig(complete as NodeJS.ProcessEnv);
+    const config = loadConfig(complete);
     expect(config.telegramApiId).toBe(12345);
     expect(config.ownerUserId).toBe("user_123");
   });
 
   it("names the missing variable", () => {
     const { OWNER_USER_ID, ...partial } = complete;
-    expect(() => loadConfig(partial as NodeJS.ProcessEnv)).toThrow(
-      /OWNER_USER_ID/,
-    );
+    expect(() => loadConfig(partial)).toThrow(/OWNER_USER_ID/);
   });
 
   it("rejects a non-numeric api id", () => {
     expect(() =>
-      loadConfig({ ...complete, TELEGRAM_API_ID: "nope" } as NodeJS.ProcessEnv),
+      loadConfig({ ...complete, TELEGRAM_API_ID: "nope" }),
     ).toThrow(/TELEGRAM_API_ID/);
   });
 });
@@ -224,13 +222,15 @@ export type Config = {
   ownerUserId: string;
 };
 
-function required(env: NodeJS.ProcessEnv, name: string): string {
+type Env = Record<string, string | undefined>;
+
+function required(env: Env, name: string): string {
   const value = env[name];
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
+export function loadConfig(env: Env = process.env): Config {
   const rawApiId = required(env, "TELEGRAM_API_ID");
   const telegramApiId = Number(rawApiId);
   if (!Number.isInteger(telegramApiId)) {
@@ -1657,7 +1657,7 @@ function env() {
     WORKOS_JWKS_URL: `${ISSUER}/jwks`,
     OWNER_USER_ID: "user_owner",
     MCP_RESOURCE_URL: AUDIENCE,
-  } as NodeJS.ProcessEnv;
+  };
 }
 
 async function token(sub: string, overrides: Record<string, string> = {}) {
