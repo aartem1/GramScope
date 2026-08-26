@@ -1163,9 +1163,18 @@ Expose good primitives, preserve Telegram state, and let ChatGPT compose the wor
 ./scripts/provision.sh
 ```
 
-The wizard walks through creating the dedicated Telegram account, its API
-credentials, and the WorkOS AuthKit client, then writes `.env.local`.
+One pass, start to finish: Telegram credentials, the Telegram login, the first
+Vercel deploy (which is what assigns your address), the WorkOS configuration
+that depends on that address, then the variables and a redeploy. Re-running it
+keeps whatever you already provided, so it is safe to resume after a failure.
+Pass `--skip-deploy` to handle Vercel yourself.
 
-Secrets never belong in this repository. `.env.local` is gitignored; production
-values live in Vercel environment variables. The Telegram session string grants
-full access to the account — treat it like a password.
+The Telegram session is written straight into `.env.local` (mode 600,
+gitignored) and is never printed. That file grants full access to the account —
+treat it like a password. Production values live in Vercel environment
+variables; nothing is stored in this repository.
+
+One value must match in three places, or every request fails with 401: the
+resource identifier. The wizard prints it and registers it for you in
+`MCP_RESOURCE_URL`; you paste the same string into WorkOS under
+Connect → Configuration → Resource Indicators.
