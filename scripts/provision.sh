@@ -34,6 +34,42 @@ env_set() {
   printf '%s' "$2" | npx --no-install tsx scripts/env-file.ts "$ENV_FILE" "$1"
 }
 
+# Everything entered is written to .env.local the moment it is answered, and
+# that write is atomic, so an interrupt at any point keeps what you have
+# already given. This reports what survived and how to pick up again.
+REQUIRED_KEYS="TELEGRAM_API_ID TELEGRAM_API_HASH TELEGRAM_SESSION WORKOS_ISSUER WORKOS_JWKS_URL OWNER_USER_ID MCP_RESOURCE_URL"
+
+summarise() {
+  local have=() missing=() k
+  for k in $REQUIRED_KEYS; do
+    if [ -n "$(env_get "$k")" ]; then have+=("$k"); else missing+=("$k"); fi
+  done
+  echo
+  if [ ${#have[@]} -gt 0 ]; then
+    echo "Saved in $ENV_FILE:"
+    for k in "${have[@]}"; do echo "  - $k"; done
+  else
+    echo "Nothing saved yet."
+  fi
+  if [ ${#missing[@]} -gt 0 ]; then
+    echo "Still needed:"
+    for k in "${missing[@]}"; do echo "  - $k"; done
+  fi
+}
+
+on_interrupt() {
+  # Restore default handling first, so a second Ctrl+C always gets out.
+  trap - INT TERM
+  echo
+  echo "Interrupted."
+  summarise
+  echo
+  echo "Nothing entered was lost. Re-run ./scripts/provision.sh to continue"
+  echo "from here — it skips whatever is already set."
+  exit 130
+}
+trap on_interrupt INT TERM
+
 # Prompt only when the value is missing, so a re-run skips what is already done.
 # $3 = "secret" suppresses echo.
 ask_env() {
@@ -195,6 +231,8 @@ elif confirm "Push all variables to Vercel production and redeploy?"; then
   done
   vercel deploy --prod
 fi
+
+summarise
 
 cat <<TXT
 

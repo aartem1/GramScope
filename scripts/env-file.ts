@@ -1,4 +1,5 @@
-import { chmod, readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
 /**
  * Replaces `KEY=...` in a dotenv file's contents, or appends it when absent.
@@ -28,8 +29,8 @@ export function upsertEnvLine(
 }
 
 /**
- * Reads, upserts, and writes back, keeping the file at mode 600. Creates the
- * file restricted if it does not exist yet.
+ * Reads, upserts, and atomically replaces the file, always at mode 600.
+ * Creates it if absent.
  */
 export async function upsertEnvFile(
   path: string,
@@ -42,12 +43,25 @@ export async function upsertEnvFile(
   } catch {
     content = "";
   }
-  await writeFile(path, upsertEnvLine(content, key, value), { mode: 0o600 });
-  // writeFile's mode applies only when creating, so an existing file keeps
-  // whatever permissions it had. This file holds a Telegram session, so
-  // narrow it unconditionally rather than trusting how it was created.
-  await chmod(path, 0o600);
+
+  // Write a sibling, then rename over the target. rename is atomic within a
+  // filesystem, so the path is never observable in a truncated state: an
+  // interrupt leaves either the whole old document or the whole new one.
+  // Truncate-then-write would lose TELEGRAM_SESSION, and regenerating that
+  // costs an interactive Telegram login.
+  //
+  // The temporary file is created at mode 600 and rename carries that mode
+  // onto the target, which also repairs a file that was created too openly.
+  const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.tmp`);
+  try {
+    await writeFile(tmp, upsertEnvLine(content, key, value), { mode: 0o600 });
+    await rename(tmp, path);
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined);
+    throw err;
+  }
 }
+
 
 /**
  * CLI: `tsx scripts/env-file.ts <path> <KEY>` with the value on stdin.

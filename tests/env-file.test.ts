@@ -78,3 +78,79 @@ describe("upsertEnvFile", () => {
     expect(await readFile(file, "utf8")).toBe("TELEGRAM_SESSION=s\n");
   });
 });
+
+describe("upsertEnvFile durability", () => {
+  async function tmpFile() {
+    const { mkdtemp } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = await mkdtemp(join(tmpdir(), "gramscope-"));
+    return { dir, file: join(dir, ".env.local") };
+  }
+
+  it("leaves no temporary file behind", async () => {
+    const { readdir, writeFile } = await import("node:fs/promises");
+    const { upsertEnvFile } = await import("../scripts/env-file");
+    const { dir, file } = await tmpFile();
+
+    await writeFile(file, "A=1\n", { mode: 0o600 });
+    await upsertEnvFile(file, "B", "2");
+
+    expect(await readdir(dir)).toEqual([".env.local"]);
+  });
+
+  it("never truncates the live file while writing", async () => {
+    // The property that matters: the path must never be observable in a
+    // shrunken state, because an interrupt at that instant destroys
+    // TELEGRAM_SESSION, which costs an interactive Telegram login to redo.
+    // Truncate-then-write is observable; write-temp-then-rename is not.
+    const { writeFile, stat, readdir } = await import("node:fs/promises");
+    const { spawn } = await import("node:child_process");
+    const { dir, file } = await tmpFile();
+
+    const original = `TELEGRAM_SESSION=${"s".repeat(4096)}\n`;
+    await writeFile(file, original, { mode: 0o600 });
+    const originalSize = (await stat(file)).size;
+
+    const child = spawn(
+      "npx",
+      ["--no-install", "tsx", "scripts/env-file.ts", file, "BIG"],
+      { stdio: ["pipe", "ignore", "ignore"] },
+    );
+    child.stdin.write("y".repeat(60 * 1024 * 1024));
+    child.stdin.end();
+
+    let sawShrink = false;
+    let sawTemp = false;
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline && child.exitCode === null) {
+      const size = (await stat(file).catch(() => ({ size: -1 }))).size;
+      if (size >= 0 && size < originalSize) sawShrink = true;
+      const entries = await readdir(dir).catch(() => []);
+      if (entries.some((e) => e !== ".env.local")) sawTemp = true;
+      if (sawShrink || sawTemp) break;
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    child.kill("SIGKILL");
+    await new Promise((resolve) => child.on("exit", resolve));
+
+    // Non-vacuous: we must have actually caught the write in progress.
+    expect(
+      sawShrink || sawTemp,
+      "never observed the write in progress; the test proves nothing",
+    ).toBe(true);
+    expect(sawShrink, "the live file was truncated mid-write").toBe(false);
+  }, 40_000);
+
+  it("keeps mode 600 on the replaced file", async () => {
+    const { writeFile, stat } = await import("node:fs/promises");
+    const { upsertEnvFile } = await import("../scripts/env-file");
+    const { file } = await tmpFile();
+
+    await writeFile(file, "A=1\n", { mode: 0o644 });
+    await upsertEnvFile(file, "A", "2");
+
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+  });
+});
