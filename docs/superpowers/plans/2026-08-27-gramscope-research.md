@@ -1928,6 +1928,567 @@ git add src/telegram/search.ts src/telegram/message-slice.ts tests/telegram-sear
 git commit -m "feat: search the whole account with one messages.searchGlobal call"
 ```
 
+### Task 6: `search_messages` — the fan-out engine
+
+Spec §6.1 and §7. Naming any source or folder switches the engine to one
+`messages.search` per source at concurrency 8, merged by date. Each source's
+stream is independently ordered, so the resume point is simply the last hit
+served from that source — there is no trimmed-block bookkeeping of the kind
+`get_messages` needs, where the group order is fixed.
+
+**Files:**
+- Modify: `src/telegram/search.ts`
+- Modify: `tests/telegram-search.test.ts` (append a `describe`)
+
+**Interfaces:**
+- Consumes: `resolveSource` and `parseTelegramName` (Task 1); `folderMembers` from `src/telegram/dialog-index.ts`; `MAX_SOURCES_PER_CALL` from `src/telegram/messages.ts`; `FANOUT_CONCURRENCY`, `mapWithConcurrency` from `src/concurrency.ts`; `mapTelegramError` from `src/errors/from-telegram.ts`; `decodeSearchSourcesCursor` / `encodeSearchSourcesCursor` (Task 2).
+- Produces: no new exported names; `searchMessages` gains its second branch.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// append to tests/telegram-search.test.ts
+import { decodeSearchSourcesCursor } from "@/pagination";
+
+const B = "-1002222222222";
+
+function twoDialogs() {
+  return [
+    {
+      id: A,
+      title: "Alpha",
+      entity: { className: "Channel", id: 1111111111n, title: "Alpha" },
+      dialog: { readInboxMaxId: 400 },
+      unreadCount: 0,
+      date: 1,
+      message: { id: 500 },
+    },
+    {
+      id: B,
+      title: "Beta",
+      entity: { className: "Channel", id: 2222222222n, title: "Beta" },
+      dialog: { readInboxMaxId: 0 },
+      unreadCount: 0,
+      date: 1,
+      message: { id: 500 },
+    },
+  ];
+}
+
+/** Replies per peer, so a fan-out can be asserted source by source. */
+function installFanout(
+  replies: Record<string, unknown | (() => never)>,
+  folders: unknown[] = [],
+) {
+  const sent: Sent[] = [];
+  __setClientFactoryForTests(async () => ({
+    connected: true,
+    connect: async () => true,
+    getDialogs: async () => twoDialogs(),
+    getEntity: async (target: string) => ({
+      className: "Channel",
+      id: target === B ? 2222222222n : 1111111111n,
+    }),
+    getMessages: async () => [],
+    invoke: async (request: unknown) => {
+      const r = request as { className: string } & Record<string, unknown>;
+      sent.push({ className: r.className, params: { ...r } });
+      if (r.className === "messages.GetDialogFilters") return folders;
+      const peer = String(r.peer);
+      const reply = replies[peer];
+      if (typeof reply === "function") return (reply as () => never)();
+      return reply ?? slice([]);
+    },
+  }));
+  return sent;
+}
+
+describe("fan-out search", () => {
+  it("searches each named source and merges the hits by date", async () => {
+    const sent = installFanout({
+      [A]: slice([hit(9, 1_750_000_300, 1111111111n)]),
+      [B]: slice([hit(4, 1_750_000_400, 2222222222n)]),
+    });
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      limit: 10,
+    });
+
+    const searches = sent.filter((s) => s.className === "messages.Search");
+    expect(searches).toHaveLength(2);
+    expect(searches[0]!.params.q).toBe("ai");
+    // Newest first across sources, not grouped by source.
+    expect(page.results.map((r) => r.id)).toEqual([4, 9]);
+    expect(page.results.map((r) => r.source_title)).toEqual(["Beta", "Alpha"]);
+    // total_matches sums the per-source counts in this mode.
+    expect(page.total_matches).toBe(9640);
+  });
+
+  it("lists a searched source that matched nothing", async () => {
+    installFanout({
+      [A]: slice([hit(9, 1_750_000_300, 1111111111n)]),
+      [B]: slice([]),
+    });
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      limit: 10,
+    });
+    expect(page.sources).toEqual([
+      { source_id: A, title: "Alpha", hit_count: 1 },
+      { source_id: B, title: "Beta", hit_count: 0 },
+    ]);
+  });
+
+  it("isolates one failing source instead of failing the page", async () => {
+    installFanout({
+      [A]: slice([hit(9, 1_750_000_300, 1111111111n)]),
+      [B]: () => {
+        throw Object.assign(new Error("boom"), {
+          errorMessage: "CHANNEL_PRIVATE",
+        });
+      },
+    });
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      limit: 10,
+    });
+    expect(page.results.map((r) => r.id)).toEqual([9]);
+    expect(page.sources[1]).toEqual({
+      source_id: B,
+      title: "Beta",
+      hit_count: 0,
+      error: {
+        code: "PRIVATE_CHANNEL_NOT_ACCESSIBLE",
+        message: "Telegram error: CHANNEL_PRIVATE",
+      },
+    });
+  });
+
+  it("cursors only the sources that still have more, and never a failed one", async () => {
+    installFanout({
+      // Alpha filled its page, so it may have more.
+      [A]: slice([
+        hit(9, 1_750_000_300, 1111111111n),
+        hit(8, 1_750_000_200, 1111111111n),
+      ]),
+      // Beta came back short: exhausted.
+      [B]: slice([hit(4, 1_750_000_100, 2222222222n)]),
+    });
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      limit: 2,
+    });
+    const cursor = decodeSearchSourcesCursor(page.next_cursor!);
+    expect(cursor.sources).toEqual([{ handle: A, offsetId: 8 }]);
+  });
+
+  it("drops an excluded source before spending a request on it", async () => {
+    const sent = installFanout({
+      [A]: slice([hit(9, 1_750_000_300, 1111111111n)]),
+      [B]: slice([hit(4, 1_750_000_400, 2222222222n)]),
+    });
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      exclude_source_ids: [B],
+      limit: 10,
+    });
+    expect(sent.filter((s) => s.className === "messages.Search")).toHaveLength(
+      1,
+    );
+    expect(page.sources.map((s) => s.source_id)).toEqual([A]);
+  });
+
+  it("refuses a selection wider than the fan-out ceiling", async () => {
+    installFanout({});
+    await expect(
+      searchMessages({
+        query: "ai",
+        source_ids: Array.from({ length: 26 }, (_, n) => `-100${n}`),
+        limit: 10,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("refuses a source selection that resolves to nothing", async () => {
+    installFanout({});
+    await expect(
+      searchMessages({ query: "ai", source_ids: [], folder_ids: [], limit: 10 }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+});
+```
+
+The last test reaches `searchMessages` with neither selection non-empty, which
+`isFanout` reports as global mode; it must still fail, because `prepareSearch`
+is not the only gate — see Step 2's note on empty selections.
+
+**Correction to that reading:** `{ source_ids: [], folder_ids: [] }` IS global
+mode by `isFanout`, and a global search with no selection is valid. Replace that
+last test with the one below, which is the case that actually needs a guard: a
+folder that exists but holds nothing.
+
+```ts
+  it("refuses a folder selection that resolves to no sources", async () => {
+    installFanout({}, [
+      {
+        className: "DialogFilter",
+        id: 9,
+        title: "Empty",
+        includePeers: [],
+        excludePeers: [],
+        pinnedPeers: [],
+      },
+    ]);
+    await expect(
+      searchMessages({ query: "ai", folder_ids: ["9"], limit: 10 }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run tests/telegram-search.test.ts`
+Expected: FAIL — the fan-out `describe` fails; the global tests from Task 5 still pass.
+
+- [ ] **Step 3: Write the fan-out engine**
+
+```ts
+// src/telegram/search.ts — add to the imports
+import { FANOUT_CONCURRENCY, mapWithConcurrency } from "../concurrency";
+import { folderMembers } from "./dialog-index";
+import { MAX_SOURCES_PER_CALL } from "./messages";
+import { parseTelegramName, resolveSource, type ResolvedSource } from "./peer-resolve";
+import { mapTelegramError } from "../errors/from-telegram";
+import {
+  decodeSearchSourcesCursor,
+  encodeSearchSourcesCursor,
+} from "../pagination";
+```
+
+```ts
+// src/telegram/search.ts — append
+
+/** One key per way of naming the same peer, so an exclusion written as
+ *  @name removes a folder member listed by id once that member resolves. */
+function nameKeys(source: {
+  source_id?: string;
+  username?: string;
+  handle?: string;
+}): string[] {
+  const keys: string[] = [];
+  if (source.source_id) keys.push(`i:${source.source_id}`);
+  if (source.username) keys.push(`u:${source.username.toLowerCase()}`);
+  if (source.handle) {
+    const link = parseTelegramName(source.handle);
+    keys.push(
+      link.kind === "username"
+        ? `u:${link.username.toLowerCase()}`
+        : `i:${link.markedId}`,
+    );
+  }
+  return keys;
+}
+
+function nameKey(raw: string): string {
+  const link = parseTelegramName(raw);
+  return link.kind === "username"
+    ? `u:${link.username.toLowerCase()}`
+    : `i:${link.markedId}`;
+}
+
+function targetNames(input: SearchInput, index: DialogIndex): string[] {
+  const excluded = new Set((input.exclude_source_ids ?? []).map(nameKey));
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+
+  for (const name of [
+    ...(input.source_ids ?? []),
+    ...folderMembers(index.folders, input.folder_ids ?? []),
+  ]) {
+    const key = nameKey(name);
+    if (excluded.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(name);
+  }
+
+  if (ordered.length === 0) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      "This selection resolves to no sources. Name at least one source, or pick a folder that has members.",
+    );
+  }
+  if (ordered.length > MAX_SOURCES_PER_CALL) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      `This selection resolves to ${ordered.length} sources; the limit is ${MAX_SOURCES_PER_CALL}. Split the call.`,
+    );
+  }
+  return ordered;
+}
+
+type Outcome = {
+  source_id: string;
+  title: string;
+  handle: string;
+  /** Where this page started reading; the resume point if it served nothing. */
+  startOffsetId: number;
+  hits: SearchHit[];
+  fetched: number;
+  count?: number;
+  error?: { code: string; message: string };
+};
+
+async function sourcesPage(
+  client: TelegramLike,
+  index: DialogIndex,
+  input: SearchInput,
+  bounds: SearchBounds,
+): Promise<SearchResult> {
+  const Api = await getApi();
+  const cursor = input.cursor
+    ? decodeSearchSourcesCursor(input.cursor)
+    : undefined;
+  if (cursor) assertSameScope(cursor.fingerprint, bounds.fingerprint);
+
+  // A cursor carries its own source set, so a continuation never re-derives
+  // one from folder membership that may have changed between pages.
+  const targets = cursor
+    ? cursor.sources
+    : targetNames(input, index).map((handle) => ({ handle, offsetId: 0 }));
+
+  // Resolution first, in its own pass: it is free for peers the account holds,
+  // and doing it before the searches means an excluded source never costs a
+  // request.
+  type Target = { target: (typeof targets)[number]; resolved?: ResolvedSource; error?: Outcome };
+  const prepared: Target[] = await mapWithConcurrency(
+    targets,
+    FANOUT_CONCURRENCY,
+    async (target) => {
+      try {
+        return { target, resolved: await resolveSource(client, index, target.handle) };
+      } catch (err) {
+        const mapped = mapTelegramError(err);
+        return {
+          target,
+          error: {
+            source_id: target.handle,
+            title: target.handle,
+            handle: target.handle,
+            startOffsetId: target.offsetId,
+            hits: [],
+            fetched: 0,
+            error: { code: mapped.code, message: mapped.message },
+          },
+        };
+      }
+    },
+  );
+
+  const excluded = new Set((input.exclude_source_ids ?? []).map(nameKey));
+  const kept = cursor
+    ? prepared
+    : prepared.filter(
+        (item) =>
+          item.resolved === undefined ||
+          !nameKeys(item.resolved).some((key) => excluded.has(key)),
+      );
+
+  const filter = await searchFilter(input.media_type);
+  const outcomes: Outcome[] = await mapWithConcurrency(
+    kept,
+    FANOUT_CONCURRENCY,
+    async (item): Promise<Outcome> => {
+      if (item.error) return item.error;
+      const source = item.resolved!;
+      const base = {
+        source_id: source.source_id,
+        title: source.title,
+        handle: source.handle,
+        startOffsetId: item.target.offsetId,
+      };
+      try {
+        // Every field explicit: teleproto does not fill TL defaults for
+        // omitted non-flag parameters.
+        const page = readMessagesPage(
+          await client.invoke(
+            new Api.messages.Search({
+              peer: source.handle as never,
+              q: input.query.trim(),
+              filter: filter as never,
+              minDate: bounds.fromSeconds ?? 0,
+              maxDate: bounds.toSeconds ?? 0,
+              offsetId: item.target.offsetId,
+              addOffset: 0,
+              limit: input.limit,
+              maxId: 0,
+              minId: 0,
+              hash: 0 as never,
+            }),
+          ),
+        );
+
+        const entry = index.byId.get(source.source_id);
+        const context: MessageContext = {
+          chatId: source.source_id,
+          ...(source.username !== undefined
+            ? { username: source.username }
+            : {}),
+          ...(entry !== undefined
+            ? { readInboxMaxId: entry.read_inbox_max_id }
+            : {}),
+        };
+
+        return {
+          ...base,
+          hits: page.messages.map((raw) => ({
+            ...mapMessage(raw, context),
+            source_title: source.title,
+          })),
+          fetched: page.messages.length,
+          ...(page.count !== undefined ? { count: page.count } : {}),
+        };
+      } catch (err) {
+        // House rule: one dead source must not cost the page.
+        const mapped = mapTelegramError(err);
+        return {
+          ...base,
+          hits: [],
+          fetched: 0,
+          error: { code: mapped.code, message: mapped.message },
+        };
+      }
+    },
+  );
+
+  type Unit = { outcomeIndex: number; hit: SearchHit };
+  const merged: Unit[] = outcomes
+    .flatMap((outcome, outcomeIndex) =>
+      outcome.hits.map((hit) => ({ outcomeIndex, hit })),
+    )
+    .sort(
+      (a, b) =>
+        Date.parse(b.hit.date) - Date.parse(a.hit.date) || b.hit.id - a.hit.id,
+    );
+
+  const totals = outcomes
+    .map((outcome) => outcome.count)
+    .filter((count): count is number => count !== undefined);
+  const total_matches =
+    totals.length > 0 ? totals.reduce((sum, count) => sum + count, 0) : undefined;
+
+  const compose = (units: Unit[]): SearchResult => {
+    const servedCount = new Array<number>(outcomes.length).fill(0);
+    for (const unit of units) servedCount[unit.outcomeIndex]!++;
+    return {
+      results: units.map((unit) => unit.hit),
+      sources: outcomes.map((outcome, i) => ({
+        source_id: outcome.source_id,
+        title: outcome.title,
+        hit_count: servedCount[i]!,
+        ...(outcome.error ? { error: outcome.error } : {}),
+      })),
+      ...(total_matches !== undefined ? { total_matches } : {}),
+    };
+  };
+
+  const limited = merged.slice(0, input.limit);
+  const served = limited.slice(0, fitToSizeCap(limited, compose));
+  const page = compose(served);
+
+  // Per source: the oldest hit actually served is the resume point, its start
+  // offset if it served none, and nothing at all if it is exhausted or failed.
+  const unexhausted: Array<{ handle: string; offsetId: number }> = [];
+  for (let i = 0; i < outcomes.length; i++) {
+    const outcome = outcomes[i]!;
+    if (outcome.error) continue;
+    const servedHits = served
+      .filter((unit) => unit.outcomeIndex === i)
+      .map((unit) => unit.hit);
+    const exhausted =
+      servedHits.length === outcome.hits.length && outcome.fetched < input.limit;
+    if (exhausted) continue;
+    unexhausted.push({
+      handle: outcome.handle,
+      offsetId:
+        servedHits.length > 0
+          ? Math.min(...servedHits.map((hit) => hit.id))
+          : outcome.startOffsetId,
+    });
+  }
+
+  return {
+    ...page,
+    ...(unexhausted.length > 0
+      ? {
+          next_cursor: encodeSearchSourcesCursor({
+            sources: unexhausted,
+            fingerprint: bounds.fingerprint,
+          }),
+        }
+      : {}),
+  };
+}
+```
+
+```ts
+// src/telegram/search.ts — replace searchMessages
+export async function searchMessages(
+  input: SearchInput,
+): Promise<SearchResult> {
+  const bounds = prepareSearch(input);
+  const index = await fetchDialogIndex();
+  return withTelegram(async (client) =>
+    isFanout(input) || input.cursor?.length
+      ? // A continuation resends every filter unchanged, so the mode it derives
+        // matches the one that issued the cursor; a cursor of the other kind
+        // fails on its discriminator, which is what that field is for.
+        isFanout(input)
+        ? sourcesPage(client, index, input, bounds)
+        : globalPage(client, index, input, bounds)
+      : globalPage(client, index, input, bounds),
+  );
+}
+```
+
+**Simplify that to the following** — the branch above is redundant, since the
+mode is derived from the arguments in both cases:
+
+```ts
+export async function searchMessages(
+  input: SearchInput,
+): Promise<SearchResult> {
+  const bounds = prepareSearch(input);
+  const index = await fetchDialogIndex();
+  return withTelegram(async (client) =>
+    isFanout(input)
+      ? sourcesPage(client, index, input, bounds)
+      : globalPage(client, index, input, bounds),
+  );
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `npx vitest run tests/telegram-search.test.ts`
+Expected: PASS, 18 tests.
+
+- [ ] **Step 5: Run the gates**
+
+Run: `npm run test && npm run typecheck && npm run lint`
+Expected: all green.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/telegram/search.ts tests/telegram-search.test.ts
+git commit -m "feat: search named sources and folders with a merged fan-out"
+```
+
 ## Resume note
 
 Planning is in progress in this file. The tasks are appended in order, and each
