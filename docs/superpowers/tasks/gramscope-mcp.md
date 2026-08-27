@@ -2,7 +2,7 @@
 slug: gramscope-mcp
 title: GramScope — personal Telegram MCP server for ChatGPT
 source: README.md (development brief, commit f137b11, 2026-08-26)
-branch: per sub-project; sub-project 1 shipped on `gramscope-mcp` and is merged into `main`
+branch: per sub-project; sub-project 1 shipped on `gramscope-mcp` and is merged into `main`; sub-project 2 is on `gramscope-reading`
 created: 2026-08-26
 ---
 
@@ -26,6 +26,8 @@ created: 2026-08-26
 - 2026-08-27 — the cold-instance question is answered in practice: `get_channel` by marked id resolves on a fresh serverless instance, so the missing entity cache does not block reads. It still blocks writes; the "no access-hash story" decision below stands unchanged for sub-projects 5 and 6.
 - 2026-08-27 — operational gotcha worth keeping: ChatGPT's connector URL field was saved as `.../api/mcp,` with a trailing comma. OAuth still completed, because discovery runs off the origin rather than the path, so the connector reported itself connected and enabled while every tool call 404'd and no tools appeared. When a connector shows up healthy but exposes zero tools, check the registered URL character by character before suspecting the server.
 - 2026-08-27 — the account has three Telegram folders (Новости, Технологии, AI), populated by reading each channel's recent posts rather than inferring from its title. One channel, "Example News Channel", returned no messages when sampled and was placed in Новости by name alone; that single assignment is unverified and should be re-checked once a message-reading tool exists.
+- 2026-08-27 — owner decision: `mark_read` moves from sub-project 5 into sub-project 2. Without it the read pointer never advances, so `unread_only` and `get_unread_summary` would ship decorative. The owner accepted the risk on the grounds that the Telegram account is a fresh dedicated one where damaging state is acceptable.
+- 2026-08-27 — the access-hash question is answered from teleproto's source, not assumed. `getInputEntity` falls through the in-memory cache and the session cache to a network path that calls `channels.getChannels` with `access_hash = 0`; Telegram accepts that for channels the account holds and returns the real hash. That is why Foundation's `get_channel` resolves on a cold instance, and the same `InputPeerChannel` is valid for writes. Cost is one extra round trip per cold peer. Task 1 of the sub-project 2 plan verifies it against the real account before any tool depends on it.
 - 2026-08-27 — the brand assets live in the repository: `app/icon.svg`, `public/favicon.ico`, `public/avatar-512.png` (master), `public/avatar-512-min.png` (4KB, for the plugin upload), `public/avatar-256.jpg`.
 
 # Blocked — awaiting owner
@@ -34,18 +36,20 @@ Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
 
 
 # Review findings not yet addressed
-- No test exercises `tools/list` through the MCP handler. The units beneath it are covered, but a regression in tool registration — a bad `inputSchema`, a tool dropped from `registerTools` — would ship silently and present exactly as "connector connected, no tools available". Add one before sub-project 2 adds more tools.
+- No test exercises `tools/list` through the MCP handler. The units beneath it are covered, but a regression in tool registration — a bad `inputSchema`, a tool dropped from `registerTools` — would ship silently and present exactly as "connector connected, no tools available". Scheduled: §13 of the sub-project 2 spec makes it a required test, closed when that sub-project lands.
 
 # Decisions carried into later sub-projects
 - `TelegramSource.id` is Telegram's MARKED id (`-100…` for channels). Every later tool joins on this field, and sub-project 6 keys source notes by it.
 - Cursors carry a kind discriminator (`k`); each new paginated tool must use its own, or a foreign cursor silently returns a wrong page.
-- There is no access-hash story yet. A stateless instance has no entity cache, which blocks every write tool in sub-projects 5 and 6. Resolve before designing `mark_read`, folder edits, and joins — the answer may change what `id` means.
-- `readOnlyHint` is currently uniform and unenforced. When write tools land, derive the annotation from the same value that drives behavior.
+- ~~There is no access-hash story yet.~~ Superseded 2026-08-27: resolution from a bare id works for reads and writes alike, see the finding above. `id` keeps its meaning. Folder edits, joins and leaves in sub-projects 5 and 6 inherit the same resolution path.
+- `readOnlyHint` is currently uniform and unenforced. Sub-project 2 makes it behaviour-derived — `false` on `mark_read`, `true` on the reads — and the handler test asserts it. Later write tools inherit that obligation.
+- The grouped-by-source response shape and the per-source `offset_id` cursor introduced in sub-project 2 are the house format for every later multi-source tool, `search_messages` included.
 
 # Links
 - brief: README.md
 - spec (sub-project 1, Foundation): docs/superpowers/specs/2026-08-26-gramscope-foundation-design.md
 - plan (sub-project 1, Foundation): docs/superpowers/plans/2026-08-26-gramscope-foundation.md
+- spec (sub-project 2, Reading): docs/superpowers/specs/2026-08-27-gramscope-reading-design.md
 - ledger: deleted with the plan workspace after the final whole-branch review came back clean, per superpowers:subagent-driven-development. Recover sub-project 1's history from `git log` if needed.
 - deployment: https://gramscope.vercel.app (Vercel Git integration; a push to `main` deploys)
 - MCP endpoint: https://gramscope.vercel.app/api/mcp
