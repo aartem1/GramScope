@@ -117,6 +117,10 @@ suite("Research against the real account", () => {
     const seen = new Set(
       first.results.map((hit) => `${hit.chat_id}:${hit.id}`),
     );
+    expect(
+      second.results.length,
+      "a next_cursor was issued but the page it resumes is empty",
+    ).toBeGreaterThan(0);
     for (const hit of second.results) {
       expect(seen.has(`${hit.chat_id}:${hit.id}`)).toBe(false);
     }
