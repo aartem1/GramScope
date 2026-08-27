@@ -42,7 +42,7 @@ export type Slice = {
  * over GetHistory precisely when a filter is present, so passing one here is
  * the whole switch.
  */
-async function mediaFilter(type: MediaType | undefined): Promise<unknown> {
+export async function mediaFilter(type: MediaType | undefined): Promise<unknown> {
   if (type === undefined) return undefined;
   const Api = await getApi();
   switch (type) {

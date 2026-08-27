@@ -80,8 +80,10 @@ export function folderMembers(
   return members;
 }
 
-export async function fetchDialogIndex(): Promise<DialogIndex> {
-  const folders = await fetchFolders();
+export async function fetchDialogIndex(
+  options: { includeFolders?: boolean } = {},
+): Promise<DialogIndex> {
+  const folders = options.includeFolders === false ? [] : await fetchFolders();
   const folderIndex = foldersByPeer(folders);
   const raw = await withTelegram(async (client) =>
     client.getDialogs({ limit: DIALOG_SCAN_LIMIT }),
