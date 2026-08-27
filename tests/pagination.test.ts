@@ -149,6 +149,23 @@ describe("message cursors", () => {
     ).toString("base64url");
     expect(() => decodeMessageCursor(forged)).toThrowError(GramScopeError);
   });
+
+  it("decodes a hand-built payload on the `i` wire key, pinning the wire format", () => {
+    // Every other test here round-trips through encodeMessageCursor, so all
+    // of them would still pass if the payload key were renamed on both sides
+    // at once. This literal is not produced by the encoder: it pins the key
+    // a cursor already issued to a live connector actually uses.
+    const literal = Buffer.from(
+      JSON.stringify({
+        v: 1,
+        k: "messages",
+        s: [{ i: "-1001234567890", o: 42 }],
+      }),
+    ).toString("base64url");
+    expect(decodeMessageCursor(literal)).toEqual({
+      sources: [{ handle: "-1001234567890", offsetId: 42 }],
+    });
+  });
 });
 
 // A connector hands the cursor to a language model, which passes it back as a

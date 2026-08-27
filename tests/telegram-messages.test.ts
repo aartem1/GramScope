@@ -670,6 +670,7 @@ describe("sources outside the dialog index", () => {
   });
 
   it("accepts a t.me link in get_message", async () => {
+    let seenEntity: string | undefined;
     __setClientFactoryForTests(async () => ({
       connected: true,
       connect: async () => true,
@@ -681,9 +682,12 @@ describe("sources outside the dialog index", () => {
         title: "Outside",
         username: "outside",
       }),
-      getMessages: async () => [
-        { className: "Message", id: 5, date: 1_750_000_000, message: "hi" },
-      ],
+      getMessages: async (entity: string) => {
+        seenEntity = entity;
+        return [
+          { className: "Message", id: 5, date: 1_750_000_000, message: "hi" },
+        ];
+      },
     }));
 
     const detail = await getMessage({
@@ -693,5 +697,8 @@ describe("sources outside the dialog index", () => {
     expect(detail.source_id).toBe("-100999");
     expect(detail.source_title).toBe("Outside");
     expect(detail.message.id).toBe(5);
+    // The resolved handle must reach teleproto, not the raw t.me link: a bare
+    // "https://t.me/outside/5" string is not a valid MTProto entity.
+    expect(seenEntity).toBe("outside");
   });
 });
