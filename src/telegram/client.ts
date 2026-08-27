@@ -7,6 +7,10 @@ export type TelegramLike = {
   invoke(request: unknown): Promise<unknown>;
   getDialogs(params: Record<string, unknown>): Promise<unknown[]>;
   getEntity(entity: string): Promise<Record<string, unknown>>;
+  getMessages(
+    entity: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown[]>;
 };
 
 type Factory = () => Promise<TelegramLike>;

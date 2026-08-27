@@ -177,6 +177,7 @@ describe("folder membership reaches a channel dialog", () => {
       invoke: invoker(filters),
       getDialogs: async () => [{ ...channelDialog, date: 100, message: { id: 7 } }],
       getEntity: async () => channelDialog.entity,
+      getMessages: async () => [],
     }));
   }
 
@@ -239,6 +240,7 @@ describe("listDialogs cursor advance", () => {
       invoke: invoker([]),
       getDialogs: async () => dialogs,
       getEntity: async () => ({}),
+      getMessages: async () => [],
     }));
   }
 
@@ -294,6 +296,7 @@ describe("listDialogs cursor advance", () => {
         return rows.slice(0, params.limit as number);
       },
       getEntity: async () => ({}),
+      getMessages: async () => [],
     }));
 
     const seen: string[] = [];
@@ -331,6 +334,7 @@ describe("listDialogs cursor advance", () => {
         return rows.slice(0, params.limit as number);
       },
       getEntity: async () => ({}),
+      getMessages: async () => [],
     }));
 
     const first = await listDialogs({ limit: 2 });
@@ -362,6 +366,7 @@ describe("listDialogs cursor advance", () => {
         return rows.slice(0, params.limit as number);
       },
       getEntity: async () => ({}),
+      getMessages: async () => [],
     }));
 
     const seen: string[] = [];
@@ -391,6 +396,7 @@ describe("listDialogs cursor advance", () => {
         return [];
       },
       getEntity: async () => ({}),
+      getMessages: async () => [],
     }));
     await listDialogs({
       limit: 10,
@@ -413,6 +419,7 @@ describe("listDialogs cursor advance", () => {
         return [];
       },
       getEntity: async () => ({}),
+      getMessages: async () => [],
     }));
 
     await listDialogs({ limit: 10 });
@@ -434,6 +441,7 @@ describe("getChannel", () => {
       invoke: invoker([], full),
       getDialogs: async () => [],
       getEntity: async () => entity,
+      getMessages: async () => [],
     }));
   }
 
@@ -547,6 +555,7 @@ describe("getChannel", () => {
         id: { value: 555000111n },
         firstName: "Ada",
       }),
+      getMessages: async () => [],
     }));
 
     const source = await getChannel({ id: "555000111" });
