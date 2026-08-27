@@ -7,7 +7,7 @@ import {
 import { fetchSlice, type MediaType, type Slice } from "./message-slice";
 import { FANOUT_CONCURRENCY, mapWithConcurrency } from "../concurrency";
 import { decodeMessageCursor, encodeMessageCursor } from "../pagination";
-import { fitToSizeCap } from "../schemas/size";
+import { fitToSizeCap, MAX_RESPONSE_BYTES } from "../schemas/size";
 import { GramScopeError } from "../errors/taxonomy";
 import { mapTelegramError } from "../errors/from-telegram";
 import type { TelegramMessage } from "../schemas/message";
@@ -66,35 +66,39 @@ export function resolveSourceSet(
   input: GetMessagesInput,
   index: DialogIndex,
 ): Array<{ sourceId: string; offsetId: number }> {
-  if (input.cursor) return decodeMessageCursor(input.cursor).sources;
+  let resolved: Array<{ sourceId: string; offsetId: number }>;
+  if (input.cursor) {
+    resolved = decodeMessageCursor(input.cursor).sources;
+  } else {
+    const excluded = new Set(input.exclude_source_ids ?? []);
+    const seen = new Set<string>();
+    const ordered: string[] = [];
 
-  const excluded = new Set(input.exclude_source_ids ?? []);
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-
-  for (const id of [
-    ...(input.source_ids ?? []),
-    ...folderMembers(index.folders, input.folder_ids ?? []),
-  ]) {
-    if (excluded.has(id) || seen.has(id)) continue;
-    seen.add(id);
-    ordered.push(id);
+    for (const id of [
+      ...(input.source_ids ?? []),
+      ...folderMembers(index.folders, input.folder_ids ?? []),
+    ]) {
+      if (excluded.has(id) || seen.has(id)) continue;
+      seen.add(id);
+      ordered.push(id);
+    }
+    resolved = ordered.map((sourceId) => ({ sourceId, offsetId: 0 }));
   }
 
-  if (ordered.length === 0) {
+  if (resolved.length === 0) {
     throw new GramScopeError(
       "INVALID_INPUT",
       "Name at least one source: pass source_ids, folder_ids, or a cursor from a previous page.",
     );
   }
-  if (ordered.length > MAX_SOURCES_PER_CALL) {
+  if (resolved.length > MAX_SOURCES_PER_CALL) {
     throw new GramScopeError(
       "INVALID_INPUT",
-      `This selection resolves to ${ordered.length} sources; the limit is ${MAX_SOURCES_PER_CALL}. Split the call.`,
+      `This selection resolves to ${resolved.length} sources; the limit is ${MAX_SOURCES_PER_CALL}. Split the call.`,
     );
   }
 
-  return ordered.map((sourceId) => ({ sourceId, offsetId: 0 }));
+  return resolved;
 }
 
 export type Fetched = {
@@ -108,7 +112,11 @@ export type Fetched = {
 
 type Unit = { blockIndex: number; message: TelegramMessage };
 
-function compose(fetched: Fetched[], kept: Unit[]): GetMessagesResult {
+function compose(
+  fetched: Fetched[],
+  kept: Unit[],
+  oversized?: Unit,
+): GetMessagesResult {
   const keptCount = new Array<number>(fetched.length).fill(0);
   for (const unit of kept) keptCount[unit.blockIndex]!++;
 
@@ -127,6 +135,26 @@ function compose(fetched: Fetched[], kept: Unit[]): GetMessagesResult {
         title: block.title,
         error: block.error,
       });
+      continue;
+    }
+
+    if (oversized?.blockIndex === i) {
+      sources.push({
+        source_id: block.source_id,
+        title: block.title,
+        error: {
+          code: "INTERNAL_ERROR",
+          message: `Message ${oversized.message.id} exceeds the 256 KB response limit and was skipped without truncation.`,
+        },
+      });
+      const all = block.slice?.messages ?? [];
+      if (all.length > 1 || block.slice?.hasMore) {
+        unexhausted.push({
+          sourceId: block.source_id,
+          offsetId: oversized.message.id,
+        });
+      }
+      stopped = true;
       continue;
     }
 
@@ -191,16 +219,24 @@ function compose(fetched: Fetched[], kept: Unit[]): GetMessagesResult {
 
 /**
  * Assembles the page source by source, in the requested order, while it fits
- * the response cap. Flattening to one unit per message means the cap search
- * is the existing fitToSizeCap: leading units in order, at least one kept, so
- * a page always makes progress.
+ * the response cap. Flattening to one unit per message lets fitToSizeCap search
+ * leading units in order. If even the first complete result is too large, the
+ * message is skipped visibly and the cursor resumes after its id.
  */
 export function renderPage(fetched: Fetched[]): GetMessagesResult {
   const units: Unit[] = fetched.flatMap((block, blockIndex) =>
     (block.slice?.messages ?? []).map((message) => ({ blockIndex, message })),
   );
-  const fit = fitToSizeCap(units, (kept) => compose(fetched, kept).sources);
-  return compose(fetched, units.slice(0, fit));
+  const fit = fitToSizeCap(units, (kept) => compose(fetched, kept));
+  const page = compose(fetched, units.slice(0, fit));
+  if (
+    Buffer.byteLength(JSON.stringify(page), "utf8") <= MAX_RESPONSE_BYTES ||
+    units.length === 0
+  ) {
+    return page;
+  }
+
+  return compose(fetched, [], units[0]);
 }
 
 export async function getMessages(

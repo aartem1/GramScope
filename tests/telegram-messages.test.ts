@@ -147,6 +147,53 @@ describe("resolveSourceSet", () => {
     );
     expect(set).toEqual([{ sourceId: B, offsetId: 77 }]);
   });
+
+  it("rejects a cursor carrying 26 sources with count and split guidance", () => {
+    // Catches returning decoded cursor sources before the effective-set cap.
+    const error = (() => {
+      try {
+        resolveSourceSet(
+          {
+            limit: 20,
+            cursor: encodeMessageCursor({
+              sources: Array.from({ length: 26 }, (_, i) => ({
+                sourceId: `-100${i}`,
+                offsetId: i,
+              })),
+            }),
+          },
+          index,
+        );
+      } catch (e) {
+        return e;
+      }
+      return undefined;
+    })();
+
+    expect((error as GramScopeError).code).toBe("INVALID_INPUT");
+    expect((error as GramScopeError).message).toContain("26");
+    expect((error as GramScopeError).message.toLowerCase()).toContain("split");
+  });
+
+  it("rejects a cursor carrying no sources", () => {
+    // Catches accepting an empty decoded cursor as a valid effective set.
+    const error = (() => {
+      try {
+        resolveSourceSet(
+          {
+            limit: 20,
+            cursor: encodeMessageCursor({ sources: [] }),
+          },
+          index,
+        );
+      } catch (e) {
+        return e;
+      }
+      return undefined;
+    })();
+
+    expect((error as GramScopeError).code).toBe("INVALID_INPUT");
+  });
 });
 
 describe("renderPage", () => {
@@ -210,6 +257,69 @@ describe("renderPage", () => {
       offsetId: page.sources[0]!.messages!.at(-1)!.id,
     });
     expect(resumed).toContainEqual({ sourceId: B, offsetId: 0 });
+  });
+
+  it("counts the response envelope and cursor toward the 256 KB cap", () => {
+    // Catches sizing only page.sources while returning a larger full result.
+    const fat = "z".repeat(130_916);
+    const page = renderPage([
+      {
+        source_id: A,
+        title: "Alpha",
+        startOffsetId: 0,
+        slice: {
+          messages: [message(2, fat), message(1, fat)],
+          hasMore: false,
+          nextOffsetId: 0,
+        },
+      },
+      block(B, "Beta", [9]),
+    ]);
+
+    expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(
+      MAX_RESPONSE_BYTES,
+    );
+    expect(page.sources[0]!.messages).toHaveLength(1);
+    expect(decodeMessageCursor(page.next_cursor!).sources).toEqual([
+      { sourceId: A, offsetId: 2 },
+      { sourceId: B, offsetId: 0 },
+    ]);
+  });
+
+  it("reports one indivisible oversized message without truncating its text", () => {
+    // Catches fitToSizeCap forcing one oversized message into the response.
+    const text = "q".repeat(MAX_RESPONSE_BYTES);
+    const fetched: Fetched[] = [
+      {
+        source_id: A,
+        title: "Alpha",
+        startOffsetId: 0,
+        slice: {
+          messages: [message(7, text), message(6, "older")],
+          hasMore: false,
+          nextOffsetId: 0,
+        },
+      },
+      block(B, "Beta", [9]),
+    ];
+
+    const page = renderPage(fetched);
+
+    expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(
+      MAX_RESPONSE_BYTES,
+    );
+    expect(page.sources[0]).toMatchObject({
+      source_id: A,
+      title: "Alpha",
+      error: { code: "INTERNAL_ERROR" },
+    });
+    expect(page.sources[0]!.error!.message).toContain("7");
+    expect(page.sources[0]!.messages).toBeUndefined();
+    expect(fetched[0]!.slice!.messages[0]!.text).toBe(text);
+    expect(decodeMessageCursor(page.next_cursor!).sources).toEqual([
+      { sourceId: A, offsetId: 7 },
+      { sourceId: B, offsetId: 0 },
+    ]);
   });
 
   it("keeps a failing source visible and out of the cursor", () => {
