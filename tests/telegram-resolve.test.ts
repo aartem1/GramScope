@@ -143,6 +143,28 @@ describe("resolveTelegramUrl", () => {
     });
   });
 
+  it("does not expose an unheld ChatInvitePeek peer id", async () => {
+    install({
+      invite: {
+        className: "ChatInvitePeek",
+        chat: {
+          className: "Channel",
+          id: 999n,
+          title: "Private Preview",
+          megagroup: true,
+        },
+      },
+    });
+
+    const result = await resolveTelegramUrl({ url: "t.me/+AbCdEf" });
+
+    expect(result.source).toEqual({
+      title: "Private Preview",
+      type: "group",
+      joined: false,
+    });
+  });
+
   it("fails a private internal link the account cannot hold", async () => {
     __setClientFactoryForTests(async () => ({
       connected: true,

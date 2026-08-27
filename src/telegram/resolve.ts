@@ -45,19 +45,22 @@ async function previewInvite(
 
   const chat = invite.chat as Record<string, unknown> | undefined;
   if (chat) {
-    // ChatInviteAlready or ChatInvitePeek: a real entity came back.
+    // ChatInvitePeek carries a real-looking entity, but its marked id is not a
+    // usable continuation handle unless the account already holds that peer.
     const source = toSource(chat, folderIndex);
+    const held = source.id ? joinedIds.has(source.id) : false;
+    const exposeId = invite.className !== "ChatInvitePeek" || held;
     return {
       kind: "invite",
       source: {
-        ...(source.id ? { source_id: source.id } : {}),
+        ...(source.id && exposeId ? { source_id: source.id } : {}),
         title: source.title,
         ...(source.username !== undefined ? { username: source.username } : {}),
         type: source.type,
         ...(source.subscriber_count !== undefined
           ? { subscriber_count: source.subscriber_count }
           : {}),
-        joined: source.id ? joinedIds.has(source.id) : false,
+        joined: held,
         ...(source.folder_ids ? { folder_ids: source.folder_ids } : {}),
       },
     };
