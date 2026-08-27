@@ -95,6 +95,24 @@ export function parseTelegramName(raw: string): TelegramLink {
   );
 }
 
+/**
+ * One canonical key per way of writing a name, so two spellings of the same
+ * peer collapse before anything is resolved. A name that does not parse falls
+ * back to its trimmed, lowercased self: such a name can only ever become an
+ * error row, and two identical unparseable names are still one row.
+ */
+export function nameKey(raw: string): string {
+  let link: TelegramLink;
+  try {
+    link = parseTelegramName(raw);
+  } catch {
+    return `raw:${raw.trim().toLowerCase()}`;
+  }
+  if (link.kind === "username") return `u:${link.username.toLowerCase()}`;
+  if (link.kind === "internal") return `i:${link.markedId}`;
+  return `v:${link.hash}`;
+}
+
 export type ResolvedSource = {
   /** Marked id — what every response reports as source_id. */
   source_id: string;

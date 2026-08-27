@@ -5,7 +5,7 @@ import {
   type DialogIndex,
 } from "./dialog-index";
 import { fetchSlice, type MediaType, type Slice } from "./message-slice";
-import { resolveSource } from "./peer-resolve";
+import { nameKey, resolveSource } from "./peer-resolve";
 import {
   assertRawSourceCount,
   MAX_RAW_SOURCE_NAMES_PER_CALL,
@@ -89,8 +89,11 @@ export function resolveSourceSet(
       ...(input.source_ids ?? []),
       ...folderMembers(index.folders, input.folder_ids ?? []),
     ]) {
-      if (seen.has(id)) continue;
-      seen.add(id);
+      // By name key, not by raw string, so two spellings of one peer cost one
+      // resolution and one result block. searchMessages collapses the same way.
+      const key = nameKey(id);
+      if (seen.has(key)) continue;
+      seen.add(key);
       ordered.push(id);
     }
     resolved = ordered.map((handle) => ({ handle, offsetId: 0 }));

@@ -552,6 +552,51 @@ describe("getMessages", () => {
     expect(reads).toHaveLength(25);
   });
 
+  it("keeps the page when an exclusion cannot be resolved", async () => {
+    // An exclusion that resolves nowhere cannot have matched anything, so it
+    // must not take the whole page down with it. The realistic path is an
+    // agent excluding an unjoined channel by the marked id it was handed,
+    // which a cold instance answers CHANNEL_INVALID.
+    __setClientFactoryForTests(factory({ [ALPHA_HANDLE]: [post(10)] }));
+
+    const page = await getMessages({
+      source_ids: [A],
+      exclude_source_ids: ["-100999999999"],
+      limit: 20,
+    });
+
+    expect(page.sources.map((source) => source.source_id)).toEqual([A]);
+  });
+
+  it("still subtracts an unresolvable exclusion written as a selected name", async () => {
+    // Degrading to raw-key matching must not degrade to matching nothing.
+    __setClientFactoryForTests(factory({ [ALPHA_HANDLE]: [post(10)] }));
+
+    const page = await getMessages({
+      source_ids: ["@ghost", A],
+      exclude_source_ids: ["@Ghost"],
+      limit: 20,
+    });
+
+    expect(page.sources.map((source) => source.source_id)).toEqual([A]);
+  });
+
+  it("collapses spellings of one unresolvable source into a single row", async () => {
+    const reads: string[] = [];
+    __setClientFactoryForTests(
+      factory({ [ALPHA_HANDLE]: [post(10)] }, undefined, reads),
+    );
+
+    const page = await getMessages({
+      source_ids: ["@ghost", "@Ghost", "https://t.me/ghost"],
+      limit: 20,
+    });
+
+    expect(page.sources).toHaveLength(1);
+    expect(page.sources[0]!.error?.code).toBe("CHANNEL_NOT_FOUND");
+    expect(reads).toEqual([]);
+  });
+
   it("subtracts an exclusion named by marked id", async () => {
     const reads: string[] = [];
     __setClientFactoryForTests(

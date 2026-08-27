@@ -12,7 +12,7 @@ import {
 import { mediaFilter, type MediaType } from "./message-slice";
 import { parseDateBound } from "./messages";
 import { inputPeerMarkedId } from "./peer-id";
-import { parseTelegramName } from "./peer-resolve";
+import { nameKey } from "./peer-resolve";
 import { assertRawSourceCount, prepareSourceTargets } from "./source-selection";
 import { readMessagesPage } from "./tl-messages";
 import {
@@ -232,13 +232,6 @@ async function globalPage(
     "INTERNAL_ERROR",
     "The first matching message exceeds the 256 KB response limit.",
   );
-}
-
-function nameKey(raw: string): string {
-  const link = parseTelegramName(raw);
-  if (link.kind === "username") return `u:${link.username.toLowerCase()}`;
-  if (link.kind === "internal") return `i:${link.markedId}`;
-  return `v:${link.hash}`;
 }
 
 function targetNames(input: SearchInput, index: DialogIndex): string[] {
