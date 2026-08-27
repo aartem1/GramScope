@@ -9,6 +9,7 @@ export const ERROR_CODES = [
   "INVALID_CURSOR",
   "INVALID_INPUT",
   "MESSAGE_NOT_FOUND",
+  "NO_DISCUSSION_THREAD",
   "INTERNAL_ERROR",
 ] as const;
 

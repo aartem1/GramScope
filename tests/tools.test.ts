@@ -46,12 +46,13 @@ describe("registerTools", () => {
     "get_channel",
     "get_message",
     "get_messages",
+    "get_thread",
     "get_unread_summary",
     "list_dialogs",
     "list_folders",
   ];
 
-  it("registers all seven tools", () => {
+  it("registers all eight tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(

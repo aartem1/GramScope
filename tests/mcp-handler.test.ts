@@ -66,12 +66,13 @@ async function listTools(): Promise<Json[]> {
 }
 
 describe("tools/list over a real MCP server", () => {
-  it("advertises all seven tools", async () => {
+  it("advertises all eight tools", async () => {
     const tools = await listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "get_channel",
       "get_message",
       "get_messages",
+      "get_thread",
       "get_unread_summary",
       "list_dialogs",
       "list_folders",
