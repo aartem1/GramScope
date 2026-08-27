@@ -780,6 +780,653 @@ git add src/pagination.ts tests/pagination.test.ts
 git commit -m "feat: add search, thread and pinned cursor kinds with a scope fingerprint"
 ```
 
+### Task 3: One reader for the three TL message-page shapes
+
+`messages.searchGlobal`, `messages.search`, `messages.getReplies` and the pinned
+search all return the same union — `messages.Messages` (bounded, no `count`),
+`messages.MessagesSlice` (`count`, sometimes `nextRate`) and
+`messages.ChannelMessages` (`count`, no `nextRate`). Three engines would
+otherwise each re-derive where `count` lives.
+
+**Files:**
+- Create: `src/telegram/tl-messages.ts`
+- Test: `tests/telegram-tl-messages.test.ts`
+
+**Interfaces:**
+- Consumes: `entityMarkedId` from `src/telegram/peer-id.ts`.
+- Produces:
+  - `type TlMessagesPage = { messages: Record<string, unknown>[]; titles: Map<string, string>; count?: number; nextRate?: number }`
+  - `function readMessagesPage(raw: unknown): TlMessagesPage`
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/telegram-tl-messages.test.ts
+import { describe, expect, it } from "vitest";
+import { readMessagesPage } from "@/telegram/tl-messages";
+
+const chat = { className: "Channel", id: 111n, title: "Alpha" };
+
+describe("readMessagesPage", () => {
+  it("reads a slice with a total and a resume rate", () => {
+    const page = readMessagesPage({
+      className: "messages.MessagesSlice",
+      count: 4820,
+      nextRate: 1755000000,
+      messages: [{ id: 7 }],
+      chats: [chat],
+      users: [],
+    });
+    expect(page.count).toBe(4820);
+    expect(page.nextRate).toBe(1755000000);
+    expect(page.messages).toEqual([{ id: 7 }]);
+    expect(page.titles.get("-100111")).toBe("Alpha");
+  });
+
+  it("reads a bounded result, which carries no total", () => {
+    const page = readMessagesPage({
+      className: "messages.Messages",
+      messages: [{ id: 7 }, { id: 6 }],
+      chats: [],
+      users: [],
+    });
+    expect(page.count).toBeUndefined();
+    expect(page.nextRate).toBeUndefined();
+    expect(page.messages).toHaveLength(2);
+  });
+
+  it("reads channel messages, which have a total but no rate", () => {
+    const page = readMessagesPage({
+      className: "messages.ChannelMessages",
+      pts: 1,
+      count: 217,
+      messages: [{ id: 9 }],
+      chats: [chat],
+      users: [],
+    });
+    expect(page.count).toBe(217);
+    expect(page.nextRate).toBeUndefined();
+  });
+
+  it("returns an empty page for anything else rather than throwing", () => {
+    for (const raw of [undefined, null, {}, { className: "messages.MessagesNotModified" }]) {
+      const page = readMessagesPage(raw);
+      expect(page.messages).toEqual([]);
+      expect(page.count).toBeUndefined();
+    }
+  });
+
+  it("hands back a plain array, not a teleproto TotalList", () => {
+    class TotalList extends Array {}
+    const messages = TotalList.from([{ id: 1 }]) as unknown[];
+    const page = readMessagesPage({ messages, chats: [], users: [] });
+    expect(Object.getPrototypeOf(page.messages)).toBe(Array.prototype);
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run tests/telegram-tl-messages.test.ts`
+Expected: FAIL — `Failed to resolve import "@/telegram/tl-messages"`.
+
+- [ ] **Step 3: Write the implementation**
+
+```ts
+// src/telegram/tl-messages.ts
+import { entityMarkedId } from "./peer-id";
+
+/**
+ * The flat view of every messages.* TL result this project reads:
+ * messages.Messages (bounded, no count), messages.MessagesSlice (count, and a
+ * nextRate on a global search) and messages.ChannelMessages (count, no rate).
+ */
+export type TlMessagesPage = {
+  messages: Record<string, unknown>[];
+  /** Marked id -> title, taken from the chats the response already carried, so
+   *  naming a hit's source costs no extra round trip. */
+  titles: Map<string, string>;
+  /** Server-side total for the query. Absent on a bounded result. */
+  count?: number;
+  /** messages.searchGlobal's resume key. Absent everywhere else. */
+  nextRate?: number;
+};
+
+function records(value: unknown): Record<string, unknown>[] {
+  // Array.from: teleproto hands back an Array subclass carrying `total`, and
+  // filter/map preserve it through Symbol.species.
+  return Array.isArray(value)
+    ? Array.from(value).filter(
+        (item): item is Record<string, unknown> =>
+          typeof item === "object" && item !== null,
+      )
+    : [];
+}
+
+export function readMessagesPage(raw: unknown): TlMessagesPage {
+  const page = (typeof raw === "object" && raw !== null ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+
+  const titles = new Map<string, string>();
+  for (const chat of records(page.chats)) {
+    const id = entityMarkedId(chat);
+    if (id !== undefined && typeof chat.title === "string") {
+      titles.set(id, chat.title);
+    }
+  }
+
+  return {
+    messages: records(page.messages),
+    titles,
+    ...(typeof page.count === "number" ? { count: page.count } : {}),
+    ...(typeof page.nextRate === "number" ? { nextRate: page.nextRate } : {}),
+  };
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `npx vitest run tests/telegram-tl-messages.test.ts`
+Expected: PASS, 5 tests.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/telegram/tl-messages.ts tests/telegram-tl-messages.test.ts
+git commit -m "feat: read the three TL message-page shapes through one helper"
+```
+
+---
+
+### Task 4: `get_thread` — a post and the comments under it
+
+Spec §6.2. Two RPCs, because a post with zero comments and a channel with no
+linked discussion group both fail `getReplies` with the same `MSG_ID_INVALID`
+and are indistinguishable by error. The post's own `replies` block is the
+discriminator, and the reading tools already return it, so a model can tell in
+advance whether a thread is worth fetching.
+
+**Files:**
+- Modify: `src/errors/taxonomy.ts` (add `NO_DISCUSSION_THREAD`)
+- Create: `src/telegram/thread.ts`
+- Create: `src/mcp/tools/get-thread.ts`
+- Modify: `src/mcp/server.ts`
+- Test: `tests/telegram-thread.test.ts`
+- Modify: `tests/mcp-handler.test.ts` (eight tools)
+
+**Interfaces:**
+- Consumes: `resolveSource` (Task 1); `decodeThreadCursor` / `encodeThreadCursor` / `scopeFingerprint` / `assertSameScope` (Task 2); `readMessagesPage` (Task 3); `mapMessage`, `MessageContext` from `src/schemas/message.ts`; `markedChannelId`, `readBigId` from `src/telegram/peer-id.ts`; `fitToSizeCap` from `src/schemas/size.ts`; `getApi`, `withTelegram` from `src/telegram/client.ts`; `fetchDialogIndex` from `src/telegram/dialog-index.ts`.
+- Produces:
+  - `type GetThreadInput = { source_id: string; post_id: number; limit: number; cursor?: string }`
+  - `type GetThreadResult = { source_id: string; source_title: string; post: TelegramMessage; discussion_chat_id?: string; comment_count: number; comments: TelegramMessage[]; next_cursor?: string }`
+  - `function getThread(input: GetThreadInput): Promise<GetThreadResult>`
+  - `function registerGetThread(server: McpServer): void`
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/telegram-thread.test.ts
+import { afterEach, describe, expect, it } from "vitest";
+import { getThread } from "@/telegram/thread";
+import {
+  __resetClientForTests,
+  __setClientFactoryForTests,
+} from "@/telegram/client";
+import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
+import { decodeThreadCursor } from "@/pagination";
+import { GramScopeError } from "@/errors/taxonomy";
+
+const CHANNEL = "-1001111111111";
+const GROUP = "-1002222222222";
+
+function post(overrides: Record<string, unknown> = {}) {
+  return {
+    className: "Message",
+    id: 500,
+    date: 1_750_000_000,
+    message: "the post",
+    ...overrides,
+  };
+}
+
+function comment(id: number) {
+  return {
+    className: "Message",
+    id,
+    date: 1_750_000_100 + id,
+    message: `comment ${id}`,
+  };
+}
+
+/** Stands in for the dialog index this tool fetches through fetchDialogIndex,
+ *  which reaches Telegram through the same faked client. */
+function dialogs() {
+  return [
+    {
+      id: CHANNEL,
+      title: "Alpha",
+      entity: { className: "Channel", id: 1111111111n, title: "Alpha" },
+      dialog: { readInboxMaxId: 0 },
+      unreadCount: 0,
+      date: 1,
+      message: { id: 500 },
+    },
+  ];
+}
+
+type Invoked = { className: string; params: Record<string, unknown> };
+
+function install(options: {
+  post?: Record<string, unknown>;
+  replies?: unknown;
+}) {
+  const invoked: Invoked[] = [];
+  __setClientFactoryForTests(async () => ({
+    connected: true,
+    connect: async () => true,
+    getDialogs: async () => dialogs(),
+    getEntity: async () => ({ className: "Channel", id: 1111111111n }),
+    getMessages: async () => (options.post ? [options.post] : []),
+    invoke: async (request: unknown) => {
+      const r = request as { className: string } & Record<string, unknown>;
+      invoked.push({ className: r.className, params: { ...r } });
+      if (r.className === "messages.GetReplies") return options.replies;
+      return {};
+    },
+  }));
+  return invoked;
+}
+
+afterEach(() => {
+  __setClientFactoryForTests(undefined);
+  __resetClientForTests();
+  __resetPeerCacheForTests();
+});
+
+describe("getThread", () => {
+  it("refuses a channel with no linked discussion group", async () => {
+    install({ post: post() });
+    await expect(
+      getThread({ source_id: CHANNEL, post_id: 500, limit: 20 }),
+    ).rejects.toMatchObject({ code: "NO_DISCUSSION_THREAD" });
+  });
+
+  it("returns an empty thread, not an error, when nobody commented", async () => {
+    const invoked = install({
+      post: post({ replies: { replies: 0, channelId: 2222222222n } }),
+    });
+    const result = await getThread({
+      source_id: CHANNEL,
+      post_id: 500,
+      limit: 20,
+    });
+    expect(result.comment_count).toBe(0);
+    expect(result.comments).toEqual([]);
+    expect(result.discussion_chat_id).toBe(GROUP);
+    expect(result.next_cursor).toBeUndefined();
+    // The pre-check answered it: no getReplies was ever sent.
+    expect(invoked.filter((c) => c.className === "messages.GetReplies")).toEqual(
+      [],
+    );
+  });
+
+  it("returns the post as the thread root with its comments", async () => {
+    install({
+      post: post({ replies: { replies: 215, channelId: 2222222222n } }),
+      replies: {
+        className: "messages.ChannelMessages",
+        count: 217,
+        messages: [comment(9), comment(8)],
+        chats: [],
+        users: [],
+      },
+    });
+    const result = await getThread({
+      source_id: CHANNEL,
+      post_id: 500,
+      limit: 2,
+    });
+
+    expect(result.source_id).toBe(CHANNEL);
+    expect(result.source_title).toBe("Alpha");
+    expect(result.post.id).toBe(500);
+    // getReplies' live count, not the post's own slightly stale counter.
+    expect(result.comment_count).toBe(217);
+    expect(result.comments.map((c) => c.id)).toEqual([9, 8]);
+    // Comments live in the discussion group, and the account is not a member,
+    // so they carry that chat_id and no read state.
+    expect(result.comments[0]!.chat_id).toBe(GROUP);
+    expect(result.comments[0]!.is_read).toBeUndefined();
+  });
+
+  it("issues a cursor that resumes below the oldest comment served", async () => {
+    install({
+      post: post({ replies: { replies: 215, channelId: 2222222222n } }),
+      replies: {
+        className: "messages.ChannelMessages",
+        count: 217,
+        messages: [comment(9), comment(8)],
+        chats: [],
+        users: [],
+      },
+    });
+    const first = await getThread({
+      source_id: CHANNEL,
+      post_id: 500,
+      limit: 2,
+    });
+    expect(first.next_cursor).toBeTruthy();
+    expect(decodeThreadCursor(first.next_cursor!).offsetId).toBe(8);
+  });
+
+  it("rejects a cursor issued for another post", async () => {
+    install({
+      post: post({ replies: { replies: 215, channelId: 2222222222n } }),
+      replies: {
+        className: "messages.ChannelMessages",
+        count: 217,
+        messages: [comment(9), comment(8)],
+        chats: [],
+        users: [],
+      },
+    });
+    const first = await getThread({
+      source_id: CHANNEL,
+      post_id: 500,
+      limit: 2,
+    });
+    await expect(
+      getThread({
+        source_id: CHANNEL,
+        post_id: 501,
+        limit: 2,
+        cursor: first.next_cursor!,
+      }),
+    ).rejects.toBeInstanceOf(GramScopeError);
+  });
+
+  it("reports a missing post as MESSAGE_NOT_FOUND", async () => {
+    install({});
+    await expect(
+      getThread({ source_id: CHANNEL, post_id: 500, limit: 20 }),
+    ).rejects.toMatchObject({ code: "MESSAGE_NOT_FOUND" });
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run tests/telegram-thread.test.ts`
+Expected: FAIL — `Failed to resolve import "@/telegram/thread"`.
+
+- [ ] **Step 3: Add the error code**
+
+```ts
+// src/errors/taxonomy.ts — inside ERROR_CODES, after "MESSAGE_NOT_FOUND"
+  "NO_DISCUSSION_THREAD",
+```
+
+- [ ] **Step 4: Write the engine**
+
+```ts
+// src/telegram/thread.ts
+import { getApi, withTelegram } from "./client";
+import { fetchDialogIndex } from "./dialog-index";
+import { resolveSource } from "./peer-resolve";
+import { markedChannelId, readBigId } from "./peer-id";
+import { readMessagesPage } from "./tl-messages";
+import {
+  assertSameScope,
+  decodeThreadCursor,
+  encodeThreadCursor,
+  scopeFingerprint,
+} from "../pagination";
+import { fitToSizeCap } from "../schemas/size";
+import { GramScopeError } from "../errors/taxonomy";
+import {
+  mapMessage,
+  type MessageContext,
+  type TelegramMessage,
+} from "../schemas/message";
+
+export type GetThreadInput = {
+  source_id: string;
+  post_id: number;
+  limit: number;
+  cursor?: string;
+};
+
+export type GetThreadResult = {
+  source_id: string;
+  source_title: string;
+  post: TelegramMessage;
+  discussion_chat_id?: string;
+  comment_count: number;
+  comments: TelegramMessage[];
+  next_cursor?: string;
+};
+
+export async function getThread(
+  input: GetThreadInput,
+): Promise<GetThreadResult> {
+  const index = await fetchDialogIndex();
+
+  return withTelegram(async (client) => {
+    const source = await resolveSource(client, index, input.source_id);
+    const fingerprint = scopeFingerprint({
+      source: source.source_id,
+      post: input.post_id,
+    });
+    const cursor = input.cursor ? decodeThreadCursor(input.cursor) : undefined;
+    if (cursor) assertSameScope(cursor.fingerprint, fingerprint);
+
+    const found = await client.getMessages(source.handle, {
+      ids: [input.post_id],
+    });
+    const raw = (found[0] ?? undefined) as Record<string, unknown> | undefined;
+    if (
+      !raw ||
+      typeof raw.id !== "number" ||
+      raw.className === "MessageEmpty"
+    ) {
+      throw new GramScopeError(
+        "MESSAGE_NOT_FOUND",
+        `No message ${input.post_id} in ${source.source_id}`,
+      );
+    }
+
+    const entry = index.byId.get(source.source_id);
+    const postContext: MessageContext = {
+      chatId: source.source_id,
+      ...(source.username !== undefined ? { username: source.username } : {}),
+      ...(entry !== undefined
+        ? { readInboxMaxId: entry.read_inbox_max_id }
+        : {}),
+    };
+
+    // Spec §6.2: the post's own replies block is the only thing that tells a
+    // channel with no linked group apart from a post nobody commented on.
+    const replies = (raw.replies ?? undefined) as
+      | Record<string, unknown>
+      | undefined;
+    if (!replies || typeof replies.replies !== "number") {
+      throw new GramScopeError(
+        "NO_DISCUSSION_THREAD",
+        `${source.title} has no linked discussion group, so its posts carry no comment threads.`,
+      );
+    }
+
+    const linkedBare = readBigId(replies.channelId);
+    const base = {
+      source_id: source.source_id,
+      source_title: source.title,
+      post: mapMessage(raw, postContext),
+      // A linked discussion chat is always a megagroup, so a bare id marks as
+      // a channel.
+      ...(linkedBare !== undefined
+        ? { discussion_chat_id: markedChannelId(linkedBare) }
+        : {}),
+    };
+
+    if (replies.replies === 0) {
+      return { ...base, comment_count: 0, comments: [] };
+    }
+
+    const Api = await getApi();
+    // Every field is passed explicitly: teleproto does not fill TL defaults
+    // for omitted non-flag parameters.
+    const page = readMessagesPage(
+      await client.invoke(
+        new Api.messages.GetReplies({
+          peer: source.handle as never,
+          msgId: input.post_id,
+          offsetId: cursor?.offsetId ?? 0,
+          offsetDate: 0,
+          addOffset: 0,
+          limit: input.limit,
+          maxId: 0,
+          minId: 0,
+          hash: 0 as never,
+        }),
+      ),
+    );
+
+    // Comments live in the discussion group, which the account is not a member
+    // of: no read pointer, so no is_read, and no username, so no url.
+    const commentContext: MessageContext = {
+      chatId: base.discussion_chat_id ?? source.source_id,
+    };
+    const all = page.messages.map((message) =>
+      mapMessage(message, commentContext),
+    );
+
+    const comment_count = page.count ?? replies.replies;
+    const fit = fitToSizeCap(all, (kept) => ({
+      ...base,
+      comment_count,
+      comments: kept,
+    }));
+    const comments = all.slice(0, fit);
+
+    // getReplies is newest-first, so the oldest id served is the resume point.
+    const exhausted = comments.length === all.length && all.length < input.limit;
+    const oldest = comments[comments.length - 1];
+
+    return {
+      ...base,
+      comment_count,
+      comments,
+      ...(exhausted || oldest === undefined
+        ? {}
+        : {
+            next_cursor: encodeThreadCursor({
+              offsetId: oldest.id,
+              fingerprint,
+            }),
+          }),
+    };
+  });
+}
+```
+
+- [ ] **Step 5: Run the engine test to verify it passes**
+
+Run: `npx vitest run tests/telegram-thread.test.ts`
+Expected: PASS, 6 tests.
+
+- [ ] **Step 6: Register the tool**
+
+```ts
+// src/mcp/tools/get-thread.ts
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { getThread } from "../../telegram/thread";
+import { telegramMessageSchema } from "../../schemas/message";
+import { runTool } from "../tool-result";
+
+export function registerGetThread(server: McpServer): void {
+  server.registerTool(
+    "get_thread",
+    {
+      title: "Read the comments under a Telegram post",
+      description:
+        "Read the discussion thread under one channel post: the post itself plus the comments left on it, newest first. Works without joining the channel's linked discussion group. Before calling, check the post's replies field, which every message-returning tool already reports: it is the comment count, and a post that has no replies field belongs to a channel with no discussion group at all (NO_DISCUSSION_THREAD). A post with zero comments returns an empty comments list, not an error. comment_count is the discussion group's own live count and can run slightly ahead of the post's replies field. discussion_chat_id identifies the linked group but is NOT an address: get_messages cannot read it, because the account is not a member. Read-only.",
+      inputSchema: z.object({
+        source_id: z
+          .string()
+          .describe(
+            "The CHANNEL the post is in — a marked id, a @username, or a t.me link. Not the discussion group.",
+          ),
+        post_id: z
+          .number()
+          .int()
+          .describe("Message id of the post inside that channel."),
+        limit: z.number().int().min(1).max(100).default(20),
+        cursor: z
+          .string()
+          .describe(
+            "Opaque continuation token from a previous response's next_cursor. Copy it back exactly as received, character for character; it is not human-readable and must not be shortened, re-typed or reconstructed. It is bound to this source_id and post_id.",
+          )
+          .optional(),
+      }),
+      outputSchema: z.object({
+        source_id: z.string(),
+        source_title: z.string(),
+        post: telegramMessageSchema,
+        discussion_chat_id: z.string().optional(),
+        comment_count: z.number().int(),
+        comments: z.array(telegramMessageSchema),
+        next_cursor: z.string().optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => runTool("get_thread", () => getThread(input)),
+  );
+}
+```
+
+```ts
+// src/mcp/server.ts — add the import next to the others and the call inside
+// registerTools, after registerGetMessage(server);
+import { registerGetThread } from "./tools/get-thread";
+// ...
+  registerGetThread(server);
+```
+
+- [ ] **Step 7: Extend the handler test to eight tools**
+
+```ts
+// tests/mcp-handler.test.ts — replace the name list in the first test
+  it("advertises all eight tools", async () => {
+    const tools = await listTools();
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "get_channel",
+      "get_message",
+      "get_messages",
+      "get_thread",
+      "get_unread_summary",
+      "list_dialogs",
+      "list_folders",
+      "mark_read",
+    ]);
+  });
+```
+
+- [ ] **Step 8: Run the gates**
+
+Run: `npm run test && npm run typecheck && npm run lint`
+Expected: all green; the handler test lists eight tools and still marks only
+`mark_read` as mutating.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add src/errors/taxonomy.ts src/telegram/thread.ts src/mcp/tools/get-thread.ts src/mcp/server.ts tests/telegram-thread.test.ts tests/mcp-handler.test.ts
+git commit -m "feat: expose get_thread for comments under a channel post"
+```
+
 ## Resume note
 
 Planning is in progress in this file. The tasks are appended in order, and each
