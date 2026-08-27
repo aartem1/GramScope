@@ -30,8 +30,13 @@ function messageCount(items: unknown[]): number | undefined {
   let total: number | undefined;
   for (const item of items) {
     if (typeof item !== "object" || item === null) continue;
-    const messages = (item as Record<string, unknown>).messages;
-    if (Array.isArray(messages)) total = (total ?? 0) + messages.length;
+    const record = item as Record<string, unknown>;
+    const messages = record.messages;
+    if (Array.isArray(messages)) {
+      total = (total ?? 0) + messages.length;
+    } else if ("error" in record) {
+      total ??= 0;
+    }
   }
   return total;
 }

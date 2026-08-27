@@ -97,6 +97,44 @@ describe("countOf", () => {
     expect(lines.join(" ")).toContain("count=3");
   });
 
+  it("counts an all-error grouped message response as zero", async () => {
+    const lines: string[] = [];
+    await runTool(
+      "get_messages",
+      async () => ({
+        sources: [
+          {
+            source_id: "-1001",
+            title: "A",
+            error: { code: "NOT_FOUND", message: "source unavailable" },
+          },
+          {
+            source_id: "-1002",
+            title: "B",
+            error: { code: "FORBIDDEN", message: "source unavailable" },
+          },
+        ],
+      }),
+      (line) => lines.push(line),
+    );
+    expect(lines.join(" ")).toContain("count=0");
+  });
+
+  it("keeps counting flat dialog sources by array length", async () => {
+    const lines: string[] = [];
+    await runTool(
+      "list_dialogs",
+      async () => ({
+        sources: [
+          { id: "-1001", title: "A", type: "channel" },
+          { id: "-1002", title: "B", type: "group" },
+        ],
+      }),
+      (line) => lines.push(line),
+    );
+    expect(lines.join(" ")).toContain("count=2");
+  });
+
   it("falls back to the array length for a flat response", async () => {
     const lines: string[] = [];
     await runTool(
