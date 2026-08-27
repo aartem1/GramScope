@@ -3,7 +3,7 @@ import {
   folderMembers,
   type DialogIndex,
 } from "./dialog-index";
-import { fitToSizeCap } from "../schemas/size";
+import { fitToSizeCap, MAX_RESPONSE_BYTES } from "../schemas/size";
 
 export type UnreadSummaryInput = {
   group_by?: "source" | "folder";
@@ -24,6 +24,23 @@ export type UnreadSummaryResult = {
   groups: UnreadGroup[];
   total_unread: number;
 };
+
+function fitGroups(groups: UnreadGroup[], total: number): UnreadGroup[] {
+  const build = (kept: UnreadGroup[]) => ({
+    groups: kept,
+    total_unread: total,
+  });
+  const fit = fitToSizeCap(groups, build);
+  const kept = groups.slice(0, fit);
+
+  // fitToSizeCap deliberately keeps one oversized item. A summary has no
+  // item-level error shape, so omit that item to keep the complete result
+  // bounded while retaining the total over all groups in scope.
+  return Buffer.byteLength(JSON.stringify(build(kept)), "utf8") <=
+    MAX_RESPONSE_BYTES
+    ? kept
+    : [];
+}
 
 /**
  * Everything here comes off the dialog list the index already holds:
@@ -64,10 +81,8 @@ export function summarize(
       .filter((group) => group.unread_count > 0)
       .sort((a, b) => b.unread_count - a.unread_count);
 
-    return {
-      groups,
-      total_unread: groups.reduce((sum, g) => sum + g.unread_count, 0),
-    };
+    const total = groups.reduce((sum, g) => sum + g.unread_count, 0);
+    return { groups: fitGroups(groups, total), total_unread: total };
   }
 
   const entries = [...index.byId.values()]
@@ -92,12 +107,7 @@ export function summarize(
       : {}),
   }));
 
-  const fit = fitToSizeCap(groups, (kept) => ({
-    groups: kept,
-    total_unread: total,
-  }));
-
-  return { groups: groups.slice(0, fit), total_unread: total };
+  return { groups: fitGroups(groups, total), total_unread: total };
 }
 
 export async function getUnreadSummary(

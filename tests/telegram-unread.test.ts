@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { summarize } from "@/telegram/unread";
-import type { DialogIndex } from "@/telegram/dialog-index";
+import type { DialogEntry, DialogIndex } from "@/telegram/dialog-index";
 import { GramScopeError } from "@/errors/taxonomy";
+import { MAX_RESPONSE_BYTES } from "@/schemas/size";
 
 const A = "-100111";
 const B = "-100222";
@@ -100,5 +101,92 @@ describe("summarize by folder", () => {
     })();
     expect(error).toBeInstanceOf(GramScopeError);
     expect((error as GramScopeError).code).toBe("INVALID_INPUT");
+  });
+
+  it("caps folder groups while preserving total unread", () => {
+    const count = 600;
+    const folders = Array.from({ length: count }, (_, i) => {
+      const id = String(i + 10);
+      const sourceId = `-100${i + 1000}`;
+      return {
+        id,
+        title: `Folder ${i} ${"x".repeat(600)}`,
+        included_peer_ids: [sourceId],
+        excluded_peer_ids: [],
+        order: i,
+      };
+    });
+    const byId = new Map(
+      folders.map((folder) => {
+        const sourceId = folder.included_peer_ids[0]!;
+        const entry: DialogEntry = {
+          source_id: sourceId,
+          title: sourceId,
+          unread_count: 1,
+          read_inbox_max_id: 0,
+          folder_ids: [folder.id],
+        };
+        return [
+          sourceId,
+          entry,
+        ] as const;
+      }),
+    );
+
+    const result = summarize({ byId, folders }, { group_by: "folder" });
+
+    expect(result.groups.length).toBeLessThan(count);
+    expect(result.total_unread).toBe(count);
+    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(
+      MAX_RESPONSE_BYTES,
+    );
+  });
+});
+
+describe("summarize response size envelope", () => {
+  it("counts total_unread in the source size cap", () => {
+    const makeEntries = (titleLength: number) =>
+      [A, B].map((sourceId) => ({
+        source_id: sourceId,
+        title: "x".repeat(titleLength),
+        unread_count: 1,
+        read_inbox_max_id: 0,
+        folder_ids: [],
+      }));
+    const makeGroups = (titleLength: number) =>
+      makeEntries(titleLength).map(
+        ({ source_id, title, unread_count, read_inbox_max_id }) => ({
+          source_id,
+          title,
+          unread_count,
+          read_inbox_max_id,
+        }),
+      );
+    const size = (titleLength: number, withTotal: boolean) => {
+      const groups = makeGroups(titleLength);
+      return Buffer.byteLength(
+        JSON.stringify(withTotal ? { groups, total_unread: 2 } : { groups }),
+        "utf8",
+      );
+    };
+    let titleLength = Math.floor((MAX_RESPONSE_BYTES - size(0, false)) / 2);
+    while (size(titleLength, false) > MAX_RESPONSE_BYTES) titleLength--;
+    while (size(titleLength, true) <= MAX_RESPONSE_BYTES) titleLength++;
+    titleLength--;
+
+    const groups = makeEntries(titleLength);
+    expect(size(titleLength, false)).toBeLessThanOrEqual(MAX_RESPONSE_BYTES);
+    expect(size(titleLength, true)).toBeGreaterThan(MAX_RESPONSE_BYTES);
+
+    const result = summarize(
+      { byId: new Map(groups.map((entry) => [entry.source_id, entry])), folders: [] },
+      {},
+    );
+
+    expect(result.groups).toHaveLength(1);
+    expect(result.total_unread).toBe(2);
+    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(
+      MAX_RESPONSE_BYTES,
+    );
   });
 });
