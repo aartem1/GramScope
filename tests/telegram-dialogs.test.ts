@@ -394,7 +394,7 @@ describe("listDialogs cursor advance", () => {
     }));
     await listDialogs({
       limit: 10,
-      cursor: encodeCursor({ offsetDate: 100, offsetId: 5 }),
+      cursor: encodeCursor({ offsetDate: 100, offsetId: 5, boundaryIds: [] }),
     });
     expect(calls[0]).toMatchObject({ offsetDate: 100, offsetId: 5 });
   });
@@ -418,7 +418,7 @@ describe("listDialogs cursor advance", () => {
     await listDialogs({ limit: 10 });
     await listDialogs({
       limit: 10,
-      cursor: encodeCursor({ offsetDate: 100, offsetId: 5 }),
+      cursor: encodeCursor({ offsetDate: 100, offsetId: 5, boundaryIds: [] }),
     });
 
     expect(calls[0]).toMatchObject({ ignorePinned: false });
