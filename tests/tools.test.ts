@@ -50,10 +50,11 @@ describe("registerTools", () => {
     "get_unread_summary",
     "list_dialogs",
     "list_folders",
+    "resolve_telegram_url",
     "search_messages",
   ];
 
-  it("registers all nine tools", () => {
+  it("registers all ten tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(

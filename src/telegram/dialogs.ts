@@ -245,7 +245,7 @@ export async function listDialogs(
  * `channels.getFullChannel` is the only source of `about` and the linked
  * discussion chat: the `Api.Channel` that `getEntity` returns carries neither.
  */
-async function fetchChannelDetails(
+export async function fetchChannelDetails(
   client: TelegramLike,
   entity: unknown,
 ): Promise<SourceDetails> {

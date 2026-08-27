@@ -66,7 +66,7 @@ async function listTools(): Promise<Json[]> {
 }
 
 describe("tools/list over a real MCP server", () => {
-  it("advertises all nine tools", async () => {
+  it("advertises all ten tools", async () => {
     const tools = await listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "get_channel",
@@ -77,6 +77,7 @@ describe("tools/list over a real MCP server", () => {
       "list_dialogs",
       "list_folders",
       "mark_read",
+      "resolve_telegram_url",
       "search_messages",
     ]);
   });
