@@ -26,11 +26,27 @@ export function errorResult(err: unknown): ToolResult {
   };
 }
 
+function messageCount(items: unknown[]): number | undefined {
+  let total: number | undefined;
+  for (const item of items) {
+    if (typeof item !== "object" || item === null) continue;
+    const messages = (item as Record<string, unknown>).messages;
+    if (Array.isArray(messages)) total = (total ?? 0) + messages.length;
+  }
+  return total;
+}
+
+/**
+ * The log line reports how much a call actually returned. For the grouped
+ * multi-source shape that is the message count, not the number of source
+ * blocks — three blocks holding sixty messages is not "3".
+ */
 function countOf(data: unknown): number | undefined {
   if (typeof data !== "object" || data === null) return undefined;
-  for (const key of ["sources", "folders"]) {
+  for (const key of ["sources", "folders", "groups", "results"]) {
     const value = (data as Record<string, unknown>)[key];
-    if (Array.isArray(value)) return value.length;
+    if (!Array.isArray(value)) continue;
+    return messageCount(value) ?? value.length;
   }
   return undefined;
 }

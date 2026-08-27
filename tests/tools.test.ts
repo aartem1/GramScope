@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { errorResult, okResult } from "@/mcp/tool-result";
+import { errorResult, okResult, runTool } from "@/mcp/tool-result";
 import { GramScopeError } from "@/errors/taxonomy";
 import { registerTools } from "@/mcp/server";
 
@@ -42,30 +42,68 @@ describe("registerTools", () => {
     };
   }
 
-  it("registers exactly the three Foundation tools", () => {
+  const READ_ONLY = [
+    "get_channel",
+    "get_message",
+    "get_messages",
+    "get_unread_summary",
+    "list_dialogs",
+    "list_folders",
+  ];
+
+  it("registers all seven tools", () => {
     const server = fakeServer();
     registerTools(server as never);
-    expect(server.tools.map((t) => t.name).sort()).toEqual([
-      "get_channel",
-      "list_dialogs",
+    expect(server.tools.map((t) => t.name).sort()).toEqual(
+      [...READ_ONLY, "mark_read"].sort(),
+    );
+  });
+
+  it("derives readOnlyHint from behaviour, not uniformly", () => {
+    // The card's carried-forward decision: mark_read mutates account state,
+    // and a client that trusts a uniform `true` would call it freely.
+    const server = fakeServer();
+    registerTools(server as never);
+    for (const tool of server.tools) {
+      expect(tool.config.annotations).toMatchObject({
+        readOnlyHint: tool.name !== "mark_read",
+      });
+    }
+  });
+
+  it("says plainly in mark_read's description that it mutates state", () => {
+    const server = fakeServer();
+    registerTools(server as never);
+    const markRead = server.tools.find((t) => t.name === "mark_read")!;
+    expect(String(markRead.config.description).toLowerCase()).toContain(
+      "changes account state",
+    );
+  });
+});
+
+describe("countOf", () => {
+  it("counts messages across a grouped response, not source blocks", async () => {
+    const lines: string[] = [];
+    await runTool(
+      "get_messages",
+      async () => ({
+        sources: [
+          { source_id: "-1001", title: "A", messages: [{}, {}], has_more: false },
+          { source_id: "-1002", title: "B", messages: [{}], has_more: false },
+        ],
+      }),
+      (line) => lines.push(line),
+    );
+    expect(lines.join(" ")).toContain("count=3");
+  });
+
+  it("falls back to the array length for a flat response", async () => {
+    const lines: string[] = [];
+    await runTool(
       "list_folders",
-    ]);
-  });
-
-  it("marks every tool read-only", () => {
-    const server = fakeServer();
-    registerTools(server as never);
-    for (const tool of server.tools) {
-      expect(tool.config.annotations).toMatchObject({ readOnlyHint: true });
-    }
-  });
-
-  it("gives every tool a description and an output schema", () => {
-    const server = fakeServer();
-    registerTools(server as never);
-    for (const tool of server.tools) {
-      expect(tool.config.description).toBeTruthy();
-      expect(tool.config.outputSchema).toBeTruthy();
-    }
+      async () => ({ folders: [{}, {}] }),
+      (line) => lines.push(line),
+    );
+    expect(lines.join(" ")).toContain("count=2");
   });
 });

@@ -3,6 +3,13 @@ import { registerTools } from "@/mcp/server";
 import { verifyOwnerToken } from "@/mcp/auth";
 import { logEvent } from "@/mcp/logging";
 
+/**
+ * Spec §7: a 25-source fan-out at 8-way concurrency is four sequential rounds
+ * of MTProto round trips. Vercel's 10-15s default would cut a wide digest off
+ * mid-flight and report it as a server error.
+ */
+export const maxDuration = 60;
+
 const handler = createMcpHandler(
   (server) => {
     registerTools(server);
