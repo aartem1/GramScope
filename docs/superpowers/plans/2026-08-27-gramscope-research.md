@@ -3747,6 +3747,417 @@ git add src/pagination.ts src/telegram/message-slice.ts src/telegram/messages.ts
 git commit -m "feat: read sources the account has not joined in get_messages and get_message"
 ```
 
+### Task 11: The live tier
+
+Spec §13. The fast tier proves the shapes; only a live run proves the TL
+requests are the ones Telegram actually accepts, and every finding this
+sub-project is designed around came from a live probe rather than from
+documentation.
+
+**Files:**
+- Create: `tests/live/research.live.test.ts`
+
+**Interfaces:**
+- Consumes: `searchMessages`, `getThread`, `resolveTelegramUrl`, `getPinnedMessages`, `getMessages`, `fetchFolders`, `fetchDialogIndex`, `__resetClientForTests`.
+- Produces: nothing importable.
+
+House rule inherited from the two existing live suites: **an assertion inside a
+`for` over a fetched list proves nothing when the list is empty, and an empty
+list is exactly what a broken query returns.** Every loop is preceded by an
+assertion — or a visible `ctx.skip()` — on the length of what it iterates.
+
+- [ ] **Step 1: Write the suite**
+
+```ts
+// tests/live/research.live.test.ts
+import { beforeAll, describe, expect, it } from "vitest";
+import { searchMessages } from "@/telegram/search";
+import { getThread } from "@/telegram/thread";
+import { resolveTelegramUrl } from "@/telegram/resolve";
+import { getPinnedMessages } from "@/telegram/pinned";
+import { getMessages } from "@/telegram/messages";
+import { fetchFolders } from "@/telegram/folders";
+import { fetchDialogIndex } from "@/telegram/dialog-index";
+import { __resetClientForTests } from "@/telegram/client";
+import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
+
+const enabled = process.env.GRAMSCOPE_LIVE === "1";
+const suite = enabled ? describe : describe.skip;
+
+/** A Russian stopword: something every Russian-language account has matched
+ *  thousands of times, so the query is not a guess about this account. */
+const QUERY = "не";
+
+/** A large public channel the dedicated account is not subscribed to. If it
+ *  turns out to be subscribed, the outside-source tests skip visibly rather
+ *  than assert the wrong thing. */
+const OUTSIDE = "exampleuser";
+
+async function populatedFolder() {
+  const folders = await fetchFolders();
+  const folder = folders.find(
+    (candidate) => candidate.included_peer_ids.length > 1,
+  );
+  if (!folder) {
+    throw new Error(
+      "the live suite needs a folder with at least two members; add one before running it",
+    );
+  }
+  return folder;
+}
+
+suite("Research against the real account", () => {
+  beforeAll(() => {
+    if (!process.env.TELEGRAM_SESSION) {
+      throw new Error("TELEGRAM_SESSION is required for live tests");
+    }
+  });
+
+  it("searches the whole account and walks two disjoint pages", async () => {
+    const first = await searchMessages({ query: QUERY, limit: 10 });
+    expect(
+      first.results.length,
+      `nothing matched "${QUERY}" account-wide; pick a query this account has actually seen`,
+    ).toBeGreaterThan(0);
+    expect(first.sources.length).toBeGreaterThan(0);
+    for (const hit of first.results) {
+      expect(hit.chat_id).toBeTruthy();
+      expect(hit.source_title).toBeTruthy();
+    }
+    // Newest first, per spec §7.
+    const dates = first.results.map((hit) => Date.parse(hit.date));
+    expect([...dates].sort((a, b) => b - a)).toEqual(dates);
+
+    expect(first.next_cursor, "a full first page issued no cursor").toBeTruthy();
+    const second = await searchMessages({
+      query: QUERY,
+      limit: 10,
+      cursor: first.next_cursor!,
+    });
+    expect(
+      second.results.length,
+      "a next_cursor was issued but the page it resumes is empty",
+    ).toBeGreaterThan(0);
+
+    const seen = new Set(
+      first.results.map((hit) => `${hit.chat_id}:${hit.id}`),
+    );
+    for (const hit of second.results) {
+      expect(seen.has(`${hit.chat_id}:${hit.id}`)).toBe(false);
+    }
+  });
+
+  it("rejects a cursor replayed against a different query", async () => {
+    const first = await searchMessages({ query: QUERY, limit: 10 });
+    expect(first.next_cursor).toBeTruthy();
+    await expect(
+      searchMessages({
+        query: `${QUERY} ${QUERY}`,
+        limit: 10,
+        cursor: first.next_cursor!,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_CURSOR" });
+  });
+
+  it("fans a search over a real folder and walks two disjoint pages", async () => {
+    const folder = await populatedFolder();
+    const first = await searchMessages({
+      query: QUERY,
+      folder_ids: [folder.id],
+      limit: 10,
+    });
+    expect(
+      first.sources.length,
+      "the folder search reported no sources at all",
+    ).toBeGreaterThan(1);
+    expect(
+      first.results.length,
+      `nothing in folder ${folder.title} matched "${QUERY}"`,
+    ).toBeGreaterThan(0);
+    for (const source of first.sources) {
+      expect(source.source_id).toBeTruthy();
+      expect(source.title).toBeTruthy();
+    }
+
+    if (!first.next_cursor) return;
+    const second = await searchMessages({
+      query: QUERY,
+      folder_ids: [folder.id],
+      limit: 10,
+      cursor: first.next_cursor,
+    });
+    const seen = new Set(
+      first.results.map((hit) => `${hit.chat_id}:${hit.id}`),
+    );
+    for (const hit of second.results) {
+      expect(seen.has(`${hit.chat_id}:${hit.id}`)).toBe(false);
+    }
+  });
+
+  it("reads a real comment thread across two pages", async (ctx) => {
+    const index = await fetchDialogIndex();
+    const channels = [...index.byId.values()].slice(0, 12);
+    expect(channels.length, "the account holds no dialogs").toBeGreaterThan(0);
+
+    // Find a post that actually has comments, by reading the counter the
+    // reading tools already return rather than by guessing.
+    let found: { source_id: string; post_id: number } | undefined;
+    for (const entry of channels) {
+      const page = await getMessages({
+        source_ids: [entry.source_id],
+        limit: 20,
+      });
+      const post = (page.sources[0]?.messages ?? []).find(
+        (message) => (message.replies ?? 0) > 25,
+      );
+      if (post) {
+        found = { source_id: entry.source_id, post_id: post.id };
+        break;
+      }
+    }
+    if (!found) {
+      ctx.skip();
+      return;
+    }
+
+    const first = await getThread({ ...found, limit: 20 });
+    expect(first.post.id).toBe(found.post_id);
+    expect(first.comment_count).toBeGreaterThan(0);
+    expect(
+      first.comments.length,
+      "a post with comments returned none",
+    ).toBeGreaterThan(0);
+    // The account is not a member of the discussion group.
+    for (const comment of first.comments) {
+      expect(comment.is_read).toBeUndefined();
+    }
+
+    expect(first.next_cursor).toBeTruthy();
+    const second = await getThread({
+      ...found,
+      limit: 20,
+      cursor: first.next_cursor!,
+    });
+    const seen = new Set(first.comments.map((comment) => comment.id));
+    expect(
+      second.comments.length,
+      "a next_cursor was issued but the page it resumes is empty",
+    ).toBeGreaterThan(0);
+    for (const comment of second.comments) {
+      expect(seen.has(comment.id)).toBe(false);
+    }
+  });
+
+  it("reports a channel with no linked discussion group", async (ctx) => {
+    const index = await fetchDialogIndex();
+    let target: { source_id: string; post_id: number } | undefined;
+    for (const entry of [...index.byId.values()].slice(0, 12)) {
+      const page = await getMessages({
+        source_ids: [entry.source_id],
+        limit: 10,
+      });
+      const post = (page.sources[0]?.messages ?? []).find(
+        (message) => message.replies === undefined,
+      );
+      if (post) {
+        target = { source_id: entry.source_id, post_id: post.id };
+        break;
+      }
+    }
+    if (!target) {
+      ctx.skip();
+      return;
+    }
+    await expect(getThread({ ...target, limit: 5 })).rejects.toMatchObject({
+      code: "NO_DISCUSSION_THREAD",
+    });
+  });
+
+  it("resolves a link to a channel the account has not joined, then reads it", async (ctx) => {
+    const resolved = await resolveTelegramUrl({
+      url: `https://t.me/${OUTSIDE}`,
+    });
+    if (resolved.source?.joined !== false) {
+      ctx.skip();
+      return;
+    }
+    expect(resolved.kind).toBe("source");
+    expect(resolved.source.username?.toLowerCase()).toBe(OUTSIDE);
+    expect(resolved.source.source_id).toBeTruthy();
+
+    const page = await getMessages({ source_ids: [`@${OUTSIDE}`], limit: 5 });
+    const block = page.sources[0]!;
+    expect(block.source_id).toBe(resolved.source.source_id);
+    expect(
+      block.messages?.length,
+      "the resolved outside channel returned no messages",
+    ).toBeGreaterThan(0);
+    // No membership means no read pointer.
+    for (const message of block.messages!) {
+      expect(message.is_read).toBeUndefined();
+    }
+  });
+
+  it("pins the asymmetry: an outside channel resolves by username, not by id, on a cold instance", async (ctx) => {
+    const resolved = await resolveTelegramUrl({
+      url: `https://t.me/${OUTSIDE}`,
+    });
+    const markedId = resolved.source?.source_id;
+    if (resolved.source?.joined !== false || !markedId) {
+      ctx.skip();
+      return;
+    }
+
+    // A fresh serverless instance holds neither the entity cache nor the memo.
+    __resetClientForTests();
+    __resetPeerCacheForTests();
+    const byId = await getMessages({ source_ids: [markedId], limit: 3 });
+    expect(byId.sources[0]!.error?.code).toBe("CHANNEL_NOT_FOUND");
+
+    __resetClientForTests();
+    __resetPeerCacheForTests();
+    const byName = await getMessages({ source_ids: [`@${OUTSIDE}`], limit: 3 });
+    expect(byName.sources[0]!.error).toBeUndefined();
+    expect(byName.sources[0]!.messages?.length).toBeGreaterThan(0);
+  });
+
+  it("searches inside an outside channel without joining it", async (ctx) => {
+    const resolved = await resolveTelegramUrl({
+      url: `https://t.me/${OUTSIDE}`,
+    });
+    if (resolved.source?.joined !== false) {
+      ctx.skip();
+      return;
+    }
+    const page = await searchMessages({
+      query: "a",
+      source_ids: [`@${OUTSIDE}`],
+      limit: 5,
+    });
+    expect(page.sources).toHaveLength(1);
+    expect(page.sources[0]!.error).toBeUndefined();
+  });
+
+  it("reads pinned messages of a real source", async (ctx) => {
+    const index = await fetchDialogIndex();
+    const entries = [...index.byId.values()].slice(0, 12);
+    expect(entries.length, "the account holds no dialogs").toBeGreaterThan(0);
+
+    for (const entry of entries) {
+      const page = await getPinnedMessages({
+        source_id: entry.source_id,
+        limit: 10,
+      });
+      expect(page.source_id).toBe(entry.source_id);
+      if (page.messages.length > 0) {
+        for (const message of page.messages) {
+          expect(message.chat_id).toBe(entry.source_id);
+        }
+        return;
+      }
+    }
+    // Every sampled source really has nothing pinned: an empty success, not a
+    // failure, but nothing was asserted about content.
+    ctx.skip();
+  });
+});
+```
+
+- [ ] **Step 2: Run the live suite**
+
+Run: `GRAMSCOPE_LIVE=1 npx vitest run --env-file=.env.local tests/live/research.live.test.ts`
+
+If vitest in this repo does not accept `--env-file`, use the form the existing
+live suites are run with; check `package.json`'s `test:live` script and the
+sub-project 2 commits before inventing a new invocation.
+
+Expected: PASS with no unexplained skips. A `ctx.skip()` is acceptable only for
+the outside-channel tests, and only if the account turns out to be subscribed
+to `@exampleuser` — in which case change `OUTSIDE` to a channel it is not subscribed
+to and re-run, rather than accepting the skip.
+
+- [ ] **Step 3: Run the whole live tier**
+
+Run: `GRAMSCOPE_LIVE=1 npm run test:live`
+Expected: the foundation, access-hash and reading suites still pass — Task 10
+changed the reading path, so this is the check that it did not break.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tests/live/research.live.test.ts
+git commit -m "test: cover the research tools against the real account"
+```
+
+---
+
+### Task 12: Deploy and acceptance
+
+Spec §14. Criteria 4-7 run in the ChatGPT connector UI and are the owner's to
+perform; everything before them is this task's job.
+
+**Files:**
+- Modify: `docs/superpowers/tasks/gramscope-mcp.md`
+
+- [ ] **Step 1: Run every gate one more time**
+
+Run: `npm run test && npm run typecheck && npm run lint && npm run build`
+Expected: all green. `npm run build` rewrites `tsconfig.json` — revert that file
+before committing anything (`git checkout -- tsconfig.json`).
+
+- [ ] **Step 2: Push, which deploys**
+
+```bash
+git push origin main
+```
+
+A push to `main` triggers the Vercel Git integration. Wait for the production
+deployment to report Ready before checking anything below.
+
+- [ ] **Step 3: Verify the deployment answers**
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' https://gramscope.vercel.app/api/mcp
+curl -s https://gramscope.vercel.app/.well-known/oauth-protected-resource
+```
+
+Expected: `401` for the first, with a `WWW-Authenticate` challenge; the second
+advertises `resource` = `https://gramscope.vercel.app/api/mcp` and the
+AuthKit issuer.
+
+- [ ] **Step 4: Record what the owner must do**
+
+Report to the owner, in this order:
+
+1. **Reconnect the connector in ChatGPT before testing.** It caches its tool
+   list at install time; sub-project 2 lost a full diagnosis round to this, and
+   this sub-project adds four tools, so a stale list will show seven.
+2. Criterion 3: `tools/list` reports eleven tools.
+3. Criterion 4: an account-wide `search_messages` with a date window two years
+   back returns hits, and its `next_cursor` is accepted on the next call.
+4. Criterion 5: a search restricted to one folder returns hits from more than
+   one channel in a single tool call.
+5. Criterion 6: `get_thread` on a post that has comments returns the post and
+   its comments.
+6. Criterion 7: a link to a public channel the account has not joined resolves,
+   and `get_messages` then reads that channel.
+
+- [ ] **Step 5: Record the outcome on the card**
+
+Append to "Changes and findings" in `docs/superpowers/tasks/gramscope-mcp.md`:
+what the owner observed for each of criteria 3-7, in their own terms, and any
+new operational gotcha. Do not copy stage, progress or task lists into the card
+— only non-derived facts. If a criterion fails, record what failed before
+fixing it, so the next agent does not re-diagnose it from scratch.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add docs/superpowers/tasks/gramscope-mcp.md
+git commit -m "docs: record sub-project 3 acceptance"
+git push origin main
+```
+
 ## Resume note
 
 Planning is in progress in this file. The tasks are appended in order, and each
