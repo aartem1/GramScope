@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { registerTools } from "@/mcp/server";
+import { MCP_SERVER_VERSION } from "@/mcp/version";
+import { readFileSync } from "node:fs";
 
 type Json = Record<string, unknown>;
 
@@ -66,6 +68,15 @@ async function listTools(): Promise<Json[]> {
 }
 
 describe("tools/list over a real MCP server", () => {
+  it("keeps the package and MCP server on app version 1.1.0", () => {
+    const packageJson = JSON.parse(
+      readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+    ) as { version?: unknown };
+
+    expect(MCP_SERVER_VERSION).toBe("1.1.0");
+    expect(packageJson.version).toBe(MCP_SERVER_VERSION);
+  });
+
   it("advertises all eleven tools", async () => {
     const tools = await listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
