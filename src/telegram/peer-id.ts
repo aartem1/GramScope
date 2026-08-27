@@ -128,6 +128,36 @@ export function entityUsername(entity: unknown): string | undefined {
 }
 
 /**
+ * Every active public handle a peer answers to, primary first. `entityUsername`
+ * above picks the one to travel by; this is for deciding whether a name the
+ * caller wrote refers to this peer, where a secondary collectible username is
+ * just as valid an answer as the primary one.
+ */
+export function entityUsernames(entity: unknown): string[] {
+  if (typeof entity !== "object" || entity === null) return [];
+  const primary = entityUsername(entity);
+  const all = (entity as { usernames?: unknown }).usernames;
+  const names = primary ? [primary] : [];
+
+  if (Array.isArray(all)) {
+    for (const candidate of all) {
+      if (
+        typeof candidate === "object" &&
+        candidate !== null &&
+        (candidate as { active?: unknown }).active === true &&
+        typeof (candidate as { username?: unknown }).username === "string" &&
+        (candidate as { username: string }).username.length > 0 &&
+        !names.includes((candidate as { username: string }).username)
+      ) {
+        names.push((candidate as { username: string }).username);
+      }
+    }
+  }
+
+  return names;
+}
+
+/**
  * The single classification rule for `TelegramSource.type`, derived from the
  * entity rather than from a dialog's convenience flags so that dialogs and
  * `get_channel` cannot disagree about the same peer.
