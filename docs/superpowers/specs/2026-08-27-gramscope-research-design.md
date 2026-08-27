@@ -31,7 +31,7 @@ Eleven tools total after this sub-project.
 
 ## 3. Scope
 
-In scope: the four tools, two new cursor kinds, a shared peer-resolution layer,
+In scope: the four tools, four new cursor kinds, a shared peer-resolution layer,
 and the extension of the sub-project 2 reading tools to accept sources the
 account has not joined.
 
@@ -292,6 +292,19 @@ cursor it was told to echo.
 
 - `k: "search_global"` — `{ rate, peer, id, fingerprint }`.
 - `k: "search_sources"` — `{ sources: [{ source_id, offset_id }], fingerprint }`.
+- `k: "thread"` — `{ offset_id, fingerprint }`, the fingerprint over `source_id`
+  and `post_id`.
+- `k: "pinned"` — `{ offset_id, fingerprint }`, the fingerprint over `source_id`.
+
+**Amended 2026-08-27 during planning: four kinds, not two.** `get_thread` and
+`get_pinned_messages` are paginated too, and this section originally named a
+kind for neither. Reusing the sub-project 2 `messages` kind was the only
+alternative and is forbidden by the card decision that every paginated tool
+carries its own discriminator — a `get_messages` cursor fed to `get_thread`
+would decode cleanly and page comments from a message id belonging to a
+different chat. Their fingerprints do the same work the search fingerprints do:
+a cursor issued for one post or one source is rejected when it is replayed
+against another.
 
 Both reuse the generic envelope and base64url framing `src/pagination.ts` grew
 in sub-project 2. A foreign cursor still fails as `INVALID_CURSOR`, and the
