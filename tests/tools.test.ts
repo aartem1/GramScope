@@ -97,7 +97,7 @@ describe("registerTools", () => {
       "search_messages",
     ];
     const contract =
-      "For joined=false, use @username or a t.me URL across calls; marked IDs are reliable only for peers held by the account.";
+      "Name a source by @username whenever it has one: a marked id like -1001234567890 resolves only for chats this account belongs to, so it is not a durable handle for a public channel reached by search or by link.";
 
     for (const name of sourceTools) {
       const tool = server.tools.find((candidate) => candidate.name === name)!;
@@ -113,7 +113,12 @@ describe("countOf", () => {
       "get_messages",
       async () => ({
         sources: [
-          { source_id: "-1001", title: "A", messages: [{}, {}], has_more: false },
+          {
+            source_id: "-1001",
+            title: "A",
+            messages: [{}, {}],
+            has_more: false,
+          },
           { source_id: "-1002", title: "B", messages: [{}], has_more: false },
         ],
       }),
