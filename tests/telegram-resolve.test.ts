@@ -29,7 +29,11 @@ function install(options: {
       },
     ],
     getEntity: async () =>
-      options.entity ?? { className: "Channel", id: 1111111111n, title: "Alpha" },
+      options.entity ?? {
+        className: "Channel",
+        id: 1111111111n,
+        title: "Alpha",
+      },
     getMessages: async () => [],
     invoke: async (request: unknown) => {
       const r = request as { className: string };
@@ -52,7 +56,11 @@ describe("resolveTelegramUrl", () => {
   it("resolves a channel the account already holds", async () => {
     const sent = install({
       full: {
-        fullChat: { about: "a", linkedChatId: 2222222222n, participantsCount: 40 },
+        fullChat: {
+          about: "a",
+          linkedChatId: 2222222222n,
+          participantsCount: 40,
+        },
       },
     });
     const result = await resolveTelegramUrl({ url: "https://t.me/alpha" });
@@ -165,13 +173,34 @@ describe("resolveTelegramUrl", () => {
     });
   });
 
+  it("keeps the peer id of a ChatInviteAlready the dialog index has not caught up with", async () => {
+    // Pins the className check itself: withholding on `held` alone would also
+    // strip the id here, where the account demonstrably holds the peer.
+    install({
+      invite: {
+        className: "ChatInviteAlready",
+        chat: { className: "Channel", id: 999n, title: "Joined Elsewhere" },
+      },
+    });
+
+    const result = await resolveTelegramUrl({ url: "t.me/+AbCdEf" });
+
+    expect(result.source).toMatchObject({
+      source_id: "-100999",
+      title: "Joined Elsewhere",
+      joined: false,
+    });
+  });
+
   it("fails a private internal link the account cannot hold", async () => {
     __setClientFactoryForTests(async () => ({
       connected: true,
       connect: async () => true,
       getDialogs: async () => [],
       getEntity: async () => {
-        throw Object.assign(new Error("x"), { errorMessage: "CHANNEL_INVALID" });
+        throw Object.assign(new Error("x"), {
+          errorMessage: "CHANNEL_INVALID",
+        });
       },
       getMessages: async () => [],
       invoke: async () => ({}),
