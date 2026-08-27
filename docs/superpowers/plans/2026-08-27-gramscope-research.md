@@ -1427,6 +1427,507 @@ git add src/errors/taxonomy.ts src/telegram/thread.ts src/mcp/tools/get-thread.t
 git commit -m "feat: expose get_thread for comments under a channel post"
 ```
 
+### Task 5: `search_messages` — validation, mode selection, and the global engine
+
+Spec §6.1 and §7. The mode is derived from the arguments, never declared: no
+source selection means one `messages.searchGlobal` call over every chat the
+account participates in. This task builds the input contract, the fingerprint,
+and that engine. Task 6 adds the fan-out; Task 7 exposes the tool.
+
+**Files:**
+- Modify: `src/telegram/message-slice.ts` (export `mediaFilter`)
+- Create: `src/telegram/search.ts`
+- Test: `tests/telegram-search.test.ts`
+
+**Interfaces:**
+- Consumes: `parseDateBound` from `src/telegram/messages.ts`; `readMessagesPage` (Task 3); the search cursors and `scopeFingerprint` / `assertSameScope` (Task 2); `inputPeerMarkedId` from `src/telegram/peer-id.ts`; `fitToSizeCap`; `fetchDialogIndex`.
+- Produces:
+  - `type SearchInput = { query: string; source_ids?: string[]; folder_ids?: string[]; exclude_source_ids?: string[]; from?: string; to?: string; media_type?: MediaType; limit: number; cursor?: string }`
+  - `type SearchHit = TelegramMessage & { source_title: string }`
+  - `type SearchSourceRollup = { source_id: string; title: string; hit_count: number; error?: { code: string; message: string } }`
+  - `type SearchResult = { results: SearchHit[]; sources: SearchSourceRollup[]; total_matches?: number; next_cursor?: string }`
+  - `function isFanout(input: SearchInput): boolean`
+  - `type SearchBounds = { fromSeconds?: number; toSeconds?: number; fingerprint: string }`
+  - `function prepareSearch(input: SearchInput): SearchBounds`
+  - `function rollUp(hits: SearchHit[]): SearchSourceRollup[]`
+  - `function searchMessages(input: SearchInput): Promise<SearchResult>`
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/telegram-search.test.ts
+import { afterEach, describe, expect, it } from "vitest";
+import { isFanout, prepareSearch, searchMessages } from "@/telegram/search";
+import {
+  __resetClientForTests,
+  __setClientFactoryForTests,
+} from "@/telegram/client";
+import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
+import { decodeSearchGlobalCursor } from "@/pagination";
+import { GramScopeError } from "@/errors/taxonomy";
+
+const A = "-1001111111111";
+
+function hit(id: number, date: number, channelId: bigint) {
+  return {
+    className: "Message",
+    id,
+    date,
+    message: `hit ${id}`,
+    peerId: { className: "PeerChannel", channelId },
+  };
+}
+
+function dialogs() {
+  return [
+    {
+      id: A,
+      title: "Alpha",
+      entity: { className: "Channel", id: 1111111111n, title: "Alpha" },
+      dialog: { readInboxMaxId: 400 },
+      unreadCount: 0,
+      date: 1,
+      message: { id: 500 },
+    },
+  ];
+}
+
+type Sent = { className: string; params: Record<string, unknown> };
+
+function install(reply: unknown) {
+  const sent: Sent[] = [];
+  __setClientFactoryForTests(async () => ({
+    connected: true,
+    connect: async () => true,
+    getDialogs: async () => dialogs(),
+    getEntity: async (target: string) => ({
+      className: "Channel",
+      id: 1111111111n,
+      target,
+    }),
+    getMessages: async () => [],
+    invoke: async (request: unknown) => {
+      const r = request as { className: string } & Record<string, unknown>;
+      sent.push({ className: r.className, params: { ...r } });
+      return reply;
+    },
+  }));
+  return sent;
+}
+
+const slice = (messages: unknown[], extra: Record<string, unknown> = {}) => ({
+  className: "messages.MessagesSlice",
+  count: 4820,
+  nextRate: 1_700_000_000,
+  messages,
+  chats: [{ className: "Channel", id: 1111111111n, title: "Alpha" }],
+  users: [],
+  ...extra,
+});
+
+afterEach(() => {
+  __setClientFactoryForTests(undefined);
+  __resetClientForTests();
+  __resetPeerCacheForTests();
+});
+
+describe("mode selection", () => {
+  it("is global with no source selection and fan-out with one", () => {
+    expect(isFanout({ query: "x", limit: 10 })).toBe(false);
+    expect(isFanout({ query: "x", limit: 10, source_ids: [A] })).toBe(true);
+    expect(isFanout({ query: "x", limit: 10, folder_ids: ["2"] })).toBe(true);
+    // An empty array is not a selection.
+    expect(isFanout({ query: "x", limit: 10, source_ids: [] })).toBe(false);
+  });
+});
+
+describe("prepareSearch", () => {
+  it("rejects an empty query", () => {
+    expect(() => prepareSearch({ query: "   ", limit: 10 })).toThrow(
+      GramScopeError,
+    );
+  });
+
+  it("rejects exclude_source_ids without a source selection", () => {
+    try {
+      prepareSearch({ query: "x", limit: 10, exclude_source_ids: [A] });
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect((err as GramScopeError).code).toBe("INVALID_INPUT");
+      // The message must say WHY, per spec §6.1: Telegram offers no exclusion
+      // in global mode and filtering a returned page would break limit.
+      expect((err as GramScopeError).message).toMatch(/source_ids|folder_ids/);
+    }
+  });
+
+  it("rejects a reversed date range", () => {
+    try {
+      prepareSearch({
+        query: "x",
+        limit: 10,
+        from: "2026-01-02T00:00:00Z",
+        to: "2026-01-01T00:00:00Z",
+      });
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect((err as GramScopeError).code).toBe("INVALID_DATE_RANGE");
+    }
+  });
+
+  it("fingerprints the query and every filter", () => {
+    const base = prepareSearch({ query: "x", limit: 10 }).fingerprint;
+    expect(prepareSearch({ query: "x", limit: 50 }).fingerprint).toBe(base);
+    expect(prepareSearch({ query: "y", limit: 10 }).fingerprint).not.toBe(base);
+    expect(
+      prepareSearch({ query: "x", limit: 10, from: "2026-01-01T00:00:00Z" })
+        .fingerprint,
+    ).not.toBe(base);
+    expect(
+      prepareSearch({ query: "x", limit: 10, media_type: "photo" }).fingerprint,
+    ).not.toBe(base);
+  });
+});
+
+describe("global search", () => {
+  it("sends one searchGlobal and flattens its hits", async () => {
+    const sent = install(
+      slice([hit(9, 1_750_000_200, 1111111111n), hit(8, 1_750_000_100, 1111111111n)]),
+    );
+    const page = await searchMessages({ query: "ai", limit: 10 });
+
+    expect(sent.map((s) => s.className)).toEqual(["messages.SearchGlobal"]);
+    expect(sent[0]!.params.q).toBe("ai");
+    expect(page.results.map((r) => r.id)).toEqual([9, 8]);
+    expect(page.results[0]!.chat_id).toBe(A);
+    expect(page.results[0]!.source_title).toBe("Alpha");
+    // The dialog index supplies the read pointer for the account's own chats.
+    expect(page.results[0]!.is_read).toBe(false);
+    expect(page.total_matches).toBe(4820);
+    expect(page.sources).toEqual([
+      { source_id: A, title: "Alpha", hit_count: 2 },
+    ]);
+  });
+
+  it("passes the date window to Telegram rather than filtering here", async () => {
+    const sent = install(slice([]));
+    await searchMessages({
+      query: "ai",
+      limit: 10,
+      from: "2024-01-01T00:00:00Z",
+      to: "2026-01-01T00:00:00Z",
+    });
+    expect(sent[0]!.params.minDate).toBe(1_704_067_200);
+    expect(sent[0]!.params.maxDate).toBe(1_767_225_600);
+  });
+
+  it("issues a cursor carrying the server's rate and resumes with it", async () => {
+    install(
+      slice([hit(9, 1_750_000_200, 1111111111n), hit(8, 1_750_000_100, 1111111111n)]),
+    );
+    const first = await searchMessages({ query: "ai", limit: 2 });
+    const cursor = decodeSearchGlobalCursor(first.next_cursor!);
+    expect(cursor).toMatchObject({ rate: 1_700_000_000, peer: A, id: 8 });
+
+    const sent = install(slice([]));
+    await searchMessages({ query: "ai", limit: 2, cursor: first.next_cursor! });
+    expect(sent[0]!.params.offsetRate).toBe(1_700_000_000);
+    expect(sent[0]!.params.offsetId).toBe(8);
+  });
+
+  it("stops paging when the page came back short", async () => {
+    install(slice([hit(9, 1_750_000_200, 1111111111n)]));
+    const page = await searchMessages({ query: "ai", limit: 10 });
+    expect(page.next_cursor).toBeUndefined();
+  });
+
+  it("rejects a cursor whose query no longer matches", async () => {
+    install(
+      slice([hit(9, 1_750_000_200, 1111111111n), hit(8, 1_750_000_100, 1111111111n)]),
+    );
+    const first = await searchMessages({ query: "ai", limit: 2 });
+    await expect(
+      searchMessages({ query: "robots", limit: 2, cursor: first.next_cursor! }),
+    ).rejects.toMatchObject({ code: "INVALID_CURSOR" });
+  });
+
+  it("keeps an oversized page under the response cap and resumes below it", async () => {
+    const big = (id: number, date: number) => ({
+      ...hit(id, date, 1111111111n),
+      message: "x".repeat(20_000),
+    });
+    install(
+      slice(
+        Array.from({ length: 40 }, (_, n) => big(100 - n, 1_750_000_000 - n)),
+      ),
+    );
+    const page = await searchMessages({ query: "ai", limit: 40 });
+    expect(
+      Buffer.byteLength(JSON.stringify(page), "utf8"),
+    ).toBeLessThanOrEqual(256 * 1024);
+    expect(page.results.length).toBeLessThan(40);
+    const last = page.results[page.results.length - 1]!;
+    expect(decodeSearchGlobalCursor(page.next_cursor!).id).toBe(last.id);
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run tests/telegram-search.test.ts`
+Expected: FAIL — `Failed to resolve import "@/telegram/search"`.
+
+- [ ] **Step 3: Export the media filter**
+
+```ts
+// src/telegram/message-slice.ts — change the declaration only
+export async function mediaFilter(type: MediaType | undefined): Promise<unknown> {
+```
+
+- [ ] **Step 4: Write the engine**
+
+```ts
+// src/telegram/search.ts
+import { getApi, withTelegram, type TelegramLike } from "./client";
+import { fetchDialogIndex, type DialogIndex } from "./dialog-index";
+import { mediaFilter, type MediaType } from "./message-slice";
+import { parseDateBound } from "./messages";
+import { inputPeerMarkedId } from "./peer-id";
+import { readMessagesPage } from "./tl-messages";
+import {
+  assertSameScope,
+  decodeSearchGlobalCursor,
+  encodeSearchGlobalCursor,
+  scopeFingerprint,
+} from "../pagination";
+import { fitToSizeCap } from "../schemas/size";
+import { GramScopeError } from "../errors/taxonomy";
+import {
+  mapMessage,
+  type MessageContext,
+  type TelegramMessage,
+} from "../schemas/message";
+
+export type SearchInput = {
+  query: string;
+  source_ids?: string[];
+  folder_ids?: string[];
+  exclude_source_ids?: string[];
+  from?: string;
+  to?: string;
+  media_type?: MediaType;
+  limit: number;
+  cursor?: string;
+};
+
+export type SearchHit = TelegramMessage & { source_title: string };
+
+export type SearchSourceRollup = {
+  source_id: string;
+  title: string;
+  hit_count: number;
+  error?: { code: string; message: string };
+};
+
+export type SearchResult = {
+  results: SearchHit[];
+  sources: SearchSourceRollup[];
+  total_matches?: number;
+  next_cursor?: string;
+};
+
+/**
+ * Spec §6.1: the engine is derived from the arguments, so the model cannot
+ * choose a wrong one. An empty array is not a selection.
+ */
+export function isFanout(input: SearchInput): boolean {
+  return (
+    (input.source_ids?.length ?? 0) > 0 || (input.folder_ids?.length ?? 0) > 0
+  );
+}
+
+export type SearchBounds = {
+  fromSeconds?: number;
+  toSeconds?: number;
+  fingerprint: string;
+};
+
+export function prepareSearch(input: SearchInput): SearchBounds {
+  if (input.query.trim().length === 0) {
+    throw new GramScopeError("INVALID_INPUT", "query must not be empty");
+  }
+  if ((input.exclude_source_ids?.length ?? 0) > 0 && !isFanout(input)) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      "exclude_source_ids only applies when searching named sources. Telegram offers no exclusion for an account-wide search, and dropping excluded hits from a returned page would shrink it below limit. Pass source_ids or folder_ids, or drop the exclusion.",
+    );
+  }
+
+  const fromSeconds = parseDateBound(input.from, "from");
+  const toSeconds = parseDateBound(input.to, "to");
+  if (
+    fromSeconds !== undefined &&
+    toSeconds !== undefined &&
+    fromSeconds > toSeconds
+  ) {
+    throw new GramScopeError("INVALID_DATE_RANGE", "from is after to");
+  }
+
+  return {
+    ...(fromSeconds !== undefined ? { fromSeconds } : {}),
+    ...(toSeconds !== undefined ? { toSeconds } : {}),
+    // Everything that defines the result set, and nothing that only defines
+    // the page: limit may change between pages, the query may not. Dates go in
+    // as parsed seconds so two spellings of one instant agree.
+    fingerprint: scopeFingerprint({
+      q: input.query.trim(),
+      sources: input.source_ids,
+      folders: input.folder_ids,
+      exclude: input.exclude_source_ids,
+      from: fromSeconds,
+      to: toSeconds,
+      media: input.media_type,
+    }),
+  };
+}
+
+export function rollUp(hits: SearchHit[]): SearchSourceRollup[] {
+  const byId = new Map<string, SearchSourceRollup>();
+  for (const hit of hits) {
+    const found = byId.get(hit.chat_id);
+    if (found) found.hit_count++;
+    else {
+      byId.set(hit.chat_id, {
+        source_id: hit.chat_id,
+        title: hit.source_title,
+        hit_count: 1,
+      });
+    }
+  }
+  return [...byId.values()];
+}
+
+function unixSeconds(iso: string): number {
+  return Math.floor(Date.parse(iso) / 1000);
+}
+
+async function searchFilter(mediaType: MediaType | undefined): Promise<unknown> {
+  const Api = await getApi();
+  return (await mediaFilter(mediaType)) ?? new Api.InputMessagesFilterEmpty();
+}
+
+async function globalPage(
+  client: TelegramLike,
+  index: DialogIndex,
+  input: SearchInput,
+  bounds: SearchBounds,
+): Promise<SearchResult> {
+  const Api = await getApi();
+  const cursor = input.cursor
+    ? decodeSearchGlobalCursor(input.cursor)
+    : undefined;
+  if (cursor) assertSameScope(cursor.fingerprint, bounds.fingerprint);
+
+  const page = readMessagesPage(
+    await client.invoke(
+      new Api.messages.SearchGlobal({
+        q: input.query.trim(),
+        filter: (await searchFilter(input.media_type)) as never,
+        minDate: bounds.fromSeconds ?? 0,
+        maxDate: bounds.toSeconds ?? 0,
+        offsetRate: cursor?.rate ?? 0,
+        // A marked id resolves for every peer searchGlobal can return, because
+        // it only searches chats the account participates in.
+        offsetPeer: (cursor
+          ? await client.getEntity(cursor.peer)
+          : new Api.InputPeerEmpty()) as never,
+        offsetId: cursor?.id ?? 0,
+        limit: input.limit,
+      }),
+    ),
+  );
+
+  const all: SearchHit[] = page.messages.map((raw) => {
+    const chatId = inputPeerMarkedId(raw.peerId) ?? "";
+    const entry = index.byId.get(chatId);
+    const context: MessageContext = {
+      chatId,
+      ...(entry?.username !== undefined ? { username: entry.username } : {}),
+      ...(entry !== undefined
+        ? { readInboxMaxId: entry.read_inbox_max_id }
+        : {}),
+    };
+    return {
+      ...mapMessage(raw, context),
+      source_title: entry?.title ?? page.titles.get(chatId) ?? chatId,
+    };
+  });
+
+  const fit = fitToSizeCap(all, (kept) => ({
+    results: kept,
+    sources: rollUp(kept),
+    ...(page.count !== undefined ? { total_matches: page.count } : {}),
+  }));
+  const results = all.slice(0, fit);
+  const last = results[results.length - 1];
+
+  // A short page means Telegram had nothing more for this query.
+  const complete = results.length === all.length;
+  const exhausted = complete && all.length < input.limit;
+
+  let next_cursor: string | undefined;
+  if (last !== undefined && !exhausted) {
+    next_cursor = encodeSearchGlobalCursor({
+      // A complete page resumes on the server's own next_rate, which the live
+      // probe walked for twelve pages with zero duplicates. A page the size
+      // cap cut short cannot: next_rate points past the hits we did not serve.
+      // The rate tracks the message date, so resuming at the last SERVED hit's
+      // date may re-serve a hit that shares that second, but never skips one.
+      rate: complete ? (page.nextRate ?? unixSeconds(last.date)) : unixSeconds(last.date),
+      peer: last.chat_id,
+      id: last.id,
+      fingerprint: bounds.fingerprint,
+    });
+  }
+
+  return {
+    results,
+    sources: rollUp(results),
+    ...(page.count !== undefined ? { total_matches: page.count } : {}),
+    ...(next_cursor !== undefined ? { next_cursor } : {}),
+  };
+}
+
+export async function searchMessages(
+  input: SearchInput,
+): Promise<SearchResult> {
+  const bounds = prepareSearch(input);
+  const index = await fetchDialogIndex();
+  return withTelegram(async (client) =>
+    globalPage(client, index, input, bounds),
+  );
+}
+```
+
+`searchMessages` gains its fan-out branch in Task 6; until then it serves the
+global engine only, which is what this task's tests cover.
+
+- [ ] **Step 5: Run the test to verify it passes**
+
+Run: `npx vitest run tests/telegram-search.test.ts`
+Expected: PASS, 11 tests.
+
+- [ ] **Step 6: Run the gates**
+
+Run: `npm run test && npm run typecheck && npm run lint`
+Expected: all green.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/telegram/search.ts src/telegram/message-slice.ts tests/telegram-search.test.ts
+git commit -m "feat: search the whole account with one messages.searchGlobal call"
+```
+
 ## Resume note
 
 Planning is in progress in this file. The tasks are appended in order, and each
