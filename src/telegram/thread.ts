@@ -125,28 +125,27 @@ export async function getThread(
     );
 
     const comment_count = page.count ?? replies.replies;
-    const fit = fitToSizeCap(all, (kept) => ({
-      ...base,
-      comment_count,
-      comments: kept,
-    }));
-    const comments = all.slice(0, fit);
+    const assemble = (comments: TelegramMessage[]): GetThreadResult => {
+      const exhausted =
+        comments.length === all.length && all.length < input.limit;
+      const oldest = comments[comments.length - 1];
 
-    const exhausted = comments.length === all.length && all.length < input.limit;
-    const oldest = comments[comments.length - 1];
-
-    return {
-      ...base,
-      comment_count,
-      comments,
-      ...(exhausted || oldest === undefined
-        ? {}
-        : {
-            next_cursor: encodeThreadCursor({
-              offsetId: oldest.id,
-              fingerprint,
+      return {
+        ...base,
+        comment_count,
+        comments,
+        ...(exhausted || oldest === undefined
+          ? {}
+          : {
+              next_cursor: encodeThreadCursor({
+                offsetId: oldest.id,
+                fingerprint,
+              }),
             }),
-          }),
+      };
     };
+
+    const fit = fitToSizeCap(all, assemble);
+    return assemble(all.slice(0, fit));
   });
 }

@@ -7,6 +7,7 @@ import {
 import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
 import { decodeThreadCursor } from "@/pagination";
 import { GramScopeError } from "@/errors/taxonomy";
+import { MAX_RESPONSE_BYTES } from "@/schemas/size";
 
 const CHANNEL = "-1001111111111";
 const GROUP = "-1002222222222";
@@ -28,6 +29,10 @@ function comment(id: number) {
     date: 1_750_000_100 + id,
     message: `comment ${id}`,
   };
+}
+
+function largeComment(id: number, textBytes: number) {
+  return { ...comment(id), message: "x".repeat(textBytes) };
 }
 
 /** Stands in for the dialog index this tool fetches through fetchDialogIndex,
@@ -149,6 +154,36 @@ describe("getThread", () => {
     });
     expect(first.next_cursor).toBeTruthy();
     expect(decodeThreadCursor(first.next_cursor!).offsetId).toBe(8);
+  });
+
+  it("keeps a cursor-bearing near-cap response within the size limit", async () => {
+    install({
+      post: post({ replies: { replies: 3, channelId: 2222222222n } }),
+      replies: {
+        className: "messages.ChannelMessages",
+        count: 3,
+        messages: [largeComment(9, 200_000), largeComment(8, 61_680)],
+        chats: [],
+        users: [],
+      },
+    });
+
+    const result = await getThread({
+      source_id: CHANNEL,
+      post_id: 500,
+      limit: 2,
+    });
+    const withoutCursor = { ...result };
+    delete withoutCursor.next_cursor;
+
+    expect(result.next_cursor).toBeTruthy();
+    expect(Buffer.byteLength(JSON.stringify(withoutCursor), "utf8")).toBeLessThanOrEqual(
+      MAX_RESPONSE_BYTES,
+    );
+    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(
+      MAX_RESPONSE_BYTES,
+    );
+    expect(decodeThreadCursor(result.next_cursor!).offsetId).toBe(9);
   });
 
   it("rejects a cursor issued for another post", async () => {
