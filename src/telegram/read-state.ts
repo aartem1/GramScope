@@ -1,7 +1,7 @@
 import { FANOUT_CONCURRENCY, mapWithConcurrency } from "../concurrency";
 import { mapTelegramError } from "../errors/from-telegram";
 import { GramScopeError } from "../errors/taxonomy";
-import { getApi, withTelegram } from "./client";
+import { getApi, resolveEntity, withTelegram } from "./client";
 import { fetchDialogIndex } from "./dialog-index";
 
 export const MAX_MARK_READ_SOURCES = 25;
@@ -68,7 +68,7 @@ export async function markRead(
             );
           }
 
-          const entity = await client.getEntity(sourceId);
+          const entity = await resolveEntity(client, sourceId);
           const request =
             entity.className === "Channel"
               ? new Api.channels.ReadHistory({

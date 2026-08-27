@@ -1,4 +1,4 @@
-import type { TelegramLike } from "./client";
+import { resolveEntity, type TelegramLike } from "./client";
 import type { DialogIndex } from "./dialog-index";
 import { entityMarkedId, entityUsername } from "./peer-id";
 import { GramScopeError } from "../errors/taxonomy";
@@ -158,7 +158,7 @@ export async function resolveSource(
   }
 
   const target = link.kind === "username" ? link.username : link.markedId;
-  const entity = await client.getEntity(target);
+  const entity = await resolveEntity(client, target);
   const markedId = entityMarkedId(entity);
   if (markedId === undefined) {
     throw new GramScopeError(

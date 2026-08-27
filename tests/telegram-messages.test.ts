@@ -10,6 +10,8 @@ import {
 import {
   __resetClientForTests,
   __setClientFactoryForTests,
+  withTelegram,
+  type TelegramLike,
 } from "@/telegram/client";
 import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
 import { decodeMessageCursor, encodeMessageCursor } from "@/pagination";
@@ -705,6 +707,144 @@ describe("sources outside the dialog index", () => {
 
     const page = await getMessages({ source_ids: ["-100999"], limit: 2 });
     expect(page.sources[0]!.error?.code).toBe("RATE_LIMITED");
+  });
+
+  type ErrorHandler = (error: unknown) => void | Promise<void>;
+
+  function unresolved(target: string): Error {
+    return new Error(
+      `Could not find the input entity for ${JSON.stringify({ target })}.\n` +
+        "         Please read https://docs.teleproto.dev/concepts/entities to find out more details.",
+    );
+  }
+
+  function rpcError(errorMessage: string): Error {
+    return Object.assign(new Error(errorMessage), { errorMessage });
+  }
+
+  function swallowingFactory(original: unknown | undefined) {
+    let onError: ErrorHandler = async () => undefined;
+    const client = {
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => [],
+      set onError(handler: ErrorHandler) {
+        onError = handler;
+      },
+      getEntity: async (target: string) => {
+        if (original !== undefined) await onError(original);
+        throw unresolved(target);
+      },
+      getMessages: async () => [],
+    } as TelegramLike;
+    return { factory: async () => client, handler: () => onError };
+  }
+
+  it("keeps a CHANNEL_INVALID swallowed by teleproto as CHANNEL_NOT_FOUND", async () => {
+    const fake = swallowingFactory(rpcError("CHANNEL_INVALID"));
+    __setClientFactoryForTests(fake.factory);
+
+    const page = await getMessages({ source_ids: ["-100999"], limit: 2 });
+    expect(page.sources[0]!.error).toEqual({
+      code: "CHANNEL_NOT_FOUND",
+      message:
+        "Telegram could not resolve that peer. A channel the account has not joined must be addressed by @username or t.me link; a bare id resolves only while the peer is already known to this instance.",
+    });
+  });
+
+  it("keeps a FLOOD_WAIT swallowed by teleproto as RATE_LIMITED", async () => {
+    const fake = swallowingFactory(rpcError("FLOOD_WAIT_30"));
+    __setClientFactoryForTests(fake.factory);
+
+    const page = await getMessages({ source_ids: ["-100999"], limit: 2 });
+    expect(page.sources[0]!.error).toEqual({
+      code: "RATE_LIMITED",
+      message: "Telegram rate limit; retry after 30s",
+    });
+  });
+
+  it("keeps an auth failure swallowed by teleproto as AUTH_REQUIRED", async () => {
+    const fake = swallowingFactory(rpcError("AUTH_KEY_UNREGISTERED"));
+    __setClientFactoryForTests(fake.factory);
+
+    const page = await getMessages({ source_ids: ["-100999"], limit: 2 });
+    expect(page.sources[0]!.error?.code).toBe("AUTH_REQUIRED");
+  });
+
+  it("keeps a generic transport failure swallowed by teleproto as INTERNAL_ERROR without exposing it", async () => {
+    const fake = swallowingFactory(
+      new Error("connect ECONNRESET session=DO_NOT_EXPOSE"),
+    );
+    __setClientFactoryForTests(fake.factory);
+
+    const page = await getMessages({ source_ids: ["-100999"], limit: 2 });
+    expect(page.sources[0]!.error).toEqual({
+      code: "INTERNAL_ERROR",
+      message: "Unexpected internal error",
+    });
+  });
+
+  it("keeps concurrent swallowed failures isolated by resolution", async () => {
+    let onError: ErrorHandler = async () => undefined;
+    let releaseFlood!: () => void;
+    let releaseAuth!: () => void;
+    const floodCaptured = new Promise<void>((resolve) => {
+      releaseFlood = resolve;
+    });
+    const authCaptured = new Promise<void>((resolve) => {
+      releaseAuth = resolve;
+    });
+    const client = {
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => [],
+      set onError(handler: ErrorHandler) {
+        onError = handler;
+      },
+      getEntity: async (target: string) => {
+        if (target === "flood") {
+          await onError(rpcError("FLOOD_WAIT_9"));
+          releaseFlood();
+          await authCaptured;
+        } else {
+          await floodCaptured;
+          await onError(rpcError("AUTH_KEY_UNREGISTERED"));
+          releaseAuth();
+        }
+        throw unresolved(target);
+      },
+      getMessages: async () => [],
+    } as TelegramLike;
+    __setClientFactoryForTests(async () => client);
+
+    const page = await getMessages({
+      source_ids: ["@flood", "@auth"],
+      limit: 2,
+    });
+    expect(page.sources.map((source) => source.error?.code)).toEqual([
+      "RATE_LIMITED",
+      "AUTH_REQUIRED",
+    ]);
+  });
+
+  it("retains the narrow unresolved-entity fallback when no error was captured", async () => {
+    const fake = swallowingFactory(undefined);
+    __setClientFactoryForTests(fake.factory);
+
+    const page = await getMessages({ source_ids: ["-100999"], limit: 2 });
+    expect(page.sources[0]!.error?.code).toBe("CHANNEL_NOT_FOUND");
+  });
+
+  it("does not leak an onError call outside a resolution into the next one", async () => {
+    const fake = swallowingFactory(undefined);
+    __setClientFactoryForTests(fake.factory);
+    await withTelegram(async () => undefined);
+    await fake.handler()(rpcError("FLOOD_WAIT_45"));
+
+    const page = await getMessages({ source_ids: ["-100999"], limit: 2 });
+    expect(page.sources[0]!.error?.code).toBe("CHANNEL_NOT_FOUND");
   });
 
   it("accepts a t.me link in get_message", async () => {

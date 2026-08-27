@@ -18,7 +18,14 @@ const EXACT: Record<string, ErrorCode> = {
   USER_NOT_PARTICIPANT: "NOT_A_MEMBER",
 };
 
-function telegramMessage(err: unknown): string | undefined {
+/**
+ * The MTProto code an RPCError carries, or undefined for anything else — a
+ * generic Error, a socket failure, a non-object throw. Exported so
+ * `src/telegram/client.ts` can tell a swallowed CHANNEL_INVALID (the expected
+ * cold-instance outcome) from a swallowed FLOOD_WAIT without importing
+ * teleproto's error classes.
+ */
+export function telegramErrorCode(err: unknown): string | undefined {
   if (typeof err !== "object" || err === null) return undefined;
   const candidate = (err as { errorMessage?: unknown }).errorMessage;
   return typeof candidate === "string" ? candidate : undefined;
@@ -36,31 +43,39 @@ const UNRESOLVED_ENTITY = /^could not find the input entity for\b/i;
  * `PeerChannel` branch of `_getInputEntity`). On a cold instance — one that
  * holds no access hash for the channel, which is every instance for a channel
  * the account has not joined — that returns CHANNEL_INVALID. teleproto catches
- * that RPCError itself, logs it, and rethrows a plain `Error` carrying no
- * `errorMessage`, so the classification above never sees the code Telegram
- * actually sent and the failure lands on INTERNAL_ERROR.
+ * that RPCError itself, logs it, and — with **no** discrimination on the error
+ * type — falls through to a plain `Error` carrying no `errorMessage`. Every
+ * failure raised inside that call is swallowed the same way: a FLOOD_WAIT, an
+ * AUTH_KEY_UNREGISTERED and an ECONNREFUSED all arrive here looking exactly
+ * like CHANNEL_INVALID.
  *
- * The rethrown object carries no code, no `cause` and no marker property: its
- * message is the only discriminator teleproto leaves. Matching it is therefore
- * the narrowest fix available, and it is deliberately narrow — a FLOOD_WAIT, an
- * auth failure or a socket error raised during the same resolution carries its
- * own shape and keeps its own classification. If teleproto rewords the
- * sentence, this predicate stops matching and such a failure falls back to
- * INTERNAL_ERROR, which is exactly today's behaviour, not a new wrong code;
+ * So this predicate must NOT be treated as "the peer does not exist". It means
+ * only "teleproto gave up on this peer and told us nothing". The real error is
+ * recovered upstream, in `src/telegram/client.ts`: `resolveEntity` installs
+ * teleproto's own `onError` hook — awaited inside that same catch, immediately
+ * before this throw — under an AsyncLocalStorage scope per resolution, and
+ * rethrows the captured error in place of the generic one. A CHANNEL_NOT_FOUND
+ * here therefore means the captured error really was CHANNEL_INVALID, or that
+ * nothing was captured at all.
+ *
+ * The generic object carries no code, no `cause` and no marker property, so its
+ * message is the only discriminator for the fallback. If teleproto rewords the
+ * sentence, this predicate stops matching and an uncaptured failure falls back
+ * to INTERNAL_ERROR — today's pre-fix behaviour, not a new wrong code;
  * `tests/errors.test.ts` pins the wording so a teleproto upgrade that changes
  * it fails the fast tier rather than silently regressing the error code.
  */
-function isUnresolvedEntity(err: unknown): boolean {
+export function isUnresolvedEntity(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   // An RPCError is classified on its own terms above and never reaches here.
-  if (telegramMessage(err) !== undefined) return false;
+  if (telegramErrorCode(err) !== undefined) return false;
   return UNRESOLVED_ENTITY.test(err.message);
 }
 
 export function mapTelegramError(err: unknown): GramScopeError {
   if (err instanceof GramScopeError) return err;
 
-  const raw = telegramMessage(err);
+  const raw = telegramErrorCode(err);
   if (raw) {
     const flood = /^FLOOD_WAIT_(\d+)$/.exec(raw);
     if (flood) {

@@ -1,10 +1,22 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { loadConfig } from "../config";
-import { mapTelegramError } from "../errors/from-telegram";
+import {
+  isUnresolvedEntity,
+  mapTelegramError,
+  telegramErrorCode,
+} from "../errors/from-telegram";
 
 export type TelegramLike = {
   connected?: boolean;
   connect(): Promise<boolean>;
   invoke(request: unknown): Promise<unknown>;
+  /**
+   * teleproto's public error hook (`set onError` on TelegramBaseClient). It is
+   * awaited from inside the catch blocks where teleproto swallows an error
+   * rather than rethrowing it, which is the only way to see those errors from
+   * outside the library. withTelegram installs one; see resolveEntity.
+   */
+  onError?: (err: unknown) => void | Promise<void>;
   /**
    * Returns teleproto's TotalList — an Array subclass carrying a `total`
    * property — not a plain array. filter, map and slice preserve the subclass
@@ -66,6 +78,78 @@ export function __resetClientForTests(): void {
 }
 
 /**
+ * One box per entity resolution. AsyncLocalStorage rather than a module-level
+ * field because get_messages fans out up to 25 source resolutions over one
+ * shared client (FANOUT_CONCURRENCY at a time): a single "last swallowed error"
+ * would attach one source's rate limit to another source's result. The store
+ * propagates across awaits into teleproto's own catch block and nowhere else,
+ * so each resolution reads only its own error. Node >= 20 is required by
+ * package.json and this app declares no Edge runtime, the same basis on which
+ * node:crypto was accepted in Task 2.
+ */
+type SwallowedErrorBox = { error?: unknown };
+
+const swallowed = new AsyncLocalStorage<SwallowedErrorBox>();
+
+/**
+ * Never throws: teleproto awaits this inside a catch, and a throw here would be
+ * rewritten into a different error by its onError wrapper. Never logs either —
+ * the object may be an RPCError whose payload carries request parameters.
+ */
+function recordSwallowedError(err: unknown): void {
+  const box = swallowed.getStore();
+  // Last one wins: it is the failure immediately preceding teleproto's generic
+  // throw, hence the one that explains it.
+  if (box) box.error = err;
+}
+
+/**
+ * Decides what a failed resolution should actually report.
+ *
+ * teleproto's `_getInputEntity` catches everything `channels.getChannels`
+ * raises — CHANNEL_INVALID, FLOOD_WAIT, AUTH_KEY_UNREGISTERED, a socket error —
+ * without discriminating, and replaces it with one generic
+ * "Could not find the input entity" Error (client/users.js, the PeerChannel
+ * branch). Classifying that generic error as CHANNEL_NOT_FOUND is right only
+ * for CHANNEL_INVALID; for a rate limit it is wrong in the actionable
+ * direction, telling a caller to drop a source that merely needs a retry.
+ *
+ * So: when the generic error is what surfaced and we captured the real one,
+ * the real one is rethrown in its place. CHANNEL_INVALID is left to the
+ * generic path on purpose — mapTelegramError turns that into a
+ * CHANNEL_NOT_FOUND whose message names the fix (address the peer by
+ * @username), which "Telegram error: CHANNEL_INVALID" would not.
+ */
+function resolutionFailure(thrown: unknown, captured: unknown): unknown {
+  if (captured === undefined) return thrown;
+  if (!isUnresolvedEntity(thrown)) return thrown;
+  if (telegramErrorCode(captured) === "CHANNEL_INVALID") return thrown;
+  return captured;
+}
+
+/**
+ * The only way any module may turn a name into an entity. It is a plain
+ * `client.getEntity` plus the capture above; call it instead of
+ * `client.getEntity` so a swallowed failure is never misreported.
+ *
+ * The rethrown error still passes through mapTelegramError before it reaches a
+ * caller, so a captured error's free-text message is dropped and only an
+ * UPPER_SNAKE code is ever echoed — nothing a captured object carries can
+ * escape into a response or a log line.
+ */
+export async function resolveEntity(
+  client: TelegramLike,
+  target: string,
+): Promise<Record<string, unknown>> {
+  const box: SwallowedErrorBox = {};
+  try {
+    return await swallowed.run(box, () => client.getEntity(target));
+  } catch (err) {
+    throw resolutionFailure(err, box.error);
+  }
+}
+
+/**
  * The only path to MTProto. No tool may import a Telegram client directly.
  */
 export async function withTelegram<T>(
@@ -76,6 +160,11 @@ export async function withTelegram<T>(
   let client = cached;
   if (!client) {
     client = await factory();
+    // Installed once per client, before it is ever used, so every resolution
+    // that runs on it can recover what teleproto swallows. Outside a
+    // resolveEntity scope this is a no-op, so the background sender and update
+    // loops — which call the same hook — record nothing.
+    client.onError = recordSwallowedError;
     cached = client;
   }
 

@@ -1,4 +1,9 @@
-import { getApi, withTelegram, type TelegramLike } from "./client";
+import {
+  getApi,
+  resolveEntity,
+  withTelegram,
+  type TelegramLike,
+} from "./client";
 import {
   fetchDialogIndex,
   folderMembers,
@@ -182,7 +187,7 @@ async function globalPage(
         maxDate: bounds.toSeconds ?? 0,
         offsetRate: cursor?.rate ?? 0,
         offsetPeer: (cursor
-          ? await client.getEntity(cursor.peer)
+          ? await resolveEntity(client, cursor.peer)
           : new Api.InputPeerEmpty()) as never,
         offsetId: cursor?.id ?? 0,
         limit: input.limit,

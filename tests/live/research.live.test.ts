@@ -107,12 +107,15 @@ suite("Research against the real account", () => {
       expect(source.title).toBeTruthy();
     }
 
-    if (!first.next_cursor) return;
+    expect(
+      first.next_cursor,
+      "the populated folder search did not issue a cursor for its second page",
+    ).toBeTruthy();
     const second = await searchMessages({
       query: QUERY,
       folder_ids: [folder.id],
       limit: 10,
-      cursor: first.next_cursor,
+      cursor: first.next_cursor!,
     });
     const seen = new Set(
       first.results.map((hit) => `${hit.chat_id}:${hit.id}`),
@@ -182,8 +185,13 @@ suite("Research against the real account", () => {
 
   it("reports a channel with no linked discussion group", async (ctx) => {
     const index = await fetchDialogIndex();
+    const candidates = [...index.byId.values()].slice(0, 12);
+    expect(
+      candidates.length,
+      "the account holds no dialogs to scan for a channel without discussion",
+    ).toBeGreaterThan(0);
     let target: { source_id: string; post_id: number } | undefined;
-    for (const entry of [...index.byId.values()].slice(0, 12)) {
+    for (const entry of candidates) {
       const page = await getMessages({
         source_ids: [entry.source_id],
         limit: 10,

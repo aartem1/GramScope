@@ -1,4 +1,9 @@
-import { getApi, withTelegram, type TelegramLike } from "./client";
+import {
+  getApi,
+  resolveEntity,
+  withTelegram,
+  type TelegramLike,
+} from "./client";
 import { fetchFolders } from "./folders";
 import {
   entityMarkedId,
@@ -302,7 +307,7 @@ export async function getChannel(input: {
   const index = foldersByPeer(folders);
 
   return withTelegram(async (client) => {
-    const entity = await client.getEntity(target);
+    const entity = await resolveEntity(client, target);
 
     // Broadcast channels and megagroups have more to say than the entity
     // carries. A failure here costs those extra fields, never the call: the

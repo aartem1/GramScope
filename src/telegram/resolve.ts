@@ -1,4 +1,9 @@
-import { withTelegram, getApi, type TelegramLike } from "./client";
+import {
+  getApi,
+  resolveEntity,
+  withTelegram,
+  type TelegramLike,
+} from "./client";
 import { fetchDialogIndex } from "./dialog-index";
 import { fetchChannelDetails, foldersByPeer, toSource } from "./dialogs";
 import { parseTelegramName, resolveSource } from "./peer-resolve";
@@ -102,7 +107,7 @@ export async function resolveTelegramUrl(input: {
 
     const resolved = await resolveSource(client, index, input.url);
     const entity =
-      resolved.entity ?? (await client.getEntity(resolved.handle));
+      resolved.entity ?? (await resolveEntity(client, resolved.handle));
     if (entityMarkedId(entity) === undefined) {
       throw new GramScopeError(
         "CHANNEL_NOT_FOUND",
