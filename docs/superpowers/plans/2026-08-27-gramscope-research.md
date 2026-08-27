@@ -2114,25 +2114,6 @@ describe("fan-out search", () => {
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
-  it("refuses a source selection that resolves to nothing", async () => {
-    installFanout({});
-    await expect(
-      searchMessages({ query: "ai", source_ids: [], folder_ids: [], limit: 10 }),
-    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
-  });
-});
-```
-
-The last test reaches `searchMessages` with neither selection non-empty, which
-`isFanout` reports as global mode; it must still fail, because `prepareSearch`
-is not the only gate — see Step 2's note on empty selections.
-
-**Correction to that reading:** `{ source_ids: [], folder_ids: [] }` IS global
-mode by `isFanout`, and a global search with no selection is valid. Replace that
-last test with the one below, which is the case that actually needs a guard: a
-folder that exists but holds nothing.
-
-```ts
   it("refuses a folder selection that resolves to no sources", async () => {
     installFanout({}, [
       {
@@ -2148,7 +2129,13 @@ folder that exists but holds nothing.
       searchMessages({ query: "ai", folder_ids: ["9"], limit: 10 }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
+});
 ```
+
+`{ source_ids: [], folder_ids: [] }` is deliberately NOT an error: `isFanout`
+reads empty arrays as no selection at all, which is a valid account-wide
+search. The case that needs the guard is a folder that exists and holds
+nothing, which is what the last test covers.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
@@ -2435,30 +2422,13 @@ async function sourcesPage(
 }
 ```
 
+A continuation resends every filter unchanged, so the mode derived from the
+arguments always matches the one that issued the cursor; a cursor of the other
+kind fails on its discriminator, which is what that field is for. The cursor
+therefore needs no branch of its own here.
+
 ```ts
 // src/telegram/search.ts — replace searchMessages
-export async function searchMessages(
-  input: SearchInput,
-): Promise<SearchResult> {
-  const bounds = prepareSearch(input);
-  const index = await fetchDialogIndex();
-  return withTelegram(async (client) =>
-    isFanout(input) || input.cursor?.length
-      ? // A continuation resends every filter unchanged, so the mode it derives
-        // matches the one that issued the cursor; a cursor of the other kind
-        // fails on its discriminator, which is what that field is for.
-        isFanout(input)
-        ? sourcesPage(client, index, input, bounds)
-        : globalPage(client, index, input, bounds)
-      : globalPage(client, index, input, bounds),
-  );
-}
-```
-
-**Simplify that to the following** — the branch above is redundant, since the
-mode is derived from the arguments in both cases:
-
-```ts
 export async function searchMessages(
   input: SearchInput,
 ): Promise<SearchResult> {
