@@ -10,7 +10,11 @@ import { decodeMessageCursor, encodeMessageCursor } from "../pagination";
 import { fitToSizeCap, MAX_RESPONSE_BYTES } from "../schemas/size";
 import { GramScopeError } from "../errors/taxonomy";
 import { mapTelegramError } from "../errors/from-telegram";
-import type { TelegramMessage } from "../schemas/message";
+import {
+  mapMessage,
+  type MessageContext,
+  type TelegramMessage,
+} from "../schemas/message";
 
 /**
  * Spec §5.1. A fan-out wider than this stops being one tool call and starts
@@ -297,4 +301,97 @@ export async function getMessages(
   );
 
   return renderPage(fetched);
+}
+
+export const MAX_CONTEXT = 20;
+
+export type GetMessageInput = {
+  source_id: string;
+  message_id: number;
+  context_before?: number;
+  context_after?: number;
+};
+
+export type GetMessageResult = {
+  source_id: string;
+  source_title: string;
+  message: TelegramMessage;
+  context_before: TelegramMessage[];
+  context_after: TelegramMessage[];
+};
+
+function inBounds(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= MAX_CONTEXT;
+}
+
+export async function getMessage(
+  input: GetMessageInput,
+): Promise<GetMessageResult> {
+  const before = input.context_before ?? 0;
+  const after = input.context_after ?? 0;
+  if (!inBounds(before) || !inBounds(after)) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      `context_before and context_after must be whole numbers between 0 and ${MAX_CONTEXT}`,
+    );
+  }
+
+  const index = await fetchDialogIndex();
+  const entry = index.byId.get(input.source_id);
+  const ctx: MessageContext = {
+    chatId: input.source_id,
+    ...(entry?.username !== undefined ? { username: entry.username } : {}),
+    ...(entry !== undefined ? { readInboxMaxId: entry.read_inbox_max_id } : {}),
+  };
+
+  return withTelegram(async (client) => {
+    const found = await client.getMessages(input.source_id, {
+      ids: [input.message_id],
+    });
+    const target = (found[0] ?? undefined) as Record<string, unknown> | undefined;
+    if (!target || typeof target.id !== "number") {
+      throw new GramScopeError(
+        "MESSAGE_NOT_FOUND",
+        `No message ${input.message_id} in ${input.source_id}`,
+      );
+    }
+
+    // Telegram returns history newest-first from an offset. Older context is
+    // a plain page from the target; newer context is the same page shifted
+    // backwards past it, which is what a negative add_offset means.
+    const older =
+      before > 0
+        ? await client.getMessages(input.source_id, {
+            limit: before,
+            offsetId: input.message_id,
+          })
+        : [];
+    const newer =
+      after > 0
+        ? await client.getMessages(input.source_id, {
+            limit: after,
+            offsetId: input.message_id,
+            addOffset: -after,
+          })
+        : [];
+
+    const toAscending = (raw: unknown[]) =>
+      raw
+        .filter(
+          (item): item is Record<string, unknown> =>
+            typeof item === "object" &&
+            item !== null &&
+            typeof (item as Record<string, unknown>).id === "number",
+        )
+        .map((item) => mapMessage(item, ctx))
+        .sort((a, b) => a.id - b.id);
+
+    return {
+      source_id: input.source_id,
+      source_title: entry?.title ?? input.source_id,
+      message: mapMessage(target, ctx),
+      context_before: toAscending(older),
+      context_after: toAscending(newer),
+    };
+  });
 }

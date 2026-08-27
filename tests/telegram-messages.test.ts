@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  getMessage,
   getMessages,
   parseDateBound,
   renderPage,
@@ -447,5 +448,92 @@ describe("getMessages", () => {
     expect(page.sources[0]!.error).toBeTruthy();
     expect(page.sources[0]!.messages).toBeUndefined();
     expect(page.sources[1]!.messages).toHaveLength(1);
+  });
+});
+
+describe("getMessage", () => {
+  const dialogs = [
+    {
+      id: { value: -100111n },
+      title: "Alpha",
+      unreadCount: 0,
+      entity: { className: "Channel", id: { value: 111n }, username: "alpha" },
+      dialog: { readInboxMaxId: 100 },
+      message: { id: 100, date: 1735689600 },
+    },
+  ];
+
+  const post = (id: number) => ({
+    className: "Message",
+    id,
+    date: 1735689600,
+    message: `post ${id}`,
+  });
+
+  function factory(handler: (params: Record<string, unknown>) => unknown[]) {
+    return async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => dialogs,
+      getEntity: async () => ({}),
+      getMessages: async (_entity: string, params: Record<string, unknown>) =>
+        handler(params),
+    });
+  }
+
+  it("returns the target with the source title at the top level", async () => {
+    __setClientFactoryForTests(factory((params) => (params.ids ? [post(50)] : [])));
+    const result = await getMessage({ source_id: A, message_id: 50 });
+    expect(result.source_title).toBe("Alpha");
+    expect(result.message.id).toBe(50);
+    expect(result.context_before).toEqual([]);
+    expect(result.context_after).toEqual([]);
+    // The title is not repeated on the message itself.
+    expect(JSON.stringify(result.message)).not.toContain("Alpha");
+  });
+
+  it("returns context in ascending date order", async () => {
+    __setClientFactoryForTests(
+      factory((params) => {
+        if (params.ids) return [post(50)];
+        if (params.addOffset === -2) return [post(52), post(51)];
+        return [post(49), post(48)];
+      }),
+    );
+    const result = await getMessage({
+      source_id: A,
+      message_id: 50,
+      context_before: 2,
+      context_after: 2,
+    });
+    expect(result.context_before.map((m) => m.id)).toEqual([48, 49]);
+    expect(result.context_after.map((m) => m.id)).toEqual([51, 52]);
+  });
+
+  it("treats missing context as a shorter array, not an error", async () => {
+    __setClientFactoryForTests(
+      factory((params) => (params.ids ? [post(50)] : [])),
+    );
+    const result = await getMessage({
+      source_id: A,
+      message_id: 50,
+      context_before: 5,
+    });
+    expect(result.context_before).toEqual([]);
+  });
+
+  it("reports an absent target as MESSAGE_NOT_FOUND", async () => {
+    __setClientFactoryForTests(factory(() => [undefined as unknown as object]));
+    await expect(
+      getMessage({ source_id: A, message_id: 999 }),
+    ).rejects.toMatchObject({ code: "MESSAGE_NOT_FOUND" });
+  });
+
+  it("rejects context bounds outside 0..20", async () => {
+    __setClientFactoryForTests(factory(() => []));
+    await expect(
+      getMessage({ source_id: A, message_id: 1, context_after: 21 }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 });
