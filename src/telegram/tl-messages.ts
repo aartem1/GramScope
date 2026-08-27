@@ -1,5 +1,11 @@
 import { entityMarkedId } from "./peer-id";
 
+const SUPPORTED_CLASSES = new Set([
+  "messages.Messages",
+  "messages.MessagesSlice",
+  "messages.ChannelMessages",
+]);
+
 /**
  * The flat view of every messages.* TL result this project reads:
  * messages.Messages (bounded, no count), messages.MessagesSlice (count, and a
@@ -33,6 +39,11 @@ export function readMessagesPage(raw: unknown): TlMessagesPage {
     unknown
   >;
 
+  const className = page.className;
+  if (typeof className !== "string" || !SUPPORTED_CLASSES.has(className)) {
+    return { messages: [], titles: new Map() };
+  }
+
   const titles = new Map<string, string>();
   for (const chat of records(page.chats)) {
     const id = entityMarkedId(chat);
@@ -44,7 +55,12 @@ export function readMessagesPage(raw: unknown): TlMessagesPage {
   return {
     messages: records(page.messages),
     titles,
-    ...(typeof page.count === "number" ? { count: page.count } : {}),
-    ...(typeof page.nextRate === "number" ? { nextRate: page.nextRate } : {}),
+    ...(className !== "messages.Messages" && typeof page.count === "number"
+      ? { count: page.count }
+      : {}),
+    ...(className === "messages.MessagesSlice" &&
+    typeof page.nextRate === "number"
+      ? { nextRate: page.nextRate }
+      : {}),
   };
 }

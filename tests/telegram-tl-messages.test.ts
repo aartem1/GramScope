@@ -45,17 +45,33 @@ describe("readMessagesPage", () => {
   });
 
   it("returns an empty page for anything else rather than throwing", () => {
-    for (const raw of [undefined, null, {}, { className: "messages.MessagesNotModified" }]) {
+    for (const raw of [
+      undefined,
+      null,
+      {},
+      {
+        className: "messages.MessagesNotModified",
+        count: 1,
+        messages: [{ id: 1 }],
+        chats: [chat],
+      },
+    ]) {
       const page = readMessagesPage(raw);
       expect(page.messages).toEqual([]);
       expect(page.count).toBeUndefined();
+      expect(page.titles).toEqual(new Map());
     }
   });
 
   it("hands back a plain array, not a teleproto TotalList", () => {
     class TotalList extends Array {}
     const messages = TotalList.from([{ id: 1 }]) as unknown[];
-    const page = readMessagesPage({ messages, chats: [], users: [] });
+    const page = readMessagesPage({
+      className: "messages.Messages",
+      messages,
+      chats: [],
+      users: [],
+    });
     expect(Object.getPrototypeOf(page.messages)).toBe(Array.prototype);
   });
 });
