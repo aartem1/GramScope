@@ -1600,8 +1600,9 @@ describe("global search", () => {
     expect(page.results.map((r) => r.id)).toEqual([9, 8]);
     expect(page.results[0]!.chat_id).toBe(A);
     expect(page.results[0]!.source_title).toBe("Alpha");
-    // The dialog index supplies the read pointer for the account's own chats.
-    expect(page.results[0]!.is_read).toBe(false);
+    // The dialog index supplies the read pointer for the account's own
+    // chats: id 9 is below readInboxMaxId 400, so this hit is read.
+    expect(page.results[0]!.is_read).toBe(true);
     expect(page.total_matches).toBe(4820);
     expect(page.sources).toEqual([
       { source_id: A, title: "Alpha", hit_count: 2 },
@@ -1628,6 +1629,9 @@ describe("global search", () => {
     const cursor = decodeSearchGlobalCursor(first.next_cursor!);
     expect(cursor).toMatchObject({ rate: 1_700_000_000, peer: A, id: 8 });
 
+    // __setClientFactoryForTests alone is not enough: withTelegram caches the
+    // client at module scope, so the second factory is ignored without this.
+    __resetClientForTests();
     const sent = install(slice([]));
     await searchMessages({ query: "ai", limit: 2, cursor: first.next_cursor! });
     expect(sent[0]!.params.offsetRate).toBe(1_700_000_000);
@@ -1993,7 +1997,7 @@ function installFanout(
     invoke: async (request: unknown) => {
       const r = request as { className: string } & Record<string, unknown>;
       sent.push({ className: r.className, params: { ...r } });
-      if (r.className === "messages.GetDialogFilters") return folders;
+      if (r.className === "messages.GetDialogFilters") return { filters: folders };
       const peer = String(r.peer);
       const reply = replies[peer];
       if (typeof reply === "function") return (reply as () => never)();
@@ -2069,21 +2073,23 @@ describe("fan-out search", () => {
 
   it("cursors only the sources that still have more, and never a failed one", async () => {
     installFanout({
-      // Alpha filled its page, so it may have more.
+      // Alpha filled its page and only one of its two hits fits the merged
+      // limit, so it resumes below the one that was served.
       [A]: slice([
         hit(9, 1_750_000_300, 1111111111n),
         hit(8, 1_750_000_200, 1111111111n),
       ]),
-      // Beta came back short: exhausted.
-      [B]: slice([hit(4, 1_750_000_100, 2222222222n)]),
+      // Beta came back short and its only hit was served: exhausted.
+      [B]: slice([hit(4, 1_750_000_400, 2222222222n)]),
     });
     const page = await searchMessages({
       query: "ai",
       source_ids: [A, B],
       limit: 2,
     });
+    expect(page.results.map((r) => r.id)).toEqual([4, 9]);
     const cursor = decodeSearchSourcesCursor(page.next_cursor!);
-    expect(cursor.sources).toEqual([{ handle: A, offsetId: 8 }]);
+    expect(cursor.sources).toEqual([{ handle: A, offsetId: 9 }]);
   });
 
   it("drops an excluded source before spending a request on it", async () => {
@@ -2659,7 +2665,7 @@ without joining and without a usable peer.
 - Modify: `tests/mcp-handler.test.ts` (ten tools)
 
 **Interfaces:**
-- Consumes: `parseTelegramName`, `resolveSource` (Task 1); `toSource`, `foldersByPeer`, `fetchChannelDetails` from `src/telegram/dialogs.ts`; `fetchFolders`; `fetchDialogIndex`; `entityMarkedId`, `sourceType` from `src/telegram/peer-id.ts`.
+- Consumes: `parseTelegramName`, `resolveSource` (Task 1); `toSource`, `foldersByPeer`, `fetchChannelDetails` from `src/telegram/dialogs.ts`; `fetchDialogIndex`; `entityMarkedId`, `sourceType` from `src/telegram/peer-id.ts`.
 - Produces:
   - `type ResolvedUrl = { kind: "source" | "post" | "invite"; source?: { source_id?: string; title: string; username?: string; type: "channel" | "group" | "chat"; subscriber_count?: number; linked_discussion_id?: string; joined: boolean; folder_ids?: string[] }; message_id?: number; comment_id?: number }`
   - `function resolveTelegramUrl(input: { url: string }): Promise<ResolvedUrl>`
@@ -2798,7 +2804,10 @@ describe("resolveTelegramUrl", () => {
       subscriber_count: 7,
       joined: false,
     });
-    expect(sent).toEqual(["messages.CheckChatInvite"]);
+    // The fake records every invoke, and fetching the dialog index invokes
+    // messages.GetDialogFilters first, so assert on what this tool sent.
+    expect(sent).toContain("messages.CheckChatInvite");
+    expect(sent).not.toContain("channels.GetFullChannel");
   });
 
   it("reports an invite the account already joined as joined", async () => {
@@ -2856,7 +2865,6 @@ export async function fetchChannelDetails(
 // src/telegram/resolve.ts
 import { withTelegram, getApi, type TelegramLike } from "./client";
 import { fetchDialogIndex } from "./dialog-index";
-import { fetchFolders } from "./folders";
 import { fetchChannelDetails, foldersByPeer, toSource } from "./dialogs";
 import { parseTelegramName, resolveSource } from "./peer-resolve";
 import { entityMarkedId, sourceType } from "./peer-id";
@@ -2942,9 +2950,10 @@ export async function resolveTelegramUrl(input: {
   url: string;
 }): Promise<ResolvedUrl> {
   const link = parseTelegramName(input.url);
-  const folders = await fetchFolders();
-  const folderIndex = foldersByPeer(folders);
+  // fetchDialogIndex fetches the folders itself; calling fetchFolders again
+  // here would be a second round trip for the same list.
   const index = await fetchDialogIndex();
+  const folderIndex = foldersByPeer(index.folders);
 
   return withTelegram(async (client) => {
     if (link.kind === "invite") {
@@ -3131,7 +3140,12 @@ function install(reply: unknown) {
         message: { id: 900 },
       },
     ],
-    getEntity: async () => ({ className: "Channel", id: 1111111111n }),
+    // Echo the requested peer: without this every source resolves to the same
+    // marked id and the cross-source cursor test passes for the wrong reason.
+    getEntity: async (target: string) => ({
+      className: "Channel",
+      id: BigInt(target.replace("-100", "")),
+    }),
     getMessages: async () => [],
     invoke: async (request: unknown) => {
       sent.push({ ...(request as Record<string, unknown>) });
@@ -3160,11 +3174,14 @@ describe("getPinnedMessages", () => {
     });
     const page = await getPinnedMessages({ source_id: A, limit: 20 });
 
-    expect(sent[0]!.className).toBe("messages.Search");
-    expect(sent[0]!.q).toBe("");
-    expect(
-      (sent[0]!.filter as { className: string }).className,
-    ).toBe("InputMessagesFilterPinned");
+    // Fetching the dialog index invokes messages.GetDialogFilters first, so
+    // pick this tool's own request out of what the fake recorded.
+    const search = sent.find((r) => r.className === "messages.Search")!;
+    expect(search).toBeTruthy();
+    expect(search.q).toBe("");
+    expect((search.filter as { className: string }).className).toBe(
+      "InputMessagesFilterPinned",
+    );
     expect(page.source_id).toBe(A);
     expect(page.source_title).toBe("Alpha");
     expect(page.messages.map((m) => m.id)).toEqual([800]);
@@ -4158,11 +4175,18 @@ git commit -m "docs: record sub-project 3 acceptance"
 git push origin main
 ```
 
-## Resume note
+## Plan complete
 
-Planning is in progress in this file. The tasks are appended in order, and each
-append is its own commit, so `git log -- docs/superpowers/plans/2026-08-27-gramscope-research.md`
-shows exactly how far planning got. Planning is finished when this note is
-replaced by the "Plan complete" line. If you are picking this up cold: read the
-spec first, then the tasks already present, then continue numbering from the
-last one written.
+Twelve tasks, written and self-reviewed against
+`docs/superpowers/specs/2026-08-27-gramscope-research-design.md` on 2026-08-27.
+
+Spec coverage, section by section: §5 → Task 1; §6.1 → Tasks 5, 6, 7; §6.2 →
+Task 4; §6.3 → Task 8; §6.4 → Task 9; §7 → Tasks 5, 6; §8 → Task 2; §9 → Task 7;
+§10 → Tasks 8, 10 and the Global Constraints; §11 → Tasks 4, 5; §12 → the File
+Structure above; §13 → every task's unit tests plus Task 11; §14 → Task 12.
+
+Execute with `superpowers:subagent-driven-development`, which writes its ledger
+to `.superpowers/sdd/2026-08-27-gramscope-research/progress.md`. That ledger is
+git-ignored and machine-local, so anything decided during execution that must
+survive this machine belongs on the card at
+`docs/superpowers/tasks/gramscope-mcp.md`, not only in the ledger.

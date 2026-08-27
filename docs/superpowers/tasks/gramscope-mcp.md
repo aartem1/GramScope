@@ -97,6 +97,7 @@ From Task 12 (`tools/list` handler test):
 - spec (sub-project 2, Reading): docs/superpowers/specs/2026-08-27-gramscope-reading-design.md
 - spec (sub-project 3, Research): docs/superpowers/specs/2026-08-27-gramscope-research-design.md
 - plan (sub-project 2, Reading): docs/superpowers/plans/2026-08-27-gramscope-reading.md
+- plan (sub-project 3, Research): docs/superpowers/plans/2026-08-27-gramscope-research.md
 - ledger (sub-project 2, Reading): .superpowers/sdd/2026-08-27-gramscope-reading/progress.md — git-ignored, machine-local. It opens with a "How to resume this work in another tool" block; `/sp:next` reads it automatically.
 - ledger: deleted with the plan workspace after the final whole-branch review came back clean, per superpowers:subagent-driven-development. Recover sub-project 1's history from `git log` if needed.
 - deployment: https://gramscope.vercel.app (Vercel Git integration; a push to `main` deploys)
