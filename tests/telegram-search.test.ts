@@ -5,10 +5,14 @@ import {
   __setClientFactoryForTests,
 } from "@/telegram/client";
 import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
-import { decodeSearchGlobalCursor } from "@/pagination";
+import {
+  decodeSearchGlobalCursor,
+  decodeSearchSourcesCursor,
+} from "@/pagination";
 import { GramScopeError } from "@/errors/taxonomy";
 
 const A = "-1001111111111";
+const B = "-1002222222222";
 
 function hit(id: number, date: number, channelId: bigint) {
   return {
@@ -206,5 +210,201 @@ describe("global search", () => {
     expect(page.results.length).toBeLessThan(40);
     const last = page.results[page.results.length - 1]!;
     expect(decodeSearchGlobalCursor(page.next_cursor!).id).toBe(last.id);
+  });
+});
+
+function twoDialogs() {
+  return [
+    {
+      id: A,
+      title: "Alpha",
+      entity: { className: "Channel", id: 1111111111n, title: "Alpha" },
+      dialog: { readInboxMaxId: 400 },
+      unreadCount: 0,
+      date: 1,
+      message: { id: 500 },
+    },
+    {
+      id: B,
+      title: "Beta",
+      entity: { className: "Channel", id: 2222222222n, title: "Beta" },
+      dialog: { readInboxMaxId: 0 },
+      unreadCount: 0,
+      date: 1,
+      message: { id: 500 },
+    },
+  ];
+}
+
+/** Replies per peer, so a fan-out can be asserted source by source. */
+function installFanout(
+  replies: Record<string, unknown | (() => never)>,
+  folders: unknown[] = [],
+) {
+  const sent: Sent[] = [];
+  __setClientFactoryForTests(async () => ({
+    connected: true,
+    connect: async () => true,
+    getDialogs: async () => twoDialogs(),
+    getEntity: async (target: string) => ({
+      className: "Channel",
+      id: target === B ? 2222222222n : 1111111111n,
+    }),
+    getMessages: async () => [],
+    invoke: async (request: unknown) => {
+      const r = request as { className: string } & Record<string, unknown>;
+      sent.push({ className: r.className, params: { ...r } });
+      if (r.className === "messages.GetDialogFilters") return { filters: folders };
+      const peer = String(r.peer);
+      const reply = replies[peer];
+      if (typeof reply === "function") return (reply as () => never)();
+      return reply ?? slice([]);
+    },
+  }));
+  return sent;
+}
+
+describe("fan-out search", () => {
+  it("searches each named source and merges the hits by date", async () => {
+    const sent = installFanout({
+      [A]: slice([hit(9, 1_750_000_300, 1111111111n)]),
+      [B]: slice([hit(4, 1_750_000_400, 2222222222n)]),
+    });
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      limit: 10,
+    });
+
+    const searches = sent.filter((s) => s.className === "messages.Search");
+    expect(searches).toHaveLength(2);
+    expect(searches[0]!.params.q).toBe("ai");
+    // Newest first across sources, not grouped by source.
+    expect(page.results.map((r) => r.id)).toEqual([4, 9]);
+    expect(page.results.map((r) => r.source_title)).toEqual(["Beta", "Alpha"]);
+    // total_matches sums the per-source counts in this mode.
+    expect(page.total_matches).toBe(9640);
+  });
+
+  it("lists a searched source that matched nothing", async () => {
+    installFanout({
+      [A]: slice([hit(9, 1_750_000_300, 1111111111n)]),
+      [B]: slice([]),
+    });
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      limit: 10,
+    });
+    expect(page.sources).toEqual([
+      { source_id: A, title: "Alpha", hit_count: 1 },
+      { source_id: B, title: "Beta", hit_count: 0 },
+    ]);
+  });
+
+  it("isolates one failing source instead of failing the page", async () => {
+    installFanout({
+      [A]: slice([hit(9, 1_750_000_300, 1111111111n)]),
+      [B]: () => {
+        throw Object.assign(new Error("boom"), {
+          errorMessage: "CHANNEL_PRIVATE",
+        });
+      },
+    });
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      limit: 10,
+    });
+    expect(page.results.map((r) => r.id)).toEqual([9]);
+    expect(page.sources[1]).toEqual({
+      source_id: B,
+      title: "Beta",
+      hit_count: 0,
+      error: {
+        code: "PRIVATE_CHANNEL_NOT_ACCESSIBLE",
+        message: "Telegram error: CHANNEL_PRIVATE",
+      },
+    });
+  });
+
+  it("cursors only the sources that still have more, and never a failed one", async () => {
+    installFanout({
+      // Alpha filled its page and only one of its two hits fits the merged
+      // limit, so it resumes below the one that was served.
+      [A]: slice([
+        hit(9, 1_750_000_300, 1111111111n),
+        hit(8, 1_750_000_200, 1111111111n),
+      ]),
+      // Beta came back short and its only hit was served: exhausted.
+      [B]: slice([hit(4, 1_750_000_400, 2222222222n)]),
+    });
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      limit: 2,
+    });
+    expect(page.results.map((r) => r.id)).toEqual([4, 9]);
+    const cursor = decodeSearchSourcesCursor(page.next_cursor!);
+    expect(cursor.sources).toEqual([{ handle: A, offsetId: 9 }]);
+  });
+
+  it("drops an excluded source before spending a request on it", async () => {
+    const sent = installFanout({
+      [A]: slice([hit(9, 1_750_000_300, 1111111111n)]),
+      [B]: slice([hit(4, 1_750_000_400, 2222222222n)]),
+    });
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      exclude_source_ids: [B],
+      limit: 10,
+    });
+    expect(sent.filter((s) => s.className === "messages.Search")).toHaveLength(
+      1,
+    );
+    expect(page.sources.map((s) => s.source_id)).toEqual([A]);
+  });
+
+  it("refuses a selection wider than the fan-out ceiling", async () => {
+    installFanout({});
+    await expect(
+      searchMessages({
+        query: "ai",
+        source_ids: Array.from({ length: 26 }, (_, n) => `-100${n}`),
+        limit: 10,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("refuses a folder selection that resolves to no sources", async () => {
+    installFanout({}, [
+      {
+        className: "DialogFilter",
+        id: 9,
+        title: "Empty",
+        includePeers: [],
+        excludePeers: [],
+        pinnedPeers: [],
+      },
+    ]);
+    await expect(
+      searchMessages({ query: "ai", folder_ids: ["9"], limit: 10 }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("never returns an oversized complete response", async () => {
+    installFanout({
+      [A]: slice([
+        {
+          ...hit(9, 1_750_000_300, 1111111111n),
+          message: "x".repeat(256 * 1024),
+        },
+      ]),
+    });
+
+    await expect(
+      searchMessages({ query: "ai", source_ids: [A], limit: 1 }),
+    ).rejects.toMatchObject({ code: "INTERNAL_ERROR" });
   });
 });
