@@ -74,26 +74,27 @@ export async function getPinnedMessages(
       source_title: source.title,
     };
     const all = page.messages.map((raw) => mapMessage(raw, context));
-    const messages = all.slice(
-      0,
-      fitToSizeCap(all, (kept) => ({ ...base, messages: kept })),
-    );
 
-    const exhausted =
-      messages.length === all.length && all.length < input.limit;
-    const oldest = messages[messages.length - 1];
+    const assemble = (messages: TelegramMessage[]): GetPinnedResult => {
+      const exhausted =
+        messages.length === all.length && all.length < input.limit;
+      const oldest = messages[messages.length - 1];
 
-    return {
-      ...base,
-      messages,
-      ...(exhausted || oldest === undefined
-        ? {}
-        : {
-            next_cursor: encodePinnedCursor({
-              offsetId: oldest.id,
-              fingerprint,
+      return {
+        ...base,
+        messages,
+        ...(exhausted || oldest === undefined
+          ? {}
+          : {
+              next_cursor: encodePinnedCursor({
+                offsetId: oldest.id,
+                fingerprint,
+              }),
             }),
-          }),
+      };
     };
+
+    const fit = fitToSizeCap(all, assemble);
+    return assemble(all.slice(0, fit));
   });
 }
