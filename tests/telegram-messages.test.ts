@@ -511,6 +511,45 @@ describe("getMessage", () => {
     expect(result.context_after.map((m) => m.id)).toEqual([51, 52]);
   });
 
+  // teleproto returns a TotalList — an Array subclass carrying a `total`
+  // property — and filter/map/sort preserve the subclass through
+  // Symbol.species. Leaking it means the context arrays are not plain
+  // arrays, which the live suite caught as a deep-equality failure against
+  // values that looked identical.
+  it("returns plain arrays, not the TL library's Array subclass", async () => {
+    class TotalList<T> extends Array<T> {
+      total?: number;
+    }
+    const totalList = (items: unknown[]) => {
+      const list = new TotalList<unknown>();
+      list.push(...items);
+      list.total = 999;
+      return list;
+    };
+
+    __setClientFactoryForTests(
+      factory((params) => {
+        if (params.ids) return totalList([post(50)]);
+        if (params.addOffset === -2) return totalList([post(52), post(51)]);
+        return totalList([post(49), post(48)]);
+      }),
+    );
+    const result = await getMessage({
+      source_id: A,
+      message_id: 50,
+      context_before: 2,
+      context_after: 2,
+    });
+
+    expect(result.context_before.constructor).toBe(Array);
+    expect(result.context_after.constructor).toBe(Array);
+    expect(Object.hasOwn(result.context_before, "total")).toBe(false);
+    expect(Object.hasOwn(result.context_after, "total")).toBe(false);
+    // Deep equality against a plain array must hold, which is what fails
+    // when a stray `total` rides along.
+    expect(result.context_before).toEqual([...result.context_before]);
+  });
+
   it("treats missing context as a shorter array, not an error", async () => {
     __setClientFactoryForTests(
       factory((params) => (params.ids ? [post(50)] : [])),

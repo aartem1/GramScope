@@ -171,7 +171,11 @@ export async function listDialogs(
   // dialog it came from: the cursor is derived from how far we consumed the
   // RAW batch, never from the filtered page's length.
   type Row = { raw: Record<string, unknown>; source: TelegramSource };
-  let rows: Row[] = raw.map((dialog) => ({
+  // Array.from, not raw.map: teleproto returns a TotalList (an Array subclass
+  // carrying `total`), and map/filter/slice preserve the subclass through
+  // Symbol.species, so a plain `.map` here would carry the stray property
+  // through `rows`, `kept`, `page` and out into the returned `sources`.
+  let rows: Row[] = Array.from(raw, (dialog) => ({
     raw: (dialog ?? {}) as Record<string, unknown>,
     source: mapDialog(dialog, folderIndex),
   }));

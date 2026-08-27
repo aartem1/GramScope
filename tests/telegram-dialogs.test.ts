@@ -187,6 +187,33 @@ describe("folder membership reaches a channel dialog", () => {
     expect(sources[0]!.folder_ids).toEqual(["2"]);
   });
 
+  // Same TL-boundary leak as getMessage's context arrays: teleproto returns a
+  // TotalList (an Array subclass carrying `total`), and map/filter/slice
+  // preserve the subclass through Symbol.species, so it rides all the way out
+  // to `sources`.
+  it("returns plain arrays, not the TL library's Array subclass", async () => {
+    class TotalList<T> extends Array<T> {
+      total?: number;
+    }
+    const list = new TotalList<unknown>();
+    list.push({ ...channelDialog, date: 100, message: { id: 7 } });
+    list.total = 999;
+
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: invoker(filters),
+      getDialogs: async () => list,
+      getEntity: async () => channelDialog.entity,
+      getMessages: async () => [],
+    }));
+
+    const { sources } = await listDialogs({ limit: 10 });
+    expect(sources.constructor).toBe(Array);
+    expect(Object.hasOwn(sources, "total")).toBe(false);
+    expect(sources).toEqual([...sources]);
+  });
+
   it("returns the channel when filtering by that folder", async () => {
     install();
     const { sources } = await listDialogs({ folder_id: "2", limit: 10 });

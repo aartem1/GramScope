@@ -379,8 +379,12 @@ export async function getMessage(
           })
         : [];
 
+    // Array.from first: teleproto hands back a TotalList (an Array subclass
+    // carrying `total`), and filter/map/sort preserve the subclass through
+    // Symbol.species. Without this the context arrays are not plain arrays
+    // and carry a stray property past the TL boundary.
     const toAscending = (raw: unknown[]) =>
-      raw
+      Array.from(raw)
         .filter(
           (item): item is Record<string, unknown> =>
             typeof item === "object" &&
