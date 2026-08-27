@@ -88,6 +88,46 @@ export function entityMarkedId(entity: unknown): string | undefined {
 }
 
 /**
+ * The single reader for a peer's public handle.
+ *
+ * Telegram carries usernames in two incompatible places, and — like the id
+ * representations above — mixing them silently loses data. The legacy singular
+ * `username` is still what most peers report. A peer that uses the
+ * collectible/Fragment multiple-usernames feature reports `username: null`
+ * instead and lists everything in `usernames: Username[]`, whose entries carry
+ * `username` plus `active` and `editable` flags. `@exampleuser` is one such channel,
+ * so reading only the singular field drops the handle for exactly the public
+ * channels this server addresses by name — and `resolveSource` then falls back
+ * to a bare marked id, which no cold instance can resolve.
+ *
+ * Order: the singular field first, so peers that still carry it behave exactly
+ * as before; then the active editable username, which is the account's own
+ * primary handle; then the first active one. An inactive username is never
+ * returned — it no longer resolves.
+ */
+export function entityUsername(entity: unknown): string | undefined {
+  if (typeof entity !== "object" || entity === null) return undefined;
+  const e = entity as { username?: unknown; usernames?: unknown };
+
+  if (typeof e.username === "string" && e.username.length > 0) {
+    return e.username;
+  }
+  if (!Array.isArray(e.usernames)) return undefined;
+
+  const active = e.usernames.filter(
+    (candidate): candidate is { username: string; editable?: unknown } =>
+      typeof candidate === "object" &&
+      candidate !== null &&
+      typeof (candidate as { username?: unknown }).username === "string" &&
+      (candidate as { username: string }).username.length > 0 &&
+      (candidate as { active?: unknown }).active === true,
+  );
+
+  const editable = active.find((candidate) => candidate.editable === true);
+  return (editable ?? active[0])?.username;
+}
+
+/**
  * The single classification rule for `TelegramSource.type`, derived from the
  * entity rather than from a dialog's convenience flags so that dialogs and
  * `get_channel` cannot disagree about the same peer.

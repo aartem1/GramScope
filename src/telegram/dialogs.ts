@@ -2,6 +2,7 @@ import { getApi, withTelegram, type TelegramLike } from "./client";
 import { fetchFolders } from "./folders";
 import {
   entityMarkedId,
+  entityUsername,
   markedChannelId,
   readBigId,
   sourceType,
@@ -64,7 +65,7 @@ export function toSource(
   const e = (entity ?? {}) as Record<string, unknown>;
 
   const id = details.id ?? entityMarkedId(e) ?? "";
-  const username = typeof e.username === "string" ? e.username : undefined;
+  const username = entityUsername(e);
   const description =
     details.description ?? (typeof e.about === "string" ? e.about : undefined);
   const title =

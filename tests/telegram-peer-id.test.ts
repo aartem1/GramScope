@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   entityMarkedId,
+  entityUsername,
   inputPeerMarkedId,
   markedChannelId,
   markedChatId,
@@ -55,6 +56,79 @@ describe("entityMarkedId", () => {
 
   it("returns undefined when there is no id to mark", () => {
     expect(entityMarkedId({ className: "Channel" })).toBeUndefined();
+  });
+});
+
+describe("entityUsername", () => {
+  it("reads the legacy singular field", () => {
+    expect(entityUsername({ className: "Channel", username: "ainews" })).toBe(
+      "ainews",
+    );
+  });
+
+  it("reads the multi-username list when the singular field is null", () => {
+    // @exampleuser's real shape: the collectible/Fragment feature moves every handle
+    // into `usernames` and leaves `username` null.
+    expect(
+      entityUsername({
+        className: "Channel",
+        username: null,
+        usernames: [
+          { className: "Username", username: "exampleuser", editable: true, active: true },
+          { className: "Username", username: "pavel", active: true },
+        ],
+      }),
+    ).toBe("exampleuser");
+  });
+
+  it("prefers the singular field when an entity carries both", () => {
+    expect(
+      entityUsername({
+        className: "Channel",
+        username: "primary",
+        usernames: [
+          { className: "Username", username: "collectible", editable: true, active: true },
+        ],
+      }),
+    ).toBe("primary");
+  });
+
+  it("prefers the editable username over an earlier active one", () => {
+    expect(
+      entityUsername({
+        username: null,
+        usernames: [
+          { username: "first", active: true },
+          { username: "own", editable: true, active: true },
+        ],
+      }),
+    ).toBe("own");
+  });
+
+  it("falls back to the first active username when none is editable", () => {
+    expect(
+      entityUsername({
+        usernames: [
+          { username: "first", active: true },
+          { username: "second", active: true },
+        ],
+      }),
+    ).toBe("first");
+  });
+
+  it("never returns an inactive username, which no longer resolves", () => {
+    expect(
+      entityUsername({
+        usernames: [{ username: "retired" }, { username: "sold", active: false }],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns undefined for a peer with no public handle at all", () => {
+    expect(entityUsername({ className: "Channel", id: 1n })).toBeUndefined();
+    expect(entityUsername({ username: "" })).toBeUndefined();
+    expect(entityUsername({ usernames: "not a list" })).toBeUndefined();
+    expect(entityUsername(null)).toBeUndefined();
   });
 });
 

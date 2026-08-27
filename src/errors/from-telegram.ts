@@ -24,6 +24,39 @@ function telegramMessage(err: unknown): string | undefined {
   return typeof candidate === "string" ? candidate : undefined;
 }
 
+/**
+ * The head of the sentence teleproto throws when it gives up on a peer. The
+ * tail embeds a JSON peer and a docs URL and is not matched.
+ */
+const UNRESOLVED_ENTITY = /^could not find the input entity for\b/i;
+
+/**
+ * teleproto resolves a bare marked channel id by calling
+ * `channels.getChannels` with `accessHash: 0` (client/users.js, the
+ * `PeerChannel` branch of `_getInputEntity`). On a cold instance — one that
+ * holds no access hash for the channel, which is every instance for a channel
+ * the account has not joined — that returns CHANNEL_INVALID. teleproto catches
+ * that RPCError itself, logs it, and rethrows a plain `Error` carrying no
+ * `errorMessage`, so the classification above never sees the code Telegram
+ * actually sent and the failure lands on INTERNAL_ERROR.
+ *
+ * The rethrown object carries no code, no `cause` and no marker property: its
+ * message is the only discriminator teleproto leaves. Matching it is therefore
+ * the narrowest fix available, and it is deliberately narrow — a FLOOD_WAIT, an
+ * auth failure or a socket error raised during the same resolution carries its
+ * own shape and keeps its own classification. If teleproto rewords the
+ * sentence, this predicate stops matching and such a failure falls back to
+ * INTERNAL_ERROR, which is exactly today's behaviour, not a new wrong code;
+ * `tests/errors.test.ts` pins the wording so a teleproto upgrade that changes
+ * it fails the fast tier rather than silently regressing the error code.
+ */
+function isUnresolvedEntity(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  // An RPCError is classified on its own terms above and never reaches here.
+  if (telegramMessage(err) !== undefined) return false;
+  return UNRESOLVED_ENTITY.test(err.message);
+}
+
 export function mapTelegramError(err: unknown): GramScopeError {
   if (err instanceof GramScopeError) return err;
 
@@ -48,6 +81,13 @@ export function mapTelegramError(err: unknown): GramScopeError {
       return new GramScopeError("INTERNAL_ERROR", `Telegram error: ${raw}`);
     }
     return new GramScopeError("INTERNAL_ERROR", "Unexpected internal error");
+  }
+
+  if (isUnresolvedEntity(err)) {
+    return new GramScopeError(
+      "CHANNEL_NOT_FOUND",
+      "Telegram could not resolve that peer. A channel the account has not joined must be addressed by @username or t.me link; a bare id resolves only while the peer is already known to this instance.",
+    );
   }
 
   // Unknown failure: the original message may embed secrets, so it is dropped.

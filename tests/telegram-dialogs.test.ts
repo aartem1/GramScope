@@ -99,6 +99,44 @@ describe("mapDialog", () => {
     expect(mapDialog(channelDialog, new Map()).url).toBe("https://t.me/ainews");
   });
 
+  it("takes the username from the multi-username list when the singular field is null", () => {
+    const source = mapDialog(
+      {
+        ...channelDialog,
+        entity: {
+          className: "Channel",
+          id: { value: AI_NEWS_BARE },
+          username: null,
+          usernames: [
+            { className: "Username", username: "ainews", editable: true, active: true },
+            { className: "Username", username: "ai_news", active: true },
+          ],
+        },
+      },
+      new Map(),
+    );
+    expect(source.username).toBe("ainews");
+    expect(source.url).toBe("https://t.me/ainews");
+  });
+
+  it("keeps the singular field when an entity carries both forms", () => {
+    const source = mapDialog(
+      {
+        ...channelDialog,
+        entity: {
+          className: "Channel",
+          id: { value: AI_NEWS_BARE },
+          username: "ainews",
+          usernames: [
+            { className: "Username", username: "collectible", editable: true, active: true },
+          ],
+        },
+      },
+      new Map(),
+    );
+    expect(source.username).toBe("ainews");
+  });
+
   it("omits url and username for a private channel", () => {
     const source = mapDialog(
       {

@@ -669,6 +669,44 @@ describe("sources outside the dialog index", () => {
     ]);
   });
 
+  it("reports a cold-instance marked id as CHANNEL_NOT_FOUND, not INTERNAL_ERROR", async () => {
+    // What a fresh serverless instance really gets for a bare marked id of a
+    // channel the account has not joined: teleproto catches the CHANNEL_INVALID
+    // itself and rethrows a plain Error with no errorMessage.
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => [],
+      getEntity: async () => {
+        throw new Error(
+          `Could not find the input entity for ${JSON.stringify({ channelId: "999" })}.
+         Please read https://docs.teleproto.dev/concepts/entities to find out more details.`,
+        );
+      },
+      getMessages: async () => [],
+    }));
+
+    const page = await getMessages({ source_ids: ["-100999"], limit: 2 });
+    expect(page.sources[0]!.error?.code).toBe("CHANNEL_NOT_FOUND");
+  });
+
+  it("keeps a classifiable resolution failure's own code", async () => {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => [],
+      getEntity: async () => {
+        throw Object.assign(new Error("x"), { errorMessage: "FLOOD_WAIT_30" });
+      },
+      getMessages: async () => [],
+    }));
+
+    const page = await getMessages({ source_ids: ["-100999"], limit: 2 });
+    expect(page.sources[0]!.error?.code).toBe("RATE_LIMITED");
+  });
+
   it("accepts a t.me link in get_message", async () => {
     let seenEntity: string | undefined;
     __setClientFactoryForTests(async () => ({

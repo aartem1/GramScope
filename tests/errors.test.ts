@@ -67,6 +67,59 @@ describe("mapTelegramError", () => {
     expect(mapped.message).not.toContain("SECRETVALUE");
   });
 
+  // teleproto's `_getInputEntity` swallows the CHANNEL_INVALID that
+  // `channels.getChannels(accessHash: 0)` returns and rethrows this instead, so
+  // the failure reaches us with no errorMessage to classify. Reproduced
+  // verbatim from node_modules/teleproto/client/users.js.
+  const unresolved = () =>
+    new Error(
+      `Could not find the input entity for ${JSON.stringify({ channelId: "1006503122" })}.
+         Please read https://` +
+        "docs.teleproto.dev/concepts/entities to" +
+        " find out more details.",
+    );
+
+  it("maps teleproto's unclassifiable entity-resolution failure to CHANNEL_NOT_FOUND", () => {
+    const mapped = mapTelegramError(unresolved());
+    expect(mapped.code).toBe("CHANNEL_NOT_FOUND");
+    // A bare marked id for an unjoined channel is the case that produces it,
+    // so the message has to say what to pass instead.
+    expect(mapped.message).toMatch(/username/i);
+  });
+
+  it("does not echo teleproto's own message back to the caller", () => {
+    expect(mapTelegramError(unresolved()).message).not.toContain(
+      "docs.teleproto.dev",
+    );
+  });
+
+  it("leaves every classifiable failure during resolution with its own code", () => {
+    // The narrowness that matters: a rate limit, an auth failure or a private
+    // channel raised by the same getEntity call must not become NOT_FOUND.
+    expect(mapTelegramError(new FakeRpcError("FLOOD_WAIT_30", 420)).code).toBe(
+      "RATE_LIMITED",
+    );
+    expect(
+      mapTelegramError(new FakeRpcError("AUTH_KEY_UNREGISTERED", 401)).code,
+    ).toBe("AUTH_REQUIRED");
+    expect(mapTelegramError(new FakeRpcError("CHANNEL_PRIVATE", 400)).code).toBe(
+      "PRIVATE_CHANNEL_NOT_ACCESSIBLE",
+    );
+    // A transport failure carries no errorMessage either, but it is not an
+    // unresolved peer and must stay INTERNAL_ERROR.
+    expect(
+      mapTelegramError(
+        Object.assign(new Error("connect ECONNREFUSED 149.154.167.51:443"), {
+          code: "ECONNREFUSED",
+          syscall: "connect",
+        }),
+      ).code,
+    ).toBe("INTERNAL_ERROR");
+    expect(mapTelegramError(new Error("Not connected")).code).toBe(
+      "INTERNAL_ERROR",
+    );
+  });
+
   it("does not resolve inherited Object.prototype names as error codes", () => {
     for (const name of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
       const mapped = mapTelegramError(new FakeRpcError(name, 400));

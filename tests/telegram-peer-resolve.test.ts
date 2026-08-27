@@ -139,6 +139,36 @@ describe("resolveSource", () => {
     expect(fake.calls).toEqual(["outside"]);
   });
 
+  it("keeps travelling by username when only the multi-username list carries it", async () => {
+    // The real @exampleuser shape. Reading only the singular field left `handle` as
+    // the bare marked id, which no cold instance can resolve.
+    const fake = client({
+      outside: {
+        className: "Channel",
+        id: 999n,
+        title: "Outside",
+        username: null,
+        usernames: [
+          { className: "Username", username: "outside", editable: true, active: true },
+          { className: "Username", username: "outside_old", active: true },
+        ],
+      },
+    });
+    const resolved = await resolveSource(fake, index, "https://t.me/outside");
+    expect(resolved.source_id).toBe("-100999");
+    expect(resolved.username).toBe("outside");
+    expect(resolved.handle).toBe("outside");
+  });
+
+  it("still falls back to the marked id when a peer has no public handle", async () => {
+    const fake = client({
+      "-100999": { className: "Channel", id: 999n, title: "Private" },
+    });
+    const resolved = await resolveSource(fake, index, "-100999");
+    expect(resolved.username).toBeUndefined();
+    expect(resolved.handle).toBe("-100999");
+  });
+
   it("memoizes a resolution for the life of the instance", async () => {
     const fake = client({
       outside: { className: "Channel", id: 999n, title: "Outside", username: "outside" },

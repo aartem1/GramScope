@@ -1,6 +1,6 @@
 import type { TelegramLike } from "./client";
 import type { DialogIndex } from "./dialog-index";
-import { entityMarkedId } from "./peer-id";
+import { entityMarkedId, entityUsername } from "./peer-id";
 import { GramScopeError } from "../errors/taxonomy";
 
 /**
@@ -167,8 +167,7 @@ export async function resolveSource(
     );
   }
 
-  const username =
-    typeof entity.username === "string" ? entity.username : undefined;
+  const username = entityUsername(entity);
   const title =
     typeof entity.title === "string"
       ? entity.title
