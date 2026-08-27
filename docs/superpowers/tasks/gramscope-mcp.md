@@ -73,53 +73,38 @@ created: 2026-08-26
 - 2026-08-27 — a deliberate non-fix, so it is not re-raised: a bare unmarked id such as `1234567890` is not matched against a channel's marked id in `aliasKeys`. An unmarked id is not a documented source name, it fails resolution anyway, and matching it would collide with a user id, which Telegram marks as the bare id unchanged.
 - 2026-08-27 — process trap: `npx prettier --write` over a directory reformatted 22 files unrelated to the change, because the repository is not prettier-clean and `npm run lint` does not enforce formatting. Format the files you edited, never a directory, or revert the rest before committing.
 
-# Handoff — sub-project 3, Research
+# Current point
 
-Rewritten 2026-08-27 after fix round 3. **Read this first.** The SDD ledger
-under `.superpowers/sdd/` is git-ignored and machine-local, so it does not
-travel: this section, the "Changes and findings" list above, and git history
-are the whole record for anyone on another machine.
+Sub-project 3, Research. All twelve plan tasks done and accepted by the owner in
+the ChatGPT connector. The final whole-implementation review of `3832daa..7ddece2`
+returned Needs fixes; three fix rounds have landed and each one's fix introduced
+the next round's defect:
 
-**State.** All twelve plan tasks are done, reviewed and accepted by the owner
-in the ChatGPT connector. The final whole-implementation review of
-`3832daa..7ddece2` then returned Needs fixes, and three fix rounds have landed:
-
-| Round | Commits | What it fixed |
+| Round | Commits | Fixed |
 | --- | --- | --- |
 | 1 | `71420c8..ad2bec8` | alias canonicalisation, outside-source guidance, `ChatInvitePeek` id |
-| 2 | `eb1f0c9..213513a` | exclusion no longer fails the call; shared `nameKey`; guidance wording |
+| 2 | `eb1f0c9..213513a` | exclusion no longer fails the call; shared `nameKey` |
 | 3 | `a4df5b7..00a2dd2` | lookup budget instead of a name ceiling; exclusion failure discrimination |
 
-`main` = `origin/main` = `00a2dd2`, tracked working tree clean, no feature
-branches (the owner works directly on `main` until launch). Everything above is
-pushed and deployed: Vercel production `gram-scope-bru184gr6` is Ready,
-`/api/mcp` answers 401 with its `WWW-Authenticate` challenge and
-`/.well-known/oauth-protected-resource` returns the endpoint plus the AuthKit
-issuer. Gates at `00a2dd2`: 27 files / 342 fast tests, typecheck, lint and
-`npm run build` green; live tier 25/25 with no skips.
+Everything is pushed and deployed; gates at `00a2dd2` are green (342 fast tests,
+typecheck, lint, build; live tier 25/25 no skips).
 
-**In flight.** A scoped re-review of `213513a..00a2dd2` was dispatched and its
-verdict is not recorded here, which means it had not returned. Re-run it rather
-than assuming: give a reviewer that commit range plus the six items round 3
-answered, listed under "Changes and findings" above.
+Round 3's re-review returned **Needs fixes**: all six items closed, one new
+Important defect. Round 3 replaced the pre-resolution name cap instead of
+supplementing it, so nothing bounds how many names a call carries before the
+25-source ceiling rejects it — 30 held ids plus 26 unjoined usernames now spends
+26 `getEntity` calls before failing, where `213513a` spent none, and
+`resolvesLocally` rescans the dialog index per name with no array cap in the
+schema. Two Minors: `PRIVATE_CHANNEL_NOT_ACCESSIBLE` is over-broad on the
+rethrow side for an `internal`-kind exclusion, and the budget message
+misdiagnoses unparseable names and invite links, which never reach the network.
 
-**Next step.** On `Approved`, the fix-round loop is closed and sub-project 3 is
-finished; move to sub-project 4 (Discovery), which has no spec or plan yet and
-starts at `superpowers:brainstorming`. On `Needs fixes`, open fix round 4/5 —
-the budget is five rounds and three are spent.
+**Next:** fix round 4/5 against those three. Restore a generous raw-name cap
+alongside the budget — 50 was what caused the round-2 regression — and consider a
+`byUsername` map on `DialogIndex` to make `resolvesLocally` O(1).
 
-**What must not be redone.** Sub-project 3's twelve tasks are finished and
-accepted; do not re-plan, re-brainstorm or re-execute any of them. The three
-original review findings and the six round-3 items are fixed — verify rather
-than rewrite. The live Telegram measurements under "Changes and findings" cost
-real FLOOD_WAIT budget, so read them rather than re-probing.
-
-**Obligations.** Keep THIS section and "Changes and findings" current as work
-happens, because the ledger does not survive a change of machine — the ledger
-is for `/sp:next` on this machine only. Push to `main` deploys to Vercel and
-needs the owner's authorization. Never print the StringSession or any
-credential. Reconnect the ChatGPT connector before any acceptance run; it
-caches its tool list at install time, and rounds 1-3 changed tool descriptions.
+**Do not redo:** the twelve tasks, the three original findings, or the six round-3
+items. The live Telegram measurements below cost real FLOOD_WAIT budget.
 
 # Blocked — awaiting owner
 Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
