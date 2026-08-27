@@ -11,6 +11,7 @@ import {
   encodeSearchSourcesCursor,
 } from "@/pagination";
 import { GramScopeError } from "@/errors/taxonomy";
+import { MAX_RAW_SOURCE_NAMES_PER_CALL } from "@/telegram/source-selection";
 
 const A = "-1001111111111";
 const B = "-1002222222222";
@@ -135,7 +136,10 @@ describe("prepareSearch", () => {
 describe("global search", () => {
   it("sends one searchGlobal and flattens its hits", async () => {
     const sent = install(
-      slice([hit(9, 1_750_000_200, 1111111111n), hit(8, 1_750_000_100, 1111111111n)]),
+      slice([
+        hit(9, 1_750_000_200, 1111111111n),
+        hit(8, 1_750_000_100, 1111111111n),
+      ]),
     );
     const page = await searchMessages({ query: "ai", limit: 10 });
 
@@ -165,7 +169,10 @@ describe("global search", () => {
 
   it("issues a cursor carrying the server's rate and resumes with it", async () => {
     install(
-      slice([hit(9, 1_750_000_200, 1111111111n), hit(8, 1_750_000_100, 1111111111n)]),
+      slice([
+        hit(9, 1_750_000_200, 1111111111n),
+        hit(8, 1_750_000_100, 1111111111n),
+      ]),
     );
     const first = await searchMessages({ query: "ai", limit: 2 });
     const cursor = decodeSearchGlobalCursor(first.next_cursor!);
@@ -186,7 +193,10 @@ describe("global search", () => {
 
   it("rejects a cursor whose query no longer matches", async () => {
     install(
-      slice([hit(9, 1_750_000_200, 1111111111n), hit(8, 1_750_000_100, 1111111111n)]),
+      slice([
+        hit(9, 1_750_000_200, 1111111111n),
+        hit(8, 1_750_000_100, 1111111111n),
+      ]),
     );
     const first = await searchMessages({ query: "ai", limit: 2 });
     await expect(
@@ -247,19 +257,74 @@ function installFanout(
     connected: true,
     connect: async () => true,
     getDialogs: async () => twoDialogs(),
+    // Distinct names must resolve to distinct peers, or canonicalisation by
+    // source_id would collapse an over-wide selection into one source and the
+    // fan-out ceiling would pass vacuously.
     getEntity: async (target: string) => ({
       className: "Channel",
-      id: target === B ? 2222222222n : 1111111111n,
+      id:
+        target === B
+          ? 2222222222n
+          : target === A
+            ? 1111111111n
+            : BigInt(/^-100(\d+)$/.exec(target)?.[1] ?? "1111111111"),
     }),
     getMessages: async () => [],
     invoke: async (request: unknown) => {
       const r = request as { className: string } & Record<string, unknown>;
       sent.push({ className: r.className, params: { ...r } });
-      if (r.className === "messages.GetDialogFilters") return { filters: folders };
+      if (r.className === "messages.GetDialogFilters")
+        return { filters: folders };
       const peer = String(r.peer);
       const reply = replies[peer];
       if (typeof reply === "function") return (reply as () => never)();
       return reply ?? slice([]);
+    },
+  }));
+  return sent;
+}
+
+function installAliasedFanout(folders: unknown[] = []) {
+  const sent: Sent[] = [];
+  __setClientFactoryForTests(async () => ({
+    connected: true,
+    connect: async () => true,
+    getDialogs: async () => [
+      {
+        ...twoDialogs()[0],
+        entity: {
+          className: "Channel",
+          id: 1111111111n,
+          title: "Alpha",
+          username: "alpha",
+        },
+      },
+      {
+        ...twoDialogs()[1],
+        entity: {
+          className: "Channel",
+          id: 2222222222n,
+          title: "Beta",
+          username: "beta",
+        },
+      },
+    ],
+    getEntity: async (target: string) => ({
+      className: "Channel",
+      id: target.toLowerCase().includes("beta") ? 2222222222n : 1111111111n,
+      title: target.toLowerCase().includes("beta") ? "Beta" : "Alpha",
+      username: target.toLowerCase().includes("beta") ? "beta" : "alpha",
+    }),
+    getMessages: async () => [],
+    invoke: async (request: unknown) => {
+      const r = request as { className: string } & Record<string, unknown>;
+      sent.push({ className: r.className, params: { ...r } });
+      if (r.className === "messages.GetDialogFilters")
+        return { filters: folders };
+      const peer = String(r.peer);
+      return peer === "beta"
+        ? slice([hit(4, 1_750_000_400, 2222222222n)])
+        : slice([hit(9, 1_750_000_300, 1111111111n)]);
     },
   }));
   return sent;
@@ -367,6 +432,55 @@ describe("fan-out search", () => {
     expect(page.sources.map((s) => s.source_id)).toEqual([A]);
   });
 
+  it("excludes a folder member named by username before searching", async () => {
+    const sent = installAliasedFanout([
+      {
+        className: "DialogFilter",
+        id: 2,
+        title: "AI",
+        includePeers: [
+          { channelId: { value: 1111111111n } },
+          { channelId: { value: 2222222222n } },
+        ],
+        excludePeers: [],
+        pinnedPeers: [],
+      },
+    ]);
+
+    const page = await searchMessages({
+      query: "ai",
+      folder_ids: ["2"],
+      exclude_source_ids: ["@alpha"],
+      limit: 10,
+    });
+
+    const searches = sent.filter(
+      (item) => item.className === "messages.Search",
+    );
+    expect(searches).toHaveLength(1);
+    expect(String(searches[0]!.params.peer)).toBe("beta");
+    expect(page.sources.map((source) => source.source_id)).toEqual([B]);
+  });
+
+  it("searches a source selected by id and username only once", async () => {
+    const sent = installAliasedFanout();
+
+    const page = await searchMessages({
+      query: "ai",
+      source_ids: [A, "@alpha"],
+      limit: 10,
+    });
+
+    expect(
+      sent.filter((item) => item.className === "messages.Search"),
+    ).toHaveLength(1);
+    expect(page.results).toHaveLength(1);
+    expect(page.sources).toEqual([
+      { source_id: A, title: "Alpha", hit_count: 1 },
+    ]);
+    expect(page.total_matches).toBe(4820);
+  });
+
   it("refuses a selection wider than the fan-out ceiling", async () => {
     installFanout({});
     await expect(
@@ -376,6 +490,26 @@ describe("fan-out search", () => {
         limit: 10,
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("counts exclusions toward the pre-resolution name limit", async () => {
+    // The raw guard is what bounds resolutions, and an exclusion costs one
+    // resolution just as a selected source does.
+    const sent = installFanout({});
+    await expect(
+      searchMessages({
+        query: "ai",
+        source_ids: [A],
+        exclude_source_ids: Array.from(
+          { length: MAX_RAW_SOURCE_NAMES_PER_CALL },
+          (_, n) => `-1009${n}`,
+        ),
+        limit: 10,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(sent.filter((item) => item.className === "messages.Search")).toEqual(
+      [],
+    );
   });
 
   it("refuses a folder selection that resolves to no sources", async () => {
@@ -433,9 +567,9 @@ describe("fan-out search", () => {
     const input = { query: "ai", source_ids: [A], limit: 10 };
     const { fingerprint } = prepareSearch(input);
     const cursor = encodeSearchSourcesCursor({ sources: [], fingerprint });
-    await expect(
-      searchMessages({ ...input, cursor }),
-    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(searchMessages({ ...input, cursor })).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
   });
 
   it("rejects a cursor naming more sources than the fan-out ceiling", async () => {
@@ -449,9 +583,9 @@ describe("fan-out search", () => {
       })),
       fingerprint,
     });
-    await expect(
-      searchMessages({ ...input, cursor }),
-    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(searchMessages({ ...input, cursor })).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
   });
 
   it("never returns an oversized complete response", async () => {

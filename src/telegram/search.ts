@@ -10,13 +10,10 @@ import {
   type DialogIndex,
 } from "./dialog-index";
 import { mediaFilter, type MediaType } from "./message-slice";
-import { MAX_SOURCES_PER_CALL, parseDateBound } from "./messages";
+import { parseDateBound } from "./messages";
 import { inputPeerMarkedId } from "./peer-id";
-import {
-  parseTelegramName,
-  resolveSource,
-  type ResolvedSource,
-} from "./peer-resolve";
+import { parseTelegramName } from "./peer-resolve";
+import { assertRawSourceCount, prepareSourceTargets } from "./source-selection";
 import { readMessagesPage } from "./tl-messages";
 import {
   assertSameScope,
@@ -132,7 +129,9 @@ function unixSeconds(iso: string): number {
   return Math.floor(Date.parse(iso) / 1000);
 }
 
-async function searchFilter(mediaType: MediaType | undefined): Promise<unknown> {
+async function searchFilter(
+  mediaType: MediaType | undefined,
+): Promise<unknown> {
   const Api = await getApi();
   return (await mediaFilter(mediaType)) ?? new Api.InputMessagesFilterEmpty();
 }
@@ -151,7 +150,9 @@ function makePage(
   const next_cursor =
     last !== undefined && !exhausted
       ? encodeSearchGlobalCursor({
-          rate: complete ? (nextRate ?? unixSeconds(last.date)) : unixSeconds(last.date),
+          rate: complete
+            ? (nextRate ?? unixSeconds(last.date))
+            : unixSeconds(last.date),
           peer: last.chat_id,
           id: last.id,
           fingerprint,
@@ -233,22 +234,6 @@ async function globalPage(
   );
 }
 
-/** One key per way of naming the same peer, so an exclusion written as
- * @name removes a folder member listed by id once that member resolves. */
-function nameKeys(source: {
-  source_id?: string;
-  username?: string;
-  handle?: string;
-}): string[] {
-  const keys: string[] = [];
-  if (source.source_id) keys.push(`i:${source.source_id}`);
-  if (source.username) keys.push(`u:${source.username.toLowerCase()}`);
-  if (source.handle) {
-    keys.push(nameKey(source.handle));
-  }
-  return keys;
-}
-
 function nameKey(raw: string): string {
   const link = parseTelegramName(raw);
   if (link.kind === "username") return `u:${link.username.toLowerCase()}`;
@@ -257,7 +242,6 @@ function nameKey(raw: string): string {
 }
 
 function targetNames(input: SearchInput, index: DialogIndex): string[] {
-  const excluded = new Set((input.exclude_source_ids ?? []).map(nameKey));
   const seen = new Set<string>();
   const ordered: string[] = [];
 
@@ -266,34 +250,12 @@ function targetNames(input: SearchInput, index: DialogIndex): string[] {
     ...folderMembers(index.folders, input.folder_ids ?? []),
   ]) {
     const key = nameKey(name);
-    if (excluded.has(key) || seen.has(key)) continue;
+    if (seen.has(key)) continue;
     seen.add(key);
     ordered.push(name);
   }
 
   return ordered;
-}
-
-/**
- * Applied to the resolved target count regardless of where it came from — a
- * fresh selection or a client-supplied cursor — so a cursor naming zero or
- * more than MAX_SOURCES_PER_CALL sources cannot bypass either check. Mirrors
- * resolveSourceSet in ./messages.ts, which applies the same two checks after
- * its own cursor branch.
- */
-function assertSourceCountBounds(count: number): void {
-  if (count === 0) {
-    throw new GramScopeError(
-      "INVALID_INPUT",
-      "This selection resolves to no sources. Name at least one source, or pick a folder that has members.",
-    );
-  }
-  if (count > MAX_SOURCES_PER_CALL) {
-    throw new GramScopeError(
-      "INVALID_INPUT",
-      `This selection resolves to ${count} sources; the limit is ${MAX_SOURCES_PER_CALL}. Split the call.`,
-    );
-  }
 }
 
 type Outcome = {
@@ -325,58 +287,37 @@ async function sourcesPage(
   const targets = cursor
     ? cursor.sources
     : targetNames(input, index).map((handle) => ({ handle, offsetId: 0 }));
-  assertSourceCountBounds(targets.length);
+  assertRawSourceCount(
+    targets.length,
+    cursor ? 0 : (input.exclude_source_ids?.length ?? 0),
+  );
 
   // Resolution first, in its own pass: it is free for peers the account holds,
   // and doing it before the searches means an excluded source never costs a
   // request.
-  type Target = {
-    target: (typeof targets)[number];
-    resolved?: ResolvedSource;
-    error?: Outcome;
-  };
-  const prepared: Target[] = await mapWithConcurrency(
+  const canonical = await prepareSourceTargets(
+    client,
+    index,
     targets,
-    FANOUT_CONCURRENCY,
-    async (target) => {
-      try {
-        return {
-          target,
-          resolved: await resolveSource(client, index, target.handle),
-        };
-      } catch (err) {
-        const mapped = mapTelegramError(err);
-        return {
-          target,
-          error: {
-            source_id: target.handle,
-            title: target.handle,
-            handle: target.handle,
-            startOffsetId: target.offsetId,
-            hits: [],
-            fetched: 0,
-            error: { code: mapped.code, message: mapped.message },
-          },
-        };
-      }
-    },
+    cursor ? [] : (input.exclude_source_ids ?? []),
   );
-
-  const excluded = new Set((input.exclude_source_ids ?? []).map(nameKey));
-  const kept = cursor
-    ? prepared
-    : prepared.filter(
-        (item) =>
-          item.resolved === undefined ||
-          !nameKeys(item.resolved).some((key) => excluded.has(key)),
-      );
 
   const filter = await searchFilter(input.media_type);
   const outcomes: Outcome[] = await mapWithConcurrency(
-    kept,
+    canonical,
     FANOUT_CONCURRENCY,
     async (item): Promise<Outcome> => {
-      if (item.error) return item.error;
+      if (item.error) {
+        return {
+          source_id: item.target.handle,
+          title: item.target.handle,
+          handle: item.target.handle,
+          startOffsetId: item.target.offsetId,
+          hits: [],
+          fetched: 0,
+          error: item.error,
+        };
+      }
       const source = item.resolved!;
       const base = {
         source_id: source.source_id,
@@ -452,7 +393,9 @@ async function sourcesPage(
     .map((outcome) => outcome.count)
     .filter((count): count is number => count !== undefined);
   const total_matches =
-    totals.length > 0 ? totals.reduce((sum, count) => sum + count, 0) : undefined;
+    totals.length > 0
+      ? totals.reduce((sum, count) => sum + count, 0)
+      : undefined;
 
   const compose = (units: Unit[]): SearchResult => {
     const servedCount = new Array<number>(outcomes.length).fill(0);
@@ -518,7 +461,9 @@ async function sourcesPage(
   );
 }
 
-export async function searchMessages(input: SearchInput): Promise<SearchResult> {
+export async function searchMessages(
+  input: SearchInput,
+): Promise<SearchResult> {
   const bounds = prepareSearch(input);
   const index = await fetchDialogIndex({
     includeFolders: isFanout(input),

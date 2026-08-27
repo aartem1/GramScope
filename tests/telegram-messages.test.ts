@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   getMessage,
   getMessages,
+  MAX_RAW_SOURCE_NAMES_PER_CALL,
   parseDateBound,
   renderPage,
   resolveSourceSet,
@@ -97,12 +98,20 @@ describe("parseDateBound", () => {
 });
 
 describe("resolveSourceSet", () => {
-  it("unions explicit sources with folder members and subtracts exclusions", () => {
+  it("unions explicit sources with folder members, exclusions untouched", () => {
+    // Subtraction moved past resolution: an exclusion may name its target by
+    // an alias, which only matches once both sides are canonical marked ids.
+    // This pass therefore unions and de-duplicates raw names and nothing else.
     const set = resolveSourceSet(
-      { source_ids: [C], folder_ids: ["2"], exclude_source_ids: [B], limit: 20 },
+      {
+        source_ids: [C],
+        folder_ids: ["2"],
+        exclude_source_ids: [B],
+        limit: 20,
+      },
       index,
     );
-    expect(set.map((s) => s.handle)).toEqual([C, A]);
+    expect(set.map((s) => s.handle)).toEqual([C, A, B]);
     expect(set.every((s) => s.offsetId === 0)).toBe(true);
   });
 
@@ -126,8 +135,12 @@ describe("resolveSourceSet", () => {
     expect((error as GramScopeError).code).toBe("INVALID_INPUT");
   });
 
-  it("rejects more than 25 sources by name, never by truncation", () => {
-    const many = Array.from({ length: 26 }, (_, i) => `-100${i}`);
+  it("rejects a raw name list past the pre-resolution limit", () => {
+    // The 25-source ceiling now counts canonical sources and so cannot be
+    // applied before resolution. This looser guard is what still bounds how
+    // many entity resolutions one call can buy.
+    const over = MAX_RAW_SOURCE_NAMES_PER_CALL + 1;
+    const many = Array.from({ length: over }, (_, i) => `-100${i}`);
     const error = (() => {
       try {
         resolveSourceSet({ source_ids: many, limit: 20 }, index);
@@ -137,7 +150,7 @@ describe("resolveSourceSet", () => {
       return undefined;
     })();
     expect((error as GramScopeError).code).toBe("INVALID_INPUT");
-    expect((error as GramScopeError).message).toContain("26");
+    expect((error as GramScopeError).message).toContain(String(over));
   });
 
   it("takes its source set from the cursor and ignores source_ids", () => {
@@ -154,15 +167,18 @@ describe("resolveSourceSet", () => {
     expect(set).toEqual([{ handle: B, offsetId: 77 }]);
   });
 
-  it("rejects a cursor carrying 26 sources with count and split guidance", () => {
-    // Catches returning decoded cursor sources before the effective-set cap.
+  it("applies the pre-resolution limit to a cursor too", () => {
+    // Catches returning decoded cursor sources without any bound at all: a
+    // cursor is client-supplied and must not buy more resolutions than a
+    // fresh selection can.
+    const over = MAX_RAW_SOURCE_NAMES_PER_CALL + 1;
     const error = (() => {
       try {
         resolveSourceSet(
           {
             limit: 20,
             cursor: encodeMessageCursor({
-              sources: Array.from({ length: 26 }, (_, i) => ({
+              sources: Array.from({ length: over }, (_, i) => ({
                 handle: `-100${i}`,
                 offsetId: i,
               })),
@@ -177,7 +193,7 @@ describe("resolveSourceSet", () => {
     })();
 
     expect((error as GramScopeError).code).toBe("INVALID_INPUT");
-    expect((error as GramScopeError).message).toContain("26");
+    expect((error as GramScopeError).message).toContain(String(over));
     expect((error as GramScopeError).message.toLowerCase()).toContain("split");
   });
 
@@ -372,7 +388,11 @@ describe("getMessages", () => {
     },
   ];
 
-  function factory(byPeer: Record<string, unknown[]>, fail?: string) {
+  function factory(
+    byPeer: Record<string, unknown[]>,
+    fail?: string,
+    reads: string[] = [],
+  ) {
     return async () => ({
       connected: true,
       connect: async () => true,
@@ -392,6 +412,7 @@ describe("getMessages", () => {
       getDialogs: async () => dialogs,
       getEntity: async () => ({}),
       getMessages: async (entity: string, params: Record<string, unknown>) => {
+        reads.push(entity);
         if (entity === fail) throw new Error("CHANNEL_PRIVATE_STUB");
         const limit = typeof params.limit === "number" ? params.limit : 0;
         return (byPeer[entity] ?? []).slice(0, limit);
@@ -424,11 +445,138 @@ describe("getMessages", () => {
     expect(page.sources[0]!.messages![0]!.url).toBe("https://t.me/alpha/10");
   });
 
+  it("excludes a folder member named by its t.me alias", async () => {
+    const reads: string[] = [];
+    __setClientFactoryForTests(factory({ [B]: [post(5)] }, undefined, reads));
+
+    const page = await getMessages({
+      folder_ids: ["2"],
+      exclude_source_ids: ["https://t.me/alpha"],
+      limit: 20,
+    });
+
+    expect(reads).toEqual([B]);
+    expect(page.sources.map((source) => source.source_id)).toEqual([B]);
+  });
+
+  it("reads a source selected by id and username only once", async () => {
+    const reads: string[] = [];
+    __setClientFactoryForTests(
+      factory({ [ALPHA_HANDLE]: [post(10)] }, undefined, reads),
+    );
+
+    const page = await getMessages({
+      source_ids: [A, "@alpha"],
+      limit: 20,
+    });
+
+    expect(reads).toEqual([ALPHA_HANDLE]);
+    expect(page.sources).toHaveLength(1);
+    expect(page.sources[0]!.messages).toHaveLength(1);
+  });
+
+  /**
+   * Distinct names must resolve to distinct peers, or canonicalisation by
+   * source_id would collapse an over-wide selection into one source and the
+   * ceiling would pass vacuously.
+   */
+  function distinctPeers(reads: string[] = []) {
+    return async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => dialogs,
+      getEntity: async (target: string) => ({
+        className: "Channel",
+        id: { value: BigInt(/^-100(\d+)$/.exec(target)![1]!) },
+      }),
+      getMessages: async (entity: string) => {
+        reads.push(entity);
+        return [];
+      },
+    });
+  }
+
+  it("rejects 26 canonical sources with count and split guidance", async () => {
+    const reads: string[] = [];
+    __setClientFactoryForTests(distinctPeers(reads));
+
+    const error = await getMessages({
+      source_ids: Array.from({ length: 26 }, (_, i) => `-100${i}`),
+      limit: 20,
+    }).then(
+      () => undefined,
+      (e) => e as GramScopeError,
+    );
+
+    expect(error?.code).toBe("INVALID_INPUT");
+    expect(error?.message).toContain("26");
+    expect(error?.message.toLowerCase()).toContain("split");
+    // The ceiling must stop the call before it costs any reads.
+    expect(reads).toEqual([]);
+  });
+
+  it("rejects a cursor carrying 26 canonical sources", async () => {
+    __setClientFactoryForTests(distinctPeers());
+
+    const error = await getMessages({
+      limit: 20,
+      cursor: encodeMessageCursor({
+        sources: Array.from({ length: 26 }, (_, i) => ({
+          handle: `-100${i}`,
+          offsetId: i,
+        })),
+      }),
+    }).then(
+      () => undefined,
+      (e) => e as GramScopeError,
+    );
+
+    expect(error?.code).toBe("INVALID_INPUT");
+    expect(error?.message).toContain("26");
+  });
+
+  it("accepts 26 names that canonicalise to 25 sources", async () => {
+    const reads: string[] = [];
+    __setClientFactoryForTests(distinctPeers(reads));
+
+    // The 26th name is an alias of the first: a t.me/c link carries the same
+    // peer, so raw de-duplication cannot see it and only canonicalisation can.
+    const names = Array.from({ length: 25 }, (_, i) => `-100${i}`);
+    const page = await getMessages({
+      source_ids: [...names, "https://t.me/c/0"],
+      limit: 20,
+    });
+
+    expect(page.sources).toHaveLength(25);
+    expect(reads).toHaveLength(25);
+  });
+
+  it("subtracts an exclusion named by marked id", async () => {
+    const reads: string[] = [];
+    __setClientFactoryForTests(
+      factory({ [ALPHA_HANDLE]: [post(10)] }, undefined, reads),
+    );
+
+    const page = await getMessages({
+      folder_ids: ["2"],
+      exclude_source_ids: [B],
+      limit: 20,
+    });
+
+    expect(reads).toEqual([ALPHA_HANDLE]);
+    expect(page.sources.map((source) => source.source_id)).toEqual([A]);
+  });
+
   it("applies the read pointer when unread_only is set", async () => {
     __setClientFactoryForTests(
       factory({ [ALPHA_HANDLE]: [post(10), post(9), post(8), post(7)] }),
     );
-    const page = await getMessages({ source_ids: [A], unread_only: true, limit: 20 });
+    const page = await getMessages({
+      source_ids: [A],
+      unread_only: true,
+      limit: 20,
+    });
     expect(page.sources[0]!.messages!.map((m) => m.id)).toEqual([10, 9]);
   });
 
@@ -501,7 +649,9 @@ describe("getMessage", () => {
   }
 
   it("returns the target with the source title at the top level", async () => {
-    __setClientFactoryForTests(factory((params) => (params.ids ? [post(50)] : [])));
+    __setClientFactoryForTests(
+      factory((params) => (params.ids ? [post(50)] : [])),
+    );
     const result = await getMessage({ source_id: A, message_id: 50 });
     expect(result.source_title).toBe("Alpha");
     expect(result.message.id).toBe(50);

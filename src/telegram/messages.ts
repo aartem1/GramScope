@@ -6,6 +6,12 @@ import {
 } from "./dialog-index";
 import { fetchSlice, type MediaType, type Slice } from "./message-slice";
 import { resolveSource } from "./peer-resolve";
+import {
+  assertRawSourceCount,
+  MAX_RAW_SOURCE_NAMES_PER_CALL,
+  MAX_SOURCES_PER_CALL,
+  prepareSourceTargets,
+} from "./source-selection";
 import { FANOUT_CONCURRENCY, mapWithConcurrency } from "../concurrency";
 import { decodeMessageCursor, encodeMessageCursor } from "../pagination";
 import { fitToSizeCap, MAX_RESPONSE_BYTES } from "../schemas/size";
@@ -18,10 +24,11 @@ import {
 } from "../schemas/message";
 
 /**
- * Spec §5.1. A fan-out wider than this stops being one tool call and starts
- * being a job: 25 sources at limit 100 already fetches 2500 messages.
+ * Re-exported from ./source-selection, which now owns both ceilings because
+ * the effective one is counted after resolution. Kept here so callers and
+ * tests that have always imported it from this module keep working.
  */
-export const MAX_SOURCES_PER_CALL = 25;
+export { MAX_RAW_SOURCE_NAMES_PER_CALL, MAX_SOURCES_PER_CALL };
 
 export type GetMessagesInput = {
   source_ids?: string[];
@@ -75,7 +82,6 @@ export function resolveSourceSet(
   if (input.cursor) {
     resolved = decodeMessageCursor(input.cursor).sources;
   } else {
-    const excluded = new Set(input.exclude_source_ids ?? []);
     const seen = new Set<string>();
     const ordered: string[] = [];
 
@@ -83,26 +89,23 @@ export function resolveSourceSet(
       ...(input.source_ids ?? []),
       ...folderMembers(index.folders, input.folder_ids ?? []),
     ]) {
-      if (excluded.has(id) || seen.has(id)) continue;
+      if (seen.has(id)) continue;
       seen.add(id);
       ordered.push(id);
     }
     resolved = ordered.map((handle) => ({ handle, offsetId: 0 }));
   }
 
+  const excludedCount = input.cursor
+    ? 0
+    : (input.exclude_source_ids?.length ?? 0);
+  assertRawSourceCount(resolved.length, excludedCount);
   if (resolved.length === 0) {
     throw new GramScopeError(
       "INVALID_INPUT",
       "Name at least one source: pass source_ids, folder_ids, or a cursor from a previous page.",
     );
   }
-  if (resolved.length > MAX_SOURCES_PER_CALL) {
-    throw new GramScopeError(
-      "INVALID_INPUT",
-      `This selection resolves to ${resolved.length} sources; the limit is ${MAX_SOURCES_PER_CALL}. Split the call.`,
-    );
-  }
-
   return resolved;
 }
 
@@ -262,22 +265,25 @@ export async function getMessages(
   const index = await fetchDialogIndex();
   const targets = resolveSourceSet(input, index);
 
-  const fetched = await withTelegram(async (client) =>
-    mapWithConcurrency(targets, FANOUT_CONCURRENCY, async (target) => {
-      let source;
-      try {
-        source = await resolveSource(client, index, target.handle);
-      } catch (err) {
-        // An unresolvable name is this source's failure, not the page's.
-        const mapped = mapTelegramError(err);
+  const fetched = await withTelegram(async (client) => {
+    const prepared = await prepareSourceTargets(
+      client,
+      index,
+      targets,
+      input.cursor ? [] : (input.exclude_source_ids ?? []),
+    );
+    return mapWithConcurrency(prepared, FANOUT_CONCURRENCY, async (item) => {
+      const target = item.target;
+      if (item.error) {
         return {
           source_id: target.handle,
           title: target.handle,
           handle: target.handle,
           startOffsetId: target.offsetId,
-          error: { code: mapped.code, message: mapped.message },
+          error: item.error,
         } satisfies Fetched;
       }
+      const source = item.resolved!;
 
       const entry = index.byId.get(source.source_id);
       try {
@@ -317,8 +323,8 @@ export async function getMessages(
           error: { code: mapped.code, message: mapped.message },
         } satisfies Fetched;
       }
-    }),
-  );
+    });
+  });
 
   return renderPage(fetched);
 }
@@ -372,7 +378,8 @@ export async function getMessage(
     const found = await client.getMessages(source.handle, {
       ids: [input.message_id],
     });
-    const target = (found[0] ?? undefined) as Record<string, unknown> | undefined;
+    const target = (found[0] ?? undefined) as
+      Record<string, unknown> | undefined;
     if (
       !target ||
       typeof target.id !== "number" ||
