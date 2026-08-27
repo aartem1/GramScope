@@ -1357,7 +1357,7 @@ export type TelegramLike = {
 };
 ```
 
-Every existing fake client in `tests/` must gain a `getMessages` stub, or typecheck fails. Add `getMessages: async () => []` to the fakes in `tests/telegram-dialogs.test.ts` and `tests/telegram-client.test.ts` wherever a full `TelegramLike` is constructed.
+Every existing fake client must gain a `getMessages` stub or typecheck fails: the object literals passed to `__setClientFactoryForTests(async () => ({ ... }))` are contextually typed as `TelegramLike`, so a missing required member is an error. Two files construct them — `tests/telegram-dialogs.test.ts` (several inline literals) and `tests/telegram-client.test.ts` (one `fakeClient` helper). Run `grep -rn "__setClientFactoryForTests(async" tests/` and add `getMessages: async () => []` to every literal it finds; `npm run typecheck` is the check that none were missed.
 
 - [ ] **Step 2: Write the failing test**
 
@@ -3194,7 +3194,7 @@ describe("countOf", () => {
       }),
       (line) => lines.push(line),
     );
-    expect(lines.join("")).toContain('"count":3');
+    expect(lines.join(" ")).toContain("count=3");
   });
 
   it("falls back to the array length for a flat response", async () => {
@@ -3204,12 +3204,10 @@ describe("countOf", () => {
       async () => ({ folders: [{}, {}] }),
       (line) => lines.push(line),
     );
-    expect(lines.join("")).toContain('"count":2');
+    expect(lines.join(" ")).toContain("count=2");
   });
 });
 ```
-
-Check `src/mcp/logging.ts` for the exact log line format before asserting on `"count":3`; match whatever `logToolCall` actually emits.
 
 - [ ] **Step 2: Run test to verify it fails**
 
