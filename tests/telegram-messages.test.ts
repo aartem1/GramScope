@@ -530,6 +530,15 @@ describe("getMessage", () => {
     ).rejects.toMatchObject({ code: "MESSAGE_NOT_FOUND" });
   });
 
+  it("reports MessageEmpty as MESSAGE_NOT_FOUND", async () => {
+    __setClientFactoryForTests(
+      factory(() => [{ className: "MessageEmpty", id: 999 }]),
+    );
+    await expect(
+      getMessage({ source_id: A, message_id: 999 }),
+    ).rejects.toMatchObject({ code: "MESSAGE_NOT_FOUND" });
+  });
+
   it("rejects context bounds outside 0..20", async () => {
     __setClientFactoryForTests(factory(() => []));
     await expect(

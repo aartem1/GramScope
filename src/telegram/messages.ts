@@ -349,7 +349,11 @@ export async function getMessage(
       ids: [input.message_id],
     });
     const target = (found[0] ?? undefined) as Record<string, unknown> | undefined;
-    if (!target || typeof target.id !== "number") {
+    if (
+      !target ||
+      typeof target.id !== "number" ||
+      target.className === "MessageEmpty"
+    ) {
       throw new GramScopeError(
         "MESSAGE_NOT_FOUND",
         `No message ${input.message_id} in ${input.source_id}`,
