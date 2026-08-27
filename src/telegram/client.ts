@@ -9,9 +9,10 @@ export type TelegramLike = {
    * Returns teleproto's TotalList — an Array subclass carrying a `total`
    * property — not a plain array. filter, map and slice preserve the subclass
    * through Symbol.species, so normalize with Array.from before the value
-   * reaches a domain result. JSON.stringify drops `total` and the unit fakes
-   * all return plain arrays, so a leak here is invisible to the fast tier and
-   * to the wire response; only a structural comparison catches it.
+   * reaches a domain result. JSON.stringify drops `total`, so a leak is
+   * invisible on the wire and to any fake that returns a plain array — which
+   * most of them do. Only a structural comparison catches it; see the
+   * TotalList regressions in tests/telegram-{dialogs,messages}.test.ts.
    */
   getDialogs(params: Record<string, unknown>): Promise<unknown[]>;
   getEntity(entity: string): Promise<Record<string, unknown>>;
