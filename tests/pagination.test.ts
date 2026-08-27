@@ -140,3 +140,56 @@ describe("message cursors", () => {
     expect(() => decodeMessageCursor(forged)).toThrowError(GramScopeError);
   });
 });
+
+// A connector hands the cursor to a language model, which passes it back as a
+// plain string argument. Whitespace is the one mangling that is recoverable,
+// and it costs nothing to absorb; anything else must still be rejected.
+describe("cursor transport robustness", () => {
+  it("decodes a cursor that came back with surrounding or internal whitespace", () => {
+    const issued = encodeMessageCursor({
+      sources: [
+        { sourceId: "-1006666666666", offsetId: 9758 },
+        { sourceId: "-1007777777777", offsetId: 2248 },
+      ],
+    });
+
+    for (const mangled of [
+      `  ${issued}  `,
+      `\n${issued}\n`,
+      `${issued.slice(0, 40)}\n${issued.slice(40)}`,
+      `${issued.slice(0, 40)} ${issued.slice(40)}`,
+    ]) {
+      const decoded = decodeMessageCursor(mangled);
+      expect(decoded.sources).toEqual([
+        { sourceId: "-1006666666666", offsetId: 9758 },
+        { sourceId: "-1007777777777", offsetId: 2248 },
+      ]);
+    }
+  });
+
+  it("still rejects a cursor whose characters were actually altered", () => {
+    const issued = encodeMessageCursor({
+      sources: [{ sourceId: "-1006666666666", offsetId: 9758 }],
+    });
+    // Drop a character, which is what a model retyping the token does.
+    const truncated = issued.slice(0, issued.length - 6);
+    let error: unknown;
+    try {
+      decodeMessageCursor(truncated);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(GramScopeError);
+    expect((error as GramScopeError).code).toBe("INVALID_CURSOR");
+  });
+
+  it("tells the caller the cursor is opaque and must be echoed verbatim", () => {
+    let error: unknown;
+    try {
+      decodeMessageCursor("not-a-cursor!!!");
+    } catch (caught) {
+      error = caught;
+    }
+    expect((error as GramScopeError).message).toMatch(/exactly as/i);
+  });
+});

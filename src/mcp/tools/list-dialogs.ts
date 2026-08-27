@@ -16,7 +16,12 @@ export function registerListDialogs(server: McpServer): void {
         unread_only: z.boolean().optional(),
         type: z.enum(["channel", "group", "chat"]).optional(),
         limit: z.number().int().min(1).max(200).default(50),
-        cursor: z.string().optional(),
+        cursor: z
+          .string()
+          .describe(
+            "Opaque continuation token from a previous response's next_cursor. Copy it back exactly as received, character for character; it is not human-readable and must not be shortened, re-typed or reconstructed.",
+          )
+          .optional(),
       }),
       outputSchema: z.object({
         sources: z.array(telegramSourceSchema),

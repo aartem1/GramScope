@@ -50,7 +50,12 @@ export function registerGetMessages(server: McpServer): void {
           .describe("Return only messages above each source's read pointer."),
         media_type: z.enum(MEDIA_TYPES).optional(),
         limit: z.number().int().min(1).max(100).default(20),
-        cursor: z.string().optional(),
+        cursor: z
+          .string()
+          .describe(
+            "Opaque continuation token from a previous response's next_cursor. Copy it back exactly as received, character for character; it is not human-readable and must not be shortened, re-typed or reconstructed.",
+          )
+          .optional(),
       }),
       outputSchema: z.object({
         sources: z.array(sourceBlockSchema),

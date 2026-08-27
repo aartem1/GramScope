@@ -35,7 +35,10 @@ function decodePayload<S extends z.ZodType>(
   try {
     parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
   } catch {
-    throw new GramScopeError("INVALID_CURSOR", "Cursor is not decodable");
+    throw new GramScopeError(
+      "INVALID_CURSOR",
+      "Cursor is not decodable. next_cursor is an opaque token: pass it back exactly as it was returned, character for character. Do not shorten, re-type or reconstruct it.",
+    );
   }
 
   const envelope = envelopeSchema.safeParse(parsed);
