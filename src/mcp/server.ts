@@ -2,6 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { registerGetChannel } from "./tools/get-channel";
 import { registerGetMessage } from "./tools/get-message";
 import { registerGetMessages } from "./tools/get-messages";
+import { registerGetPinnedMessages } from "./tools/get-pinned-messages";
 import { registerGetThread } from "./tools/get-thread";
 import { registerGetUnreadSummary } from "./tools/get-unread-summary";
 import { registerListDialogs } from "./tools/list-dialogs";
@@ -21,4 +22,5 @@ export function registerTools(server: McpServer): void {
   registerMarkRead(server);
   registerSearchMessages(server);
   registerResolveTelegramUrl(server);
+  registerGetPinnedMessages(server);
 }

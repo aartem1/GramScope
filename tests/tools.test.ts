@@ -46,6 +46,7 @@ describe("registerTools", () => {
     "get_channel",
     "get_message",
     "get_messages",
+    "get_pinned_messages",
     "get_thread",
     "get_unread_summary",
     "list_dialogs",
@@ -54,7 +55,7 @@ describe("registerTools", () => {
     "search_messages",
   ];
 
-  it("registers all ten tools", () => {
+  it("registers all eleven tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(
