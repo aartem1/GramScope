@@ -192,12 +192,20 @@ describe("folder membership reaches a channel dialog", () => {
   // preserve the subclass through Symbol.species, so it rides all the way out
   // to `sources`.
   it("returns plain arrays, not the TL library's Array subclass", async () => {
+    // Mirrors teleproto's real class (Helpers.js:448), which sets total in
+    // its constructor. That matters: a subclass that only sets `total` on the
+    // seed instance leaves species-derived arrays with `total: undefined`,
+    // which toEqual ignores — so the deep-equality assertion below would pass
+    // even with the fix reverted.
     class TotalList<T> extends Array<T> {
-      total?: number;
+      total: number;
+      constructor() {
+        super();
+        this.total = 0;
+      }
     }
     const list = new TotalList<unknown>();
     list.push({ ...channelDialog, date: 100, message: { id: 7 } });
-    list.total = 999;
 
     __setClientFactoryForTests(async () => ({
       connected: true,

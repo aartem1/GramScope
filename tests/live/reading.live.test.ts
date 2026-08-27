@@ -146,13 +146,29 @@ suite("Reading against the real account", () => {
     }
   });
 
-  it("summarizes unread state by source and by folder", async () => {
+  it("summarizes unread state by source and by folder", async (ctx) => {
     const bySource = await getUnreadSummary({});
     const byFolder = await getUnreadSummary({ group_by: "folder" });
-    expect(bySource.total_unread).toBeGreaterThanOrEqual(0);
+
+    // total_unread is a sum of positive counts, so >= 0 is a tautology and
+    // would let this whole test pass having asserted nothing. Guard on the
+    // list the loop below actually iterates.
+    expect(
+      bySource.groups.length,
+      "the account has nothing unread; read something in before running the live suite",
+    ).toBeGreaterThan(0);
+    expect(bySource.total_unread).toBeGreaterThan(0);
     for (const group of bySource.groups) {
       expect(group.source_id).toBeTruthy();
       expect(group.unread_count).toBeGreaterThan(0);
+    }
+
+    // Unread sources can legitimately all sit outside every folder, which
+    // leaves nothing for the folder loop to check. Skip visibly rather than
+    // pass with zero assertions.
+    if (byFolder.groups.length === 0) {
+      ctx.skip();
+      return;
     }
     for (const group of byFolder.groups) {
       expect(group.folder_id).toBeTruthy();

@@ -517,13 +517,21 @@ describe("getMessage", () => {
   // arrays, which the live suite caught as a deep-equality failure against
   // values that looked identical.
   it("returns plain arrays, not the TL library's Array subclass", async () => {
+    // Mirrors teleproto's real class (Helpers.js:448), which sets total in
+    // its constructor. That matters: a subclass that only sets `total` on the
+    // seed instance leaves species-derived arrays with `total: undefined`,
+    // which toEqual ignores — so the deep-equality assertion below would pass
+    // even with the fix reverted.
     class TotalList<T> extends Array<T> {
-      total?: number;
+      total: number;
+      constructor() {
+        super();
+        this.total = 0;
+      }
     }
     const totalList = (items: unknown[]) => {
       const list = new TotalList<unknown>();
       list.push(...items);
-      list.total = 999;
       return list;
     };
 
