@@ -82,4 +82,24 @@ describe("runTool logging", () => {
       }, sink),
     ).resolves.toMatchObject({ isError: true });
   });
+
+  it("counts a flat search page by its hits, not by its sources", async () => {
+    const lines: string[] = [];
+    await runTool(
+      "search_messages",
+      async () => ({
+        results: [
+          { id: 1, chat_id: "-100111", date: "x", source_title: "Alpha" },
+          { id: 2, chat_id: "-100222", date: "x", source_title: "Beta" },
+          { id: 3, chat_id: "-100222", date: "x", source_title: "Beta" },
+        ],
+        sources: [
+          { source_id: "-100111", title: "Alpha", hit_count: 1 },
+          { source_id: "-100222", title: "Beta", hit_count: 2 },
+        ],
+      }),
+      (line) => lines.push(line),
+    );
+    expect(lines[0]).toContain("count=3");
+  });
 });

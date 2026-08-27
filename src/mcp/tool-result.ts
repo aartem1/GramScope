@@ -48,7 +48,10 @@ function messageCount(items: unknown[]): number | undefined {
  */
 function countOf(data: unknown): number | undefined {
   if (typeof data !== "object" || data === null) return undefined;
-  for (const key of ["sources", "folders", "groups", "results"]) {
+  // `results` first: a flat search page carries BOTH a results list and a
+  // sources roll-up, and what the call returned is the hits, not the number
+  // of sources they came from.
+  for (const key of ["results", "sources", "folders", "groups"]) {
     const value = (data as Record<string, unknown>)[key];
     if (!Array.isArray(value)) continue;
     return messageCount(value) ?? value.length;
