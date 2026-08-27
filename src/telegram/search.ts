@@ -266,19 +266,29 @@ function targetNames(input: SearchInput, index: DialogIndex): string[] {
     ordered.push(name);
   }
 
-  if (ordered.length === 0) {
+  return ordered;
+}
+
+/**
+ * Applied to the resolved target count regardless of where it came from — a
+ * fresh selection or a client-supplied cursor — so a cursor naming zero or
+ * more than MAX_SOURCES_PER_CALL sources cannot bypass either check. Mirrors
+ * resolveSourceSet in ./messages.ts, which applies the same two checks after
+ * its own cursor branch.
+ */
+function assertSourceCountBounds(count: number): void {
+  if (count === 0) {
     throw new GramScopeError(
       "INVALID_INPUT",
       "This selection resolves to no sources. Name at least one source, or pick a folder that has members.",
     );
   }
-  if (ordered.length > MAX_SOURCES_PER_CALL) {
+  if (count > MAX_SOURCES_PER_CALL) {
     throw new GramScopeError(
       "INVALID_INPUT",
-      `This selection resolves to ${ordered.length} sources; the limit is ${MAX_SOURCES_PER_CALL}. Split the call.`,
+      `This selection resolves to ${count} sources; the limit is ${MAX_SOURCES_PER_CALL}. Split the call.`,
     );
   }
-  return ordered;
 }
 
 type Outcome = {
@@ -310,6 +320,7 @@ async function sourcesPage(
   const targets = cursor
     ? cursor.sources
     : targetNames(input, index).map((handle) => ({ handle, offsetId: 0 }));
+  assertSourceCountBounds(targets.length);
 
   // Resolution first, in its own pass: it is free for peers the account holds,
   // and doing it before the searches means an excluded source never costs a

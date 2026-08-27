@@ -8,6 +8,7 @@ import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
 import {
   decodeSearchGlobalCursor,
   decodeSearchSourcesCursor,
+  encodeSearchSourcesCursor,
 } from "@/pagination";
 import { GramScopeError } from "@/errors/taxonomy";
 
@@ -390,6 +391,66 @@ describe("fan-out search", () => {
     ]);
     await expect(
       searchMessages({ query: "ai", folder_ids: ["9"], limit: 10 }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("feeds a returned cursor back and resumes only the surviving source", async () => {
+    const sent = installFanout({
+      // Alpha filled its page and only one of its two hits fits the merged
+      // limit, so it resumes below the one that was served.
+      [A]: slice([
+        hit(9, 1_750_000_300, 1111111111n),
+        hit(8, 1_750_000_200, 1111111111n),
+      ]),
+      // Beta came back short and its only hit was served: exhausted.
+      [B]: slice([hit(4, 1_750_000_400, 2222222222n)]),
+    });
+    const first = await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      limit: 2,
+    });
+    expect(first.next_cursor).toBeDefined();
+
+    sent.length = 0;
+    await searchMessages({
+      query: "ai",
+      source_ids: [A, B],
+      limit: 2,
+      cursor: first.next_cursor!,
+    });
+
+    const searches = sent.filter((s) => s.className === "messages.Search");
+    // Beta was exhausted on page one and dropped from the cursor: it must not
+    // be requested again.
+    expect(searches).toHaveLength(1);
+    expect(searches[0]!.params.peer).toBe(A);
+    expect(searches[0]!.params.offsetId).toBe(9);
+  });
+
+  it("rejects a cursor naming zero sources", async () => {
+    installFanout({});
+    const input = { query: "ai", source_ids: [A], limit: 10 };
+    const { fingerprint } = prepareSearch(input);
+    const cursor = encodeSearchSourcesCursor({ sources: [], fingerprint });
+    await expect(
+      searchMessages({ ...input, cursor }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("rejects a cursor naming more sources than the fan-out ceiling", async () => {
+    installFanout({});
+    const input = { query: "ai", source_ids: [A], limit: 10 };
+    const { fingerprint } = prepareSearch(input);
+    const cursor = encodeSearchSourcesCursor({
+      sources: Array.from({ length: 26 }, (_, n) => ({
+        handle: `-100${n}`,
+        offsetId: 0,
+      })),
+      fingerprint,
+    });
+    await expect(
+      searchMessages({ ...input, cursor }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
