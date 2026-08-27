@@ -3080,6 +3080,673 @@ git add src/telegram/resolve.ts src/telegram/dialogs.ts src/mcp/tools/resolve-te
 git commit -m "feat: expose resolve_telegram_url for links, usernames and invites"
 ```
 
+### Task 9: `get_pinned_messages`
+
+Spec §6.4. One source, `messages.search` with `InputMessagesFilterPinned` and an
+empty query, newest first. A source with nothing pinned returns an empty list.
+
+**Files:**
+- Create: `src/telegram/pinned.ts`
+- Create: `src/mcp/tools/get-pinned-messages.ts`
+- Modify: `src/mcp/server.ts`
+- Test: `tests/telegram-pinned.test.ts`
+- Modify: `tests/mcp-handler.test.ts` (eleven tools, and the mutating-tool test)
+
+**Interfaces:**
+- Consumes: `resolveSource` (Task 1); `readMessagesPage` (Task 3); `encodePinnedCursor` / `decodePinnedCursor` / `scopeFingerprint` / `assertSameScope` (Task 2); `fitToSizeCap`; `mapMessage`.
+- Produces:
+  - `type GetPinnedInput = { source_id: string; limit: number; cursor?: string }`
+  - `type GetPinnedResult = { source_id: string; source_title: string; messages: TelegramMessage[]; next_cursor?: string }`
+  - `function getPinnedMessages(input: GetPinnedInput): Promise<GetPinnedResult>`
+  - `function registerGetPinnedMessages(server: McpServer): void`
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/telegram-pinned.test.ts
+import { afterEach, describe, expect, it } from "vitest";
+import { getPinnedMessages } from "@/telegram/pinned";
+import {
+  __resetClientForTests,
+  __setClientFactoryForTests,
+} from "@/telegram/client";
+import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
+import { decodePinnedCursor } from "@/pagination";
+
+const A = "-1001111111111";
+
+function install(reply: unknown) {
+  const sent: Array<Record<string, unknown>> = [];
+  __setClientFactoryForTests(async () => ({
+    connected: true,
+    connect: async () => true,
+    getDialogs: async () => [
+      {
+        id: A,
+        title: "Alpha",
+        entity: { className: "Channel", id: 1111111111n, title: "Alpha" },
+        dialog: { readInboxMaxId: 700 },
+        unreadCount: 0,
+        date: 1,
+        message: { id: 900 },
+      },
+    ],
+    getEntity: async () => ({ className: "Channel", id: 1111111111n }),
+    getMessages: async () => [],
+    invoke: async (request: unknown) => {
+      sent.push({ ...(request as Record<string, unknown>) });
+      return reply;
+    },
+  }));
+  return sent;
+}
+
+afterEach(() => {
+  __setClientFactoryForTests(undefined);
+  __resetClientForTests();
+  __resetPeerCacheForTests();
+});
+
+describe("getPinnedMessages", () => {
+  it("asks Telegram for pinned messages only", async () => {
+    const sent = install({
+      className: "messages.MessagesSlice",
+      count: 2,
+      messages: [
+        { className: "Message", id: 800, date: 1_750_000_100, message: "pinned" },
+      ],
+      chats: [],
+      users: [],
+    });
+    const page = await getPinnedMessages({ source_id: A, limit: 20 });
+
+    expect(sent[0]!.className).toBe("messages.Search");
+    expect(sent[0]!.q).toBe("");
+    expect(
+      (sent[0]!.filter as { className: string }).className,
+    ).toBe("InputMessagesFilterPinned");
+    expect(page.source_id).toBe(A);
+    expect(page.source_title).toBe("Alpha");
+    expect(page.messages.map((m) => m.id)).toEqual([800]);
+    expect(page.messages[0]!.is_read).toBe(false);
+    expect(page.next_cursor).toBeUndefined();
+  });
+
+  it("returns an empty list when nothing is pinned", async () => {
+    install({ className: "messages.Messages", messages: [], chats: [], users: [] });
+    const page = await getPinnedMessages({ source_id: A, limit: 20 });
+    expect(page.messages).toEqual([]);
+    expect(page.next_cursor).toBeUndefined();
+  });
+
+  it("cursors below the oldest pinned message when the page filled up", async () => {
+    install({
+      className: "messages.MessagesSlice",
+      count: 9,
+      messages: [
+        { className: "Message", id: 800, date: 1_750_000_200 },
+        { className: "Message", id: 700, date: 1_750_000_100 },
+      ],
+      chats: [],
+      users: [],
+    });
+    const page = await getPinnedMessages({ source_id: A, limit: 2 });
+    expect(decodePinnedCursor(page.next_cursor!).offsetId).toBe(700);
+  });
+
+  it("rejects a cursor issued for another source", async () => {
+    install({
+      className: "messages.MessagesSlice",
+      count: 9,
+      messages: [
+        { className: "Message", id: 800, date: 1_750_000_200 },
+        { className: "Message", id: 700, date: 1_750_000_100 },
+      ],
+      chats: [],
+      users: [],
+    });
+    const page = await getPinnedMessages({ source_id: A, limit: 2 });
+    await expect(
+      getPinnedMessages({
+        source_id: "-1009999999999",
+        limit: 2,
+        cursor: page.next_cursor!,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_CURSOR" });
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run tests/telegram-pinned.test.ts`
+Expected: FAIL — `Failed to resolve import "@/telegram/pinned"`.
+
+- [ ] **Step 3: Write the engine**
+
+```ts
+// src/telegram/pinned.ts
+import { getApi, withTelegram } from "./client";
+import { fetchDialogIndex } from "./dialog-index";
+import { resolveSource } from "./peer-resolve";
+import { readMessagesPage } from "./tl-messages";
+import {
+  assertSameScope,
+  decodePinnedCursor,
+  encodePinnedCursor,
+  scopeFingerprint,
+} from "../pagination";
+import { fitToSizeCap } from "../schemas/size";
+import {
+  mapMessage,
+  type MessageContext,
+  type TelegramMessage,
+} from "../schemas/message";
+
+export type GetPinnedInput = {
+  source_id: string;
+  limit: number;
+  cursor?: string;
+};
+
+export type GetPinnedResult = {
+  source_id: string;
+  source_title: string;
+  messages: TelegramMessage[];
+  next_cursor?: string;
+};
+
+export async function getPinnedMessages(
+  input: GetPinnedInput,
+): Promise<GetPinnedResult> {
+  const index = await fetchDialogIndex();
+
+  return withTelegram(async (client) => {
+    const source = await resolveSource(client, index, input.source_id);
+    const fingerprint = scopeFingerprint({ source: source.source_id });
+    const cursor = input.cursor ? decodePinnedCursor(input.cursor) : undefined;
+    if (cursor) assertSameScope(cursor.fingerprint, fingerprint);
+
+    const Api = await getApi();
+    // messages.getHistory cannot filter, so the pinned tab is a search with an
+    // empty query — the same primitive the Telegram app uses.
+    const page = readMessagesPage(
+      await client.invoke(
+        new Api.messages.Search({
+          peer: source.handle as never,
+          q: "",
+          filter: new Api.InputMessagesFilterPinned() as never,
+          minDate: 0,
+          maxDate: 0,
+          offsetId: cursor?.offsetId ?? 0,
+          addOffset: 0,
+          limit: input.limit,
+          maxId: 0,
+          minId: 0,
+          hash: 0 as never,
+        }),
+      ),
+    );
+
+    const entry = index.byId.get(source.source_id);
+    const context: MessageContext = {
+      chatId: source.source_id,
+      ...(source.username !== undefined ? { username: source.username } : {}),
+      ...(entry !== undefined
+        ? { readInboxMaxId: entry.read_inbox_max_id }
+        : {}),
+    };
+
+    const base = {
+      source_id: source.source_id,
+      source_title: source.title,
+    };
+    const all = page.messages.map((raw) => mapMessage(raw, context));
+    const messages = all.slice(
+      0,
+      fitToSizeCap(all, (kept) => ({ ...base, messages: kept })),
+    );
+
+    const exhausted =
+      messages.length === all.length && all.length < input.limit;
+    const oldest = messages[messages.length - 1];
+
+    return {
+      ...base,
+      messages,
+      ...(exhausted || oldest === undefined
+        ? {}
+        : {
+            next_cursor: encodePinnedCursor({
+              offsetId: oldest.id,
+              fingerprint,
+            }),
+          }),
+    };
+  });
+}
+```
+
+- [ ] **Step 4: Run the engine test to verify it passes**
+
+Run: `npx vitest run tests/telegram-pinned.test.ts`
+Expected: PASS, 4 tests.
+
+- [ ] **Step 5: Register the tool**
+
+```ts
+// src/mcp/tools/get-pinned-messages.ts
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { getPinnedMessages } from "../../telegram/pinned";
+import { telegramMessageSchema } from "../../schemas/message";
+import { runTool } from "../tool-result";
+
+export function registerGetPinnedMessages(server: McpServer): void {
+  server.registerTool(
+    "get_pinned_messages",
+    {
+      title: "Read a source's pinned messages",
+      description:
+        "Read the pinned messages of one Telegram source, newest first. Pinned posts are usually a channel's rules, its navigation, or the announcement it wants read first, so this is the cheapest way to learn what a source is about. The source may be named by marked id, @username, or t.me link, including a public channel the account has not joined. A source with nothing pinned returns an empty list, not an error. Read-only.",
+      inputSchema: z.object({
+        source_id: z
+          .string()
+          .describe("A marked id, a @username, or a t.me link."),
+        limit: z.number().int().min(1).max(100).default(20),
+        cursor: z
+          .string()
+          .describe(
+            "Opaque continuation token from a previous response's next_cursor. Copy it back exactly as received, character for character; it is not human-readable and must not be shortened, re-typed or reconstructed. It is bound to this source_id.",
+          )
+          .optional(),
+      }),
+      outputSchema: z.object({
+        source_id: z.string(),
+        source_title: z.string(),
+        messages: z.array(telegramMessageSchema),
+        next_cursor: z.string().optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) =>
+      runTool("get_pinned_messages", () => getPinnedMessages(input)),
+  );
+}
+```
+
+```ts
+// src/mcp/server.ts — import and call, after registerResolveTelegramUrl(server);
+import { registerGetPinnedMessages } from "./tools/get-pinned-messages";
+// ...
+  registerGetPinnedMessages(server);
+```
+
+- [ ] **Step 6: Take the handler test to eleven tools**
+
+```ts
+// tests/mcp-handler.test.ts — the name list, sorted
+  it("advertises all eleven tools", async () => {
+    const tools = await listTools();
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "get_channel",
+      "get_message",
+      "get_messages",
+      "get_pinned_messages",
+      "get_thread",
+      "get_unread_summary",
+      "list_dialogs",
+      "list_folders",
+      "mark_read",
+      "resolve_telegram_url",
+      "search_messages",
+    ]);
+  });
+```
+
+The existing "marks only mark_read as mutating" test needs no edit — it derives
+the expectation from the name — but confirm it still passes, since it is what
+asserts `readOnlyHint: true` on all four new tools.
+
+- [ ] **Step 7: Run the gates**
+
+Run: `npm run test && npm run typecheck && npm run lint`
+Expected: all green, eleven tools listed, ten of them read-only.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/telegram/pinned.ts src/mcp/tools/get-pinned-messages.ts src/mcp/server.ts tests/telegram-pinned.test.ts tests/mcp-handler.test.ts
+git commit -m "feat: expose get_pinned_messages"
+```
+
+---
+
+### Task 10: Let the reading tools read sources the account has not joined
+
+Spec §10. Without this a resolved link is a dead end: the model could search a
+channel it cannot page. The asymmetry is worse than either extreme.
+
+A source outside the dialog index has no folder membership, no unread count and
+no read pointer, so `is_read` is absent for its messages and it can never be
+reached through `folder_ids` — only by being named.
+
+**Files:**
+- Modify: `src/pagination.ts` (rename `MessageCursor.sources[].sourceId` to `handle`)
+- Modify: `src/telegram/message-slice.ts` (`SliceRequest.handle`)
+- Modify: `src/telegram/messages.ts`
+- Modify: `tests/pagination.test.ts`, `tests/telegram-messages.test.ts`, `tests/telegram-message-slice.test.ts`
+
+**Interfaces:**
+- Consumes: `resolveSource` (Task 1).
+- Produces (changed signatures other tasks do not depend on, but sub-project 2 code does):
+  - `type MessageCursor = { sources: Array<{ handle: string; offsetId: number }> }`
+  - `type SliceRequest` gains `handle?: string`
+  - `resolveSourceSet(input, index): Array<{ handle: string; offsetId: number }>`
+  - `type Fetched` gains `handle: string`
+
+The cursor field is renamed rather than reused because it no longer holds a
+marked id: a channel resolved by username must keep travelling by username, or
+a fresh serverless instance resumes with a bare id that Telegram answers
+`CHANNEL_INVALID`. The wire payload key stays `i`, so cursors already issued
+keep decoding.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// append to tests/telegram-messages.test.ts
+describe("sources outside the dialog index", () => {
+  it("reads a channel named by username and keeps the username in the cursor", async () => {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      getDialogs: async () => [],
+      getEntity: async (target: string) => ({
+        className: "Channel",
+        id: 999n,
+        title: "Outside",
+        username: target.replace("@", ""),
+      }),
+      getMessages: async () => [
+        { className: "Message", id: 5, date: 1_750_000_000, message: "hi" },
+        { className: "Message", id: 4, date: 1_749_999_000, message: "ho" },
+      ],
+    }));
+
+    const page = await getMessages({ source_ids: ["@outside"], limit: 2 });
+    const block = page.sources[0]!;
+    expect(block.source_id).toBe("-100999");
+    expect(block.title).toBe("Outside");
+    // No dialog entry means no read pointer, so read state is unknown rather
+    // than guessed.
+    expect(block.messages![0]!.is_read).toBeUndefined();
+    expect(block.messages![0]!.url).toBe("https://t.me/outside/5");
+    expect(decodeMessageCursor(page.next_cursor!).sources).toEqual([
+      { handle: "outside", offsetId: 4 },
+    ]);
+  });
+
+  it("turns an unresolvable source into one error block, not a failed page", async () => {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      getDialogs: async () => [],
+      getEntity: async () => {
+        throw Object.assign(new Error("x"), {
+          errorMessage: "USERNAME_NOT_OCCUPIED",
+        });
+      },
+      getMessages: async () => [],
+    }));
+
+    const page = await getMessages({ source_ids: ["@nobodyhere"], limit: 2 });
+    expect(page.sources).toEqual([
+      {
+        source_id: "@nobodyhere",
+        title: "@nobodyhere",
+        error: {
+          code: "CHANNEL_NOT_FOUND",
+          message: "Telegram error: USERNAME_NOT_OCCUPIED",
+        },
+      },
+    ]);
+  });
+
+  it("accepts a t.me link in get_message", async () => {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      getDialogs: async () => [],
+      getEntity: async () => ({
+        className: "Channel",
+        id: 999n,
+        title: "Outside",
+        username: "outside",
+      }),
+      getMessages: async () => [
+        { className: "Message", id: 5, date: 1_750_000_000, message: "hi" },
+      ],
+    }));
+
+    const detail = await getMessage({
+      source_id: "https://t.me/outside/5",
+      message_id: 5,
+    });
+    expect(detail.source_id).toBe("-100999");
+    expect(detail.source_title).toBe("Outside");
+    expect(detail.message.id).toBe(5);
+  });
+});
+```
+
+Add `__resetPeerCacheForTests()` to the existing `afterEach` in this file, so a
+resolution memoized by one test cannot answer another.
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `npx vitest run tests/telegram-messages.test.ts`
+Expected: FAIL — the username is passed to Telegram as-is and the block reports
+`source_id: "@outside"`.
+
+- [ ] **Step 3: Rename the cursor field**
+
+```ts
+// src/pagination.ts
+export type MessageCursor = {
+  /**
+   * A HANDLE, not necessarily a marked id: a username when the source has one.
+   * A bare marked id resolves only for peers the account holds, so a channel
+   * reached by username must keep travelling by username across cold
+   * instances. The wire key stays `i`, so older cursors still decode.
+   */
+  sources: Array<{ handle: string; offsetId: number }>;
+};
+// ...encode: i: source.handle
+// ...decode: handle: source.i
+```
+
+Update the three `{ sourceId, offsetId }` literals in `tests/pagination.test.ts`
+to `{ handle, offsetId }`.
+
+- [ ] **Step 4: Let a slice be read by a handle**
+
+```ts
+// src/telegram/message-slice.ts — in SliceRequest, after sourceId
+  /** What to pass to teleproto when it differs from the marked id. */
+  handle?: string;
+// ...in fetchSlice, replace the entity argument
+  const raw = await client.getMessages(request.handle ?? request.sourceId, {
+```
+
+- [ ] **Step 5: Route every source name through peer-resolve**
+
+```ts
+// src/telegram/messages.ts — the changed parts
+
+// resolveSourceSet: rename the produced field only.
+export function resolveSourceSet(
+  input: GetMessagesInput,
+  index: DialogIndex,
+): Array<{ handle: string; offsetId: number }> {
+  // ...unchanged body, with:
+  //   resolved = decodeMessageCursor(input.cursor).sources;
+  //   resolved = ordered.map((handle) => ({ handle, offsetId: 0 }));
+}
+
+export type Fetched = {
+  source_id: string;
+  title: string;
+  /** What the cursor stores for this block; see MessageCursor. */
+  handle: string;
+  startOffsetId: number;
+  slice?: Slice;
+  error?: { code: string; message: string };
+};
+
+// compose(): every unexhausted.push becomes
+//   unexhausted.push({ handle: block.handle, offsetId: ... });
+
+// getMessages(): inside the fan-out
+    mapWithConcurrency(targets, FANOUT_CONCURRENCY, async (target) => {
+      let source;
+      try {
+        source = await resolveSource(client, index, target.handle);
+      } catch (err) {
+        // An unresolvable name is this source's failure, not the page's.
+        const mapped = mapTelegramError(err);
+        return {
+          source_id: target.handle,
+          title: target.handle,
+          handle: target.handle,
+          startOffsetId: target.offsetId,
+          error: { code: mapped.code, message: mapped.message },
+        } satisfies Fetched;
+      }
+
+      const entry = index.byId.get(source.source_id);
+      try {
+        const slice = await fetchSlice(client, {
+          sourceId: source.source_id,
+          handle: source.handle,
+          ...(source.username !== undefined
+            ? { username: source.username }
+            : {}),
+          ...(entry !== undefined
+            ? { readInboxMaxId: entry.read_inbox_max_id }
+            : {}),
+          limit: input.limit,
+          offsetId: target.offsetId,
+          ...(fromSeconds !== undefined ? { fromSeconds } : {}),
+          ...(toSeconds !== undefined ? { toSeconds } : {}),
+          ...(input.unread_only === true ? { unreadOnly: true } : {}),
+          ...(input.media_type !== undefined
+            ? { mediaType: input.media_type }
+            : {}),
+        });
+        return {
+          source_id: source.source_id,
+          title: source.title,
+          handle: source.handle,
+          startOffsetId: target.offsetId,
+          slice,
+        } satisfies Fetched;
+      } catch (err) {
+        // Spec §11: one dead channel must not cost a digest.
+        const mapped = mapTelegramError(err);
+        return {
+          source_id: source.source_id,
+          title: source.title,
+          handle: source.handle,
+          startOffsetId: target.offsetId,
+          error: { code: mapped.code, message: mapped.message },
+        } satisfies Fetched;
+      }
+    }),
+
+// getMessage(): resolve first, then read by handle
+export async function getMessage(
+  input: GetMessageInput,
+): Promise<GetMessageResult> {
+  // ...the context_before/context_after bounds check is unchanged
+
+  const index = await fetchDialogIndex();
+
+  return withTelegram(async (client) => {
+    const source = await resolveSource(client, index, input.source_id);
+    const entry = index.byId.get(source.source_id);
+    const ctx: MessageContext = {
+      chatId: source.source_id,
+      ...(source.username !== undefined ? { username: source.username } : {}),
+      ...(entry !== undefined
+        ? { readInboxMaxId: entry.read_inbox_max_id }
+        : {}),
+    };
+
+    const found = await client.getMessages(source.handle, {
+      ids: [input.message_id],
+    });
+    // ...the MESSAGE_NOT_FOUND guard is unchanged except for its message,
+    //    which names source.source_id
+
+    const older =
+      before > 0
+        ? await client.getMessages(source.handle, {
+            limit: before,
+            offsetId: input.message_id,
+          })
+        : [];
+    const newer =
+      after > 0
+        ? await client.getMessages(source.handle, {
+            limit: after,
+            offsetId: input.message_id,
+            addOffset: -after,
+          })
+        : [];
+
+    // ...toAscending is unchanged
+
+    return {
+      source_id: source.source_id,
+      source_title: source.title,
+      message: mapMessage(target, ctx),
+      context_before: toAscending(older),
+      context_after: toAscending(newer),
+    };
+  });
+}
+```
+
+Note that `getMessage` moves `fetchDialogIndex` outside `withTelegram` exactly
+as `getMessages` already does, and that the whole body now runs inside
+`withTelegram` so resolution errors are mapped by the same boundary.
+
+- [ ] **Step 6: Widen the two tool descriptions**
+
+```ts
+// src/mcp/tools/get-messages.ts — source_ids describe()
+            "Sources to read. Each may be a marked id from list_dialogs, a @username, or a t.me link — including a public channel the account has not joined, which then reports no unread state.",
+// src/mcp/tools/get-message.ts — source_id describe()
+            "A marked id from list_dialogs, a @username, or a t.me link.",
+```
+
+Read `src/mcp/tools/get-message.ts` before editing it; the wording above
+replaces whatever that parameter's current `.describe()` says.
+
+- [ ] **Step 7: Run the gates**
+
+Run: `npm run test && npm run typecheck && npm run lint`
+Expected: all green. `tests/telegram-messages.test.ts` and
+`tests/pagination.test.ts` were both edited, so watch that the pre-existing
+fan-out and cursor tests still pass.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/pagination.ts src/telegram/message-slice.ts src/telegram/messages.ts src/mcp/tools/get-messages.ts src/mcp/tools/get-message.ts tests/pagination.test.ts tests/telegram-messages.test.ts tests/telegram-message-slice.test.ts
+git commit -m "feat: read sources the account has not joined in get_messages and get_message"
+```
+
 ## Resume note
 
 Planning is in progress in this file. The tasks are appended in order, and each
