@@ -110,7 +110,16 @@ export function decodeCursor(raw: string): DialogCursor {
  * no boundaryIds equivalent here. `offsetId: 0` means "start from the newest".
  */
 export type MessageCursor = {
-  sources: Array<{ sourceId: string; offsetId: number }>;
+  sources: Array<{
+    /**
+     * A HANDLE, not necessarily a marked id: a username when the source has
+     * one. A bare marked id resolves only for peers the account holds, so a
+     * channel reached by username must keep travelling by username across
+     * cold instances. The wire key stays `i`, so older cursors still decode.
+     */
+    handle: string;
+    offsetId: number;
+  }>;
 };
 
 const messagePayloadSchema = z.object({
@@ -124,7 +133,7 @@ export function encodeMessageCursor(cursor: MessageCursor): string {
     v: CURSOR_VERSION,
     k: MESSAGE_CURSOR_KIND,
     s: cursor.sources.map((source) => ({
-      i: source.sourceId,
+      i: source.handle,
       o: source.offsetId,
     })),
   });
@@ -134,7 +143,7 @@ export function decodeMessageCursor(raw: string): MessageCursor {
   const payload = decodePayload(raw, MESSAGE_CURSOR_KIND, messagePayloadSchema);
   return {
     sources: payload.s.map((source) => ({
-      sourceId: source.i,
+      handle: source.i,
       offsetId: source.o,
     })),
   };

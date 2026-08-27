@@ -129,6 +129,26 @@ describe("fetchSlice", () => {
     ).toBe("InputMessagesFilterPhotos");
   });
 
+  it("reads by handle instead of the marked id when one is given", async () => {
+    let seenEntity: string | undefined;
+    await fetchSlice(
+      {
+        connected: true,
+        connect: async () => true,
+        invoke: async () => ({}),
+        getDialogs: async () => [],
+        getEntity: async () => ({}),
+        getMessages: async (entity, params) => {
+          seenEntity = entity;
+          const limit = typeof params.limit === "number" ? params.limit : 0;
+          return history(5).slice(0, limit);
+        },
+      },
+      { ...base, handle: "outside" },
+    );
+    expect(seenEntity).toBe("outside");
+  });
+
   it("passes no filter for an untyped request", async () => {
     let params: Record<string, unknown> | undefined;
     await fetchSlice(

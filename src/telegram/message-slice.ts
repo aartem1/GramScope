@@ -15,6 +15,8 @@ export type MediaType = (typeof MEDIA_TYPES)[number];
 
 export type SliceRequest = {
   sourceId: string;
+  /** What to pass to teleproto when it differs from the marked id. */
+  handle?: string;
   username?: string;
   readInboxMaxId?: number;
   limit: number;
@@ -71,7 +73,7 @@ export async function fetchSlice(
 ): Promise<Slice> {
   const filter = await mediaFilter(request.mediaType);
 
-  const raw = await client.getMessages(request.sourceId, {
+  const raw = await client.getMessages(request.handle ?? request.sourceId, {
     limit: request.limit,
     ...(request.offsetId > 0 ? { offsetId: request.offsetId } : {}),
     // Only on a first page: once a cursor exists, offsetId is the exact

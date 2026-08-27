@@ -12,7 +12,11 @@ export function registerGetMessage(server: McpServer): void {
       description:
         "Read a single message by source id and message id, optionally with the messages immediately before and after it. Context arrays are in ascending date order; missing context is a shorter array, not an error. Read-only.",
       inputSchema: z.object({
-        source_id: z.string(),
+        source_id: z
+          .string()
+          .describe(
+            "A marked id from list_dialogs, a @username, or a t.me link.",
+          ),
         message_id: z.number().int(),
         context_before: z
           .number()

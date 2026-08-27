@@ -5,6 +5,7 @@ import {
   type DialogIndex,
 } from "./dialog-index";
 import { fetchSlice, type MediaType, type Slice } from "./message-slice";
+import { resolveSource } from "./peer-resolve";
 import { FANOUT_CONCURRENCY, mapWithConcurrency } from "../concurrency";
 import { decodeMessageCursor, encodeMessageCursor } from "../pagination";
 import { fitToSizeCap, MAX_RESPONSE_BYTES } from "../schemas/size";
@@ -69,8 +70,8 @@ export function parseDateBound(
 export function resolveSourceSet(
   input: GetMessagesInput,
   index: DialogIndex,
-): Array<{ sourceId: string; offsetId: number }> {
-  let resolved: Array<{ sourceId: string; offsetId: number }>;
+): Array<{ handle: string; offsetId: number }> {
+  let resolved: Array<{ handle: string; offsetId: number }>;
   if (input.cursor) {
     resolved = decodeMessageCursor(input.cursor).sources;
   } else {
@@ -86,7 +87,7 @@ export function resolveSourceSet(
       seen.add(id);
       ordered.push(id);
     }
-    resolved = ordered.map((sourceId) => ({ sourceId, offsetId: 0 }));
+    resolved = ordered.map((handle) => ({ handle, offsetId: 0 }));
   }
 
   if (resolved.length === 0) {
@@ -108,6 +109,8 @@ export function resolveSourceSet(
 export type Fetched = {
   source_id: string;
   title: string;
+  /** What the cursor stores for this block; see MessageCursor. */
+  handle: string;
   /** Where this page started reading; the resume point if it served nothing. */
   startOffsetId: number;
   slice?: Slice;
@@ -125,7 +128,7 @@ function compose(
   for (const unit of kept) keptCount[unit.blockIndex]!++;
 
   const sources: SourceBlock[] = [];
-  const unexhausted: Array<{ sourceId: string; offsetId: number }> = [];
+  const unexhausted: Array<{ handle: string; offsetId: number }> = [];
   let stopped = false;
 
   for (let i = 0; i < fetched.length; i++) {
@@ -154,7 +157,7 @@ function compose(
       const all = block.slice?.messages ?? [];
       if (all.length > 1 || block.slice?.hasMore) {
         unexhausted.push({
-          sourceId: block.source_id,
+          handle: block.handle,
           offsetId: oversized.message.id,
         });
       }
@@ -164,7 +167,7 @@ function compose(
 
     if (stopped) {
       unexhausted.push({
-        sourceId: block.source_id,
+        handle: block.handle,
         offsetId: block.startOffsetId,
       });
       continue;
@@ -182,7 +185,7 @@ function compose(
       });
       if (block.slice?.hasMore) {
         unexhausted.push({
-          sourceId: block.source_id,
+          handle: block.handle,
           offsetId: block.slice.nextOffsetId,
         });
       }
@@ -195,7 +198,7 @@ function compose(
     stopped = true;
     if (n === 0) {
       unexhausted.push({
-        sourceId: block.source_id,
+        handle: block.handle,
         offsetId: block.startOffsetId,
       });
       continue;
@@ -208,7 +211,7 @@ function compose(
       has_more: true,
     });
     unexhausted.push({
-      sourceId: block.source_id,
+      handle: block.handle,
       offsetId: trimmed[trimmed.length - 1]!.id,
     });
   }
@@ -261,13 +264,28 @@ export async function getMessages(
 
   const fetched = await withTelegram(async (client) =>
     mapWithConcurrency(targets, FANOUT_CONCURRENCY, async (target) => {
-      const entry = index.byId.get(target.sourceId);
-      const title = entry?.title ?? target.sourceId;
+      let source;
+      try {
+        source = await resolveSource(client, index, target.handle);
+      } catch (err) {
+        // An unresolvable name is this source's failure, not the page's.
+        const mapped = mapTelegramError(err);
+        return {
+          source_id: target.handle,
+          title: target.handle,
+          handle: target.handle,
+          startOffsetId: target.offsetId,
+          error: { code: mapped.code, message: mapped.message },
+        } satisfies Fetched;
+      }
+
+      const entry = index.byId.get(source.source_id);
       try {
         const slice = await fetchSlice(client, {
-          sourceId: target.sourceId,
-          ...(entry?.username !== undefined
-            ? { username: entry.username }
+          sourceId: source.source_id,
+          handle: source.handle,
+          ...(source.username !== undefined
+            ? { username: source.username }
             : {}),
           ...(entry !== undefined
             ? { readInboxMaxId: entry.read_inbox_max_id }
@@ -282,8 +300,9 @@ export async function getMessages(
             : {}),
         });
         return {
-          source_id: target.sourceId,
-          title,
+          source_id: source.source_id,
+          title: source.title,
+          handle: source.handle,
           startOffsetId: target.offsetId,
           slice,
         } satisfies Fetched;
@@ -291,8 +310,9 @@ export async function getMessages(
         // Spec §11: one dead channel must not cost a digest.
         const mapped = mapTelegramError(err);
         return {
-          source_id: target.sourceId,
-          title,
+          source_id: source.source_id,
+          title: source.title,
+          handle: source.handle,
           startOffsetId: target.offsetId,
           error: { code: mapped.code, message: mapped.message },
         } satisfies Fetched;
@@ -337,15 +357,19 @@ export async function getMessage(
   }
 
   const index = await fetchDialogIndex();
-  const entry = index.byId.get(input.source_id);
-  const ctx: MessageContext = {
-    chatId: input.source_id,
-    ...(entry?.username !== undefined ? { username: entry.username } : {}),
-    ...(entry !== undefined ? { readInboxMaxId: entry.read_inbox_max_id } : {}),
-  };
 
   return withTelegram(async (client) => {
-    const found = await client.getMessages(input.source_id, {
+    const source = await resolveSource(client, index, input.source_id);
+    const entry = index.byId.get(source.source_id);
+    const ctx: MessageContext = {
+      chatId: source.source_id,
+      ...(source.username !== undefined ? { username: source.username } : {}),
+      ...(entry !== undefined
+        ? { readInboxMaxId: entry.read_inbox_max_id }
+        : {}),
+    };
+
+    const found = await client.getMessages(source.handle, {
       ids: [input.message_id],
     });
     const target = (found[0] ?? undefined) as Record<string, unknown> | undefined;
@@ -356,7 +380,7 @@ export async function getMessage(
     ) {
       throw new GramScopeError(
         "MESSAGE_NOT_FOUND",
-        `No message ${input.message_id} in ${input.source_id}`,
+        `No message ${input.message_id} in ${source.source_id}`,
       );
     }
 
@@ -365,14 +389,14 @@ export async function getMessage(
     // backwards past it, which is what a negative add_offset means.
     const older =
       before > 0
-        ? await client.getMessages(input.source_id, {
+        ? await client.getMessages(source.handle, {
             limit: before,
             offsetId: input.message_id,
           })
         : [];
     const newer =
       after > 0
-        ? await client.getMessages(input.source_id, {
+        ? await client.getMessages(source.handle, {
             limit: after,
             offsetId: input.message_id,
             addOffset: -after,
@@ -395,8 +419,8 @@ export async function getMessage(
         .sort((a, b) => a.id - b.id);
 
     return {
-      source_id: input.source_id,
-      source_title: entry?.title ?? input.source_id,
+      source_id: source.source_id,
+      source_title: source.title,
       message: mapMessage(target, ctx),
       context_before: toAscending(older),
       context_after: toAscending(newer),

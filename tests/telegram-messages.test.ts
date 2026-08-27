@@ -11,6 +11,7 @@ import {
   __resetClientForTests,
   __setClientFactoryForTests,
 } from "@/telegram/client";
+import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
 import { decodeMessageCursor, encodeMessageCursor } from "@/pagination";
 import { GramScopeError } from "@/errors/taxonomy";
 import { MAX_RESPONSE_BYTES } from "@/schemas/size";
@@ -59,6 +60,7 @@ function block(
   return {
     source_id: id,
     title,
+    handle: id,
     startOffsetId: 0,
     slice: {
       messages: ids.map((n) => message(n)),
@@ -71,6 +73,7 @@ function block(
 afterEach(() => {
   __setClientFactoryForTests(undefined);
   __resetClientForTests();
+  __resetPeerCacheForTests();
 });
 
 describe("parseDateBound", () => {
@@ -97,7 +100,7 @@ describe("resolveSourceSet", () => {
       { source_ids: [C], folder_ids: ["2"], exclude_source_ids: [B], limit: 20 },
       index,
     );
-    expect(set.map((s) => s.sourceId)).toEqual([C, A]);
+    expect(set.map((s) => s.handle)).toEqual([C, A]);
     expect(set.every((s) => s.offsetId === 0)).toBe(true);
   });
 
@@ -106,7 +109,7 @@ describe("resolveSourceSet", () => {
       { source_ids: [A], folder_ids: ["2"], limit: 20 },
       index,
     );
-    expect(set.map((s) => s.sourceId)).toEqual([A, B]);
+    expect(set.map((s) => s.handle)).toEqual([A, B]);
   });
 
   it("rejects an empty selection", () => {
@@ -141,12 +144,12 @@ describe("resolveSourceSet", () => {
         source_ids: [C],
         limit: 20,
         cursor: encodeMessageCursor({
-          sources: [{ sourceId: B, offsetId: 77 }],
+          sources: [{ handle: B, offsetId: 77 }],
         }),
       },
       index,
     );
-    expect(set).toEqual([{ sourceId: B, offsetId: 77 }]);
+    expect(set).toEqual([{ handle: B, offsetId: 77 }]);
   });
 
   it("rejects a cursor carrying 26 sources with count and split guidance", () => {
@@ -158,7 +161,7 @@ describe("resolveSourceSet", () => {
             limit: 20,
             cursor: encodeMessageCursor({
               sources: Array.from({ length: 26 }, (_, i) => ({
-                sourceId: `-100${i}`,
+                handle: `-100${i}`,
                 offsetId: i,
               })),
             }),
@@ -218,7 +221,7 @@ describe("renderPage", () => {
     const page = renderPage([block(A, "Alpha", [3, 2], true)]);
     expect(page.sources[0]!.has_more).toBe(true);
     expect(decodeMessageCursor(page.next_cursor!).sources).toEqual([
-      { sourceId: A, offsetId: 2 },
+      { handle: A, offsetId: 2 },
     ]);
   });
 
@@ -229,6 +232,7 @@ describe("renderPage", () => {
       {
         source_id: A,
         title: "Alpha",
+        handle: A,
         startOffsetId: 0,
         slice: {
           messages: [
@@ -254,10 +258,10 @@ describe("renderPage", () => {
     // Alpha resumes after its last served message; Beta resumes where it
     // started, because this page never served any of it.
     expect(resumed).toContainEqual({
-      sourceId: A,
+      handle: A,
       offsetId: page.sources[0]!.messages!.at(-1)!.id,
     });
-    expect(resumed).toContainEqual({ sourceId: B, offsetId: 0 });
+    expect(resumed).toContainEqual({ handle: B, offsetId: 0 });
   });
 
   it("counts the response envelope and cursor toward the 256 KB cap", () => {
@@ -267,6 +271,7 @@ describe("renderPage", () => {
       {
         source_id: A,
         title: "Alpha",
+        handle: A,
         startOffsetId: 0,
         slice: {
           messages: [message(2, fat), message(1, fat)],
@@ -282,8 +287,8 @@ describe("renderPage", () => {
     );
     expect(page.sources[0]!.messages).toHaveLength(1);
     expect(decodeMessageCursor(page.next_cursor!).sources).toEqual([
-      { sourceId: A, offsetId: 2 },
-      { sourceId: B, offsetId: 0 },
+      { handle: A, offsetId: 2 },
+      { handle: B, offsetId: 0 },
     ]);
   });
 
@@ -294,6 +299,7 @@ describe("renderPage", () => {
       {
         source_id: A,
         title: "Alpha",
+        handle: A,
         startOffsetId: 0,
         slice: {
           messages: [message(7, text), message(6, "older")],
@@ -318,14 +324,20 @@ describe("renderPage", () => {
     expect(page.sources[0]!.messages).toBeUndefined();
     expect(fetched[0]!.slice!.messages[0]!.text).toBe(text);
     expect(decodeMessageCursor(page.next_cursor!).sources).toEqual([
-      { sourceId: A, offsetId: 7 },
-      { sourceId: B, offsetId: 0 },
+      { handle: A, offsetId: 7 },
+      { handle: B, offsetId: 0 },
     ]);
   });
 
   it("keeps a failing source visible and out of the cursor", () => {
     const page = renderPage([
-      { source_id: A, title: "Alpha", startOffsetId: 0, error: { code: "NOT_A_MEMBER", message: "gone" } },
+      {
+        source_id: A,
+        title: "Alpha",
+        handle: A,
+        startOffsetId: 0,
+        error: { code: "NOT_A_MEMBER", message: "gone" },
+      },
       block(B, "Beta", [1]),
     ]);
     expect(page.sources[0]).toEqual({
@@ -392,10 +404,14 @@ describe("getMessages", () => {
     message: `post ${id}`,
   });
 
+  // Alpha's dialog entry carries a username, so resolveSource prefers it as
+  // the handle passed to teleproto; Beta has none and keeps its marked id.
+  const ALPHA_HANDLE = "alpha";
+
   it("fans out over a folder in one call and groups the result", async () => {
     __setClientFactoryForTests(
       factory({
-        [A]: [post(10), post(9)],
+        [ALPHA_HANDLE]: [post(10), post(9)],
         [B]: [post(5)],
       }),
     );
@@ -408,7 +424,7 @@ describe("getMessages", () => {
 
   it("applies the read pointer when unread_only is set", async () => {
     __setClientFactoryForTests(
-      factory({ [A]: [post(10), post(9), post(8), post(7)] }),
+      factory({ [ALPHA_HANDLE]: [post(10), post(9), post(8), post(7)] }),
     );
     const page = await getMessages({ source_ids: [A], unread_only: true, limit: 20 });
     expect(page.sources[0]!.messages!.map((m) => m.id)).toEqual([10, 9]);
@@ -419,7 +435,7 @@ describe("getMessages", () => {
     const week = 7 * 24 * 3600;
     __setClientFactoryForTests(
       factory({
-        [A]: [post(10), post(9, 1735689600 - week - 1)],
+        [ALPHA_HANDLE]: [post(10), post(9, 1735689600 - week - 1)],
       }),
     );
     const page = await getMessages({
@@ -443,7 +459,7 @@ describe("getMessages", () => {
   });
 
   it("degrades one dead source without failing the page", async () => {
-    __setClientFactoryForTests(factory({ [B]: [post(5)] }, A));
+    __setClientFactoryForTests(factory({ [B]: [post(5)] }, ALPHA_HANDLE));
     const page = await getMessages({ folder_ids: ["2"], limit: 20 });
     expect(page.sources[0]!.error).toBeTruthy();
     expect(page.sources[0]!.messages).toBeUndefined();
@@ -591,5 +607,91 @@ describe("getMessage", () => {
     await expect(
       getMessage({ source_id: A, message_id: 1, context_after: 21 }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+});
+
+describe("sources outside the dialog index", () => {
+  it("reads a channel named by username and keeps the username in the cursor", async () => {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => [],
+      getEntity: async (target: string) => ({
+        className: "Channel",
+        id: 999n,
+        title: "Outside",
+        username: target.replace("@", ""),
+      }),
+      getMessages: async () => [
+        { className: "Message", id: 5, date: 1_750_000_000, message: "hi" },
+        { className: "Message", id: 4, date: 1_749_999_000, message: "ho" },
+      ],
+    }));
+
+    const page = await getMessages({ source_ids: ["@outside"], limit: 2 });
+    const block = page.sources[0]!;
+    expect(block.source_id).toBe("-100999");
+    expect(block.title).toBe("Outside");
+    // No dialog entry means no read pointer, so read state is unknown rather
+    // than guessed.
+    expect(block.messages![0]!.is_read).toBeUndefined();
+    expect(block.messages![0]!.url).toBe("https://t.me/outside/5");
+    expect(decodeMessageCursor(page.next_cursor!).sources).toEqual([
+      { handle: "outside", offsetId: 4 },
+    ]);
+  });
+
+  it("turns an unresolvable source into one error block, not a failed page", async () => {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => [],
+      getEntity: async () => {
+        throw Object.assign(new Error("x"), {
+          errorMessage: "USERNAME_NOT_OCCUPIED",
+        });
+      },
+      getMessages: async () => [],
+    }));
+
+    const page = await getMessages({ source_ids: ["@nobodyhere"], limit: 2 });
+    expect(page.sources).toEqual([
+      {
+        source_id: "@nobodyhere",
+        title: "@nobodyhere",
+        error: {
+          code: "CHANNEL_NOT_FOUND",
+          message: "Telegram error: USERNAME_NOT_OCCUPIED",
+        },
+      },
+    ]);
+  });
+
+  it("accepts a t.me link in get_message", async () => {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => [],
+      getEntity: async () => ({
+        className: "Channel",
+        id: 999n,
+        title: "Outside",
+        username: "outside",
+      }),
+      getMessages: async () => [
+        { className: "Message", id: 5, date: 1_750_000_000, message: "hi" },
+      ],
+    }));
+
+    const detail = await getMessage({
+      source_id: "https://t.me/outside/5",
+      message_id: 5,
+    });
+    expect(detail.source_id).toBe("-100999");
+    expect(detail.source_title).toBe("Outside");
+    expect(detail.message.id).toBe(5);
   });
 });

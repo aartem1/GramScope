@@ -25,7 +25,9 @@ export function registerGetMessages(server: McpServer): void {
         source_ids: z
           .array(z.string())
           .optional()
-          .describe("Marked source ids as returned by list_dialogs."),
+          .describe(
+            "Sources to read. Each may be a marked id from list_dialogs, a @username, or a t.me link — including a public channel the account has not joined, which then reports no unread state.",
+          ),
         folder_ids: z
           .array(z.string())
           .optional()

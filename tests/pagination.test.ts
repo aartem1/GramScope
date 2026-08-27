@@ -96,8 +96,8 @@ describe("cursors", () => {
 
 const messageCursor: MessageCursor = {
   sources: [
-    { sourceId: "-1001234567890", offsetId: 4242 },
-    { sourceId: "-1009876543210", offsetId: 0 },
+    { handle: "-1001234567890", offsetId: 4242 },
+    { handle: "-1009876543210", offsetId: 0 },
   ],
 };
 
@@ -158,8 +158,8 @@ describe("cursor transport robustness", () => {
   it("decodes a cursor that came back with surrounding or internal whitespace", () => {
     const issued = encodeMessageCursor({
       sources: [
-        { sourceId: "-1006666666666", offsetId: 9758 },
-        { sourceId: "-1007777777777", offsetId: 2248 },
+        { handle: "-1006666666666", offsetId: 9758 },
+        { handle: "-1007777777777", offsetId: 2248 },
       ],
     });
 
@@ -171,15 +171,15 @@ describe("cursor transport robustness", () => {
     ]) {
       const decoded = decodeMessageCursor(mangled);
       expect(decoded.sources).toEqual([
-        { sourceId: "-1006666666666", offsetId: 9758 },
-        { sourceId: "-1007777777777", offsetId: 2248 },
+        { handle: "-1006666666666", offsetId: 9758 },
+        { handle: "-1007777777777", offsetId: 2248 },
       ]);
     }
   });
 
   it("still rejects a cursor whose characters were actually altered", () => {
     const issued = encodeMessageCursor({
-      sources: [{ sourceId: "-1006666666666", offsetId: 9758 }],
+      sources: [{ handle: "-1006666666666", offsetId: 9758 }],
     });
     // Drop a character, which is what a model retyping the token does.
     const truncated = issued.slice(0, issued.length - 6);
