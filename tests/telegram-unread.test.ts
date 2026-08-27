@@ -1,0 +1,104 @@
+import { describe, expect, it } from "vitest";
+import { summarize } from "@/telegram/unread";
+import type { DialogIndex } from "@/telegram/dialog-index";
+import { GramScopeError } from "@/errors/taxonomy";
+
+const A = "-100111";
+const B = "-100222";
+const C = "-100333";
+
+const index: DialogIndex = {
+  byId: new Map([
+    [
+      A,
+      {
+        source_id: A,
+        title: "Alpha",
+        unread_count: 3,
+        read_inbox_max_id: 90,
+        latest_message_id: 93,
+        latest_message_date: "2025-01-01T00:00:00.000Z",
+        folder_ids: ["2"],
+      },
+    ],
+    [
+      B,
+      {
+        source_id: B,
+        title: "Beta",
+        unread_count: 12,
+        read_inbox_max_id: 40,
+        folder_ids: ["2"],
+      },
+    ],
+    [
+      C,
+      {
+        source_id: C,
+        title: "Gamma",
+        unread_count: 0,
+        read_inbox_max_id: 7,
+        folder_ids: ["3"],
+      },
+    ],
+  ]),
+  folders: [
+    { id: "2", title: "AI", included_peer_ids: [A, B], excluded_peer_ids: [], order: 0 },
+    { id: "3", title: "News", included_peer_ids: [C], excluded_peer_ids: [], order: 1 },
+  ],
+};
+
+describe("summarize by source", () => {
+  it("returns only sources with unread, busiest first", () => {
+    const result = summarize(index, {});
+    expect(result.groups.map((g) => g.source_id)).toEqual([B, A]);
+    expect(result.total_unread).toBe(15);
+  });
+
+  it("carries the read pointer and latest message", () => {
+    const [, alpha] = summarize(index, {}).groups;
+    expect(alpha).toMatchObject({
+      source_id: A,
+      title: "Alpha",
+      unread_count: 3,
+      read_inbox_max_id: 90,
+      latest_message_id: 93,
+      latest_message_date: "2025-01-01T00:00:00.000Z",
+    });
+  });
+
+  it("narrows to the given folders", () => {
+    const result = summarize(index, { folder_ids: ["3"] });
+    expect(result.groups).toEqual([]);
+    expect(result.total_unread).toBe(0);
+  });
+
+  it("never returns the oldest-unread date", () => {
+    // Deliberately absent: it costs one request per source, and
+    // get_messages(unread_only, limit 1) already answers it.
+    expect(JSON.stringify(summarize(index, {}))).not.toContain("oldest");
+  });
+});
+
+describe("summarize by folder", () => {
+  it("sums each folder's members and omits the per-folder pointer", () => {
+    const result = summarize(index, { group_by: "folder" });
+    expect(result.groups).toEqual([
+      { folder_id: "2", title: "AI", unread_count: 15 },
+    ]);
+    expect(result.total_unread).toBe(15);
+  });
+
+  it("rejects an unknown folder id", () => {
+    const error = (() => {
+      try {
+        summarize(index, { group_by: "folder", folder_ids: ["99"] });
+      } catch (e) {
+        return e;
+      }
+      return undefined;
+    })();
+    expect(error).toBeInstanceOf(GramScopeError);
+    expect((error as GramScopeError).code).toBe("INVALID_INPUT");
+  });
+});
