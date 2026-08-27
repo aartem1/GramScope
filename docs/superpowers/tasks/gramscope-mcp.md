@@ -67,44 +67,59 @@ created: 2026-08-26
 - 2026-08-27 — **the final whole-implementation review of sub-project 3 found three Important defects that every task review had missed**, because each one only shows across module boundaries. (1) A source can be named three ways, but union-minus-exclusions, de-duplication and the 25-source ceiling all compared raw strings, so an exclusion written `@name` did not remove the folder member listed by its marked id, one peer named twice fanned out and paged twice, and the ceiling counted names rather than peers. (2) Tool descriptions offered marked ids as continuation handles, which a `joined=false` source cannot honour on a cold instance. (3) `ChatInvitePeek` exposed a `source_id` the account cannot resolve. Fixed in `71420c8..ad2bec8`. The lesson worth carrying: a per-task review sees one diff, and a contract that lives in three modules at once is exactly what it cannot see.
 - 2026-08-27 — **the 25-source ceiling now counts canonical sources, so it cannot be applied before resolution.** A looser pre-resolution guard, `MAX_RAW_SOURCE_NAMES_PER_CALL` = 4x the effective one, is what bounds how many entity resolutions one call can buy, and exclusions count toward it. Every later multi-source tool inherits both limits from `src/telegram/source-selection.ts` rather than defining its own.
 - 2026-08-27 — a re-siting hazard worth remembering: when a contract moves to a later layer, the tests that guarded it move too, and their fixtures must move with them. Two fan-out fixtures resolved every unknown name to the same entity, so after canonicalisation a 26-source selection collapsed to one source and the ceiling tests would have passed having asserted nothing. Distinct names must resolve to distinct peers in any fixture that exercises a ceiling.
+- 2026-08-27 — **the final review's fix rounds cost three iterations, and each round's fix introduced the next round's defect.** The chain is worth keeping because every link was invisible to the fast tier. Round 1 (`71420c8..ad2bec8`) canonicalised aliases, and made an exclusion that cannot be resolved fail the whole call — the realistic path being an agent excluding an unjoined channel by the marked id it was handed, which a cold instance cannot resolve. Round 2 (`eb1f0c9..213513a`) degraded that to name-key matching, and halved a pre-resolution name ceiling to 50, which then rejected a 45-member folder with 20 members excluded (65 names counted, effective set 25) and asked for a split `folder_ids` cannot perform. Round 3 (`a4df5b7..00a2dd2`) replaced that ceiling with a lookup budget. No fast test caught any of the three; each was found by a whole-diff reviewer reading across module boundaries.
+- 2026-08-27 — **the resolution budget counts network lookups, not names.** `resolveSource` answers from the dialog index for every peer the account holds, so a folder selection costs nothing to resolve however wide it is; only names the index cannot answer reach Telegram. `resolvesLocally` in `src/telegram/peer-resolve.ts` is the predicate, `MAX_NETWORK_RESOLUTIONS_PER_CALL` (2x the 25-source ceiling) is the cap, and the module-level resolve cache is deliberately not counted as local so a call is not legal on a warm instance and rejected on a cold one. Every later multi-source tool inherits this from `src/telegram/source-selection.ts` rather than defining its own limits.
+- 2026-08-27 — **an exclusion degrades only on `CHANNEL_NOT_FOUND`.** That code means the name resolves nowhere, which is the cold-instance case the degrade path exists for. A malformed name, an invite link, a rate limit or a transport failure all leave the exclusion's status unknown, and serving content the caller asked to omit on a guess is worse than failing the call — spec §11 also mandates `INVALID_INPUT` for a bad source name, and an exclusion must not be the one place that escapes it. Two reviewers disagreed here; this is the ruling that stands.
+- 2026-08-27 — a deliberate non-fix, so it is not re-raised: a bare unmarked id such as `1234567890` is not matched against a channel's marked id in `aliasKeys`. An unmarked id is not a documented source name, it fails resolution anyway, and matching it would collide with a user id, which Telegram marks as the bare id unchanged.
+- 2026-08-27 — process trap: `npx prettier --write` over a directory reformatted 22 files unrelated to the change, because the repository is not prettier-clean and `npm run lint` does not enforce formatting. Format the files you edited, never a directory, or revert the rest before committing.
 
 # Handoff — sub-project 3, Research
 
-Rewritten 2026-08-27. The SDD ledger under `.superpowers/sdd/` is git-ignored
-and machine-local, so it will not travel: this section and git history are the
-whole record.
+Rewritten 2026-08-27 after fix round 3. **Read this first.** The SDD ledger
+under `.superpowers/sdd/` is git-ignored and machine-local, so it does not
+travel: this section, the "Changes and findings" list above, and git history
+are the whole record for anyone on another machine.
 
-**State.** All twelve plan tasks are done, reviewed and pushed, and the owner's
-ChatGPT connector acceptance passed (see "Changes and findings"). The final
-whole-implementation review of `3832daa..7ddece2` then returned **Needs fixes**
-with three Important findings, and fix round 1/5 is implemented at
-`71420c8..ad2bec8` — three commits, one per finding. Fast gates green at
-327 tests, typecheck and lint clean; the live tier is 25/25 with no skips.
-A scoped re-review of `7ddece2..ad2bec8` is what closes the round.
+**State.** All twelve plan tasks are done, reviewed and accepted by the owner
+in the ChatGPT connector. The final whole-implementation review of
+`3832daa..7ddece2` then returned Needs fixes, and three fix rounds have landed:
 
-`main` is ahead of `origin/main`: the fix commits and the card update are
-**not pushed**, because a push deploys to Vercel and the owner authorizes that
-explicitly. The deployed production build is still `7ddece2`, which carries all
-three defects.
+| Round | Commits | What it fixed |
+| --- | --- | --- |
+| 1 | `71420c8..ad2bec8` | alias canonicalisation, outside-source guidance, `ChatInvitePeek` id |
+| 2 | `eb1f0c9..213513a` | exclusion no longer fails the call; shared `nameKey`; guidance wording |
+| 3 | `a4df5b7..00a2dd2` | lookup budget instead of a name ceiling; exclusion failure discrimination |
 
-**Next step.** Take the scoped re-review's verdict. On `Approved`, record the
-round complete in the ledger, ask the owner to authorize the push, then push
-and confirm the Vercel deployment reaches Ready and `/api/mcp` still answers
-401 with its `WWW-Authenticate` challenge. On `Needs fixes`, open fix round 2/5
-against the same three findings; the budget is five rounds.
+`main` = `origin/main` = `00a2dd2`, tracked working tree clean, no feature
+branches (the owner works directly on `main` until launch). Everything above is
+pushed and deployed: Vercel production `gram-scope-bru184gr6` is Ready,
+`/api/mcp` answers 401 with its `WWW-Authenticate` challenge and
+`/.well-known/oauth-protected-resource` returns the endpoint plus the AuthKit
+issuer. Gates at `00a2dd2`: 27 files / 342 fast tests, typecheck, lint and
+`npm run build` green; live tier 25/25 with no skips.
 
-**What must not be redone.** Sub-project 3 itself is finished and accepted —
-do not re-plan, re-brainstorm or re-execute any of the twelve tasks. The three
-findings are already fixed; verify the fix rather than rewriting it. The live
-Telegram measurements under "Changes and findings" cost real FLOOD_WAIT budget,
-so read them rather than re-probing.
+**In flight.** A scoped re-review of `213513a..00a2dd2` was dispatched and its
+verdict is not recorded here, which means it had not returned. Re-run it rather
+than assuming: give a reviewer that commit range plus the six items round 3
+answered, listed under "Changes and findings" above.
 
-**Obligations.** Keep this card current with non-derived facts as they happen,
-because the ledger does not survive a change of machine. Never print the
-StringSession or any credential. Reconnect the ChatGPT connector before any
-acceptance run; it caches its tool list at install time. Only the three fixed
-tool descriptions changed, but the connector must still be reconnected to see
-them.
+**Next step.** On `Approved`, the fix-round loop is closed and sub-project 3 is
+finished; move to sub-project 4 (Discovery), which has no spec or plan yet and
+starts at `superpowers:brainstorming`. On `Needs fixes`, open fix round 4/5 —
+the budget is five rounds and three are spent.
+
+**What must not be redone.** Sub-project 3's twelve tasks are finished and
+accepted; do not re-plan, re-brainstorm or re-execute any of them. The three
+original review findings and the six round-3 items are fixed — verify rather
+than rewrite. The live Telegram measurements under "Changes and findings" cost
+real FLOOD_WAIT budget, so read them rather than re-probing.
+
+**Obligations.** Keep THIS section and "Changes and findings" current as work
+happens, because the ledger does not survive a change of machine — the ledger
+is for `/sp:next` on this machine only. Push to `main` deploys to Vercel and
+needs the owner's authorization. Never print the StringSession or any
+credential. Reconnect the ChatGPT connector before any acceptance run; it
+caches its tool list at install time, and rounds 1-3 changed tool descriptions.
 
 # Blocked — awaiting owner
 Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
