@@ -6,12 +6,13 @@ import { GramScopeError } from "../errors/taxonomy";
 import type { TelegramFolder } from "../schemas/folder";
 
 /**
- * Telegram folders cap at 100 chats each (200 Premium) across at most 20
- * folders, so a single scan of this depth covers any account this server is
- * meant for, and every tool in the reading set then costs one getDialogs call
- * rather than one per source.
+ * Bounds the worst case of a single bulk scan to avoid an unbounded crawl of
+ * the account. teleproto pages getDialogs internally, so a larger limit costs
+ * more round trips, not more code. Accounts holding more dialogs than this lose
+ * the tail of their dialog list from the index, which shows up as missing
+ * titles and skipped unread counts rather than an error.
  */
-const DIALOG_SCAN_LIMIT = 500;
+const DIALOG_SCAN_LIMIT = 1000;
 
 export type DialogEntry = {
   source_id: string;

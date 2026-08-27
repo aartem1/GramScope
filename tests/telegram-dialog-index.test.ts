@@ -113,6 +113,30 @@ describe("folderMembers", () => {
     expect(error).toBeInstanceOf(GramScopeError);
     expect((error as GramScopeError).code).toBe("INVALID_INPUT");
   });
+
+  it("returns empty array when given no folder ids", () => {
+    expect(folderMembers(parsed, [])).toEqual([]);
+  });
+
+  it("preserves order: folder order and peer order within each folder", () => {
+    const folders = [
+      {
+        id: "1",
+        title: "First",
+        included_peer_ids: ["a", "b"],
+        excluded_peer_ids: [],
+        order: 0,
+      },
+      {
+        id: "2",
+        title: "Second",
+        included_peer_ids: ["c", "d"],
+        excluded_peer_ids: [],
+        order: 1,
+      },
+    ];
+    expect(folderMembers(folders, ["2", "1"])).toEqual(["c", "d", "a", "b"]);
+  });
 });
 
 describe("fetchDialogIndex", () => {
@@ -139,5 +163,16 @@ describe("fetchDialogIndex", () => {
     }));
     await fetchDialogIndex();
     expect(calls).toBe(1);
+  });
+
+  it("excludes a dialog with no usable id from the index", async () => {
+    __setClientFactoryForTests(async () =>
+      fakeClient([
+        { title: "No ID", entity: { className: "Channel" }, dialog: {} },
+        aiNewsDialog,
+      ]),
+    );
+    const index = await fetchDialogIndex();
+    expect([...index.byId.keys()]).toEqual([AI_NEWS_ID]);
   });
 });
