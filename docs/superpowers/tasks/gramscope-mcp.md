@@ -58,6 +58,44 @@ created: 2026-08-26
 - 2026-08-27 — the owner reviewed and approved the sub-project 3 (Research) spec as written; no changes were requested. The brainstorming approval gate is closed and planning may proceed.
 - 2026-08-27 — the brand assets live in the repository: `app/icon.svg`, `public/favicon.ico`, `public/avatar-512.png` (master), `public/avatar-512-min.png` (4KB, for the plugin upload), `public/avatar-256.jpg`.
 
+- 2026-08-27 — **sub-project 3 planning is finished; implementation has not started.** The spec is approved by the owner, the plan is written, self-reviewed and committed, and `main` is clean at `d57e1a5`. No source file of sub-project 3 exists yet: nothing under `src/telegram/{peer-resolve,tl-messages,search,thread,resolve,pinned}.ts`, nothing under `src/mcp/tools/{search-messages,get-thread,resolve-telegram-url,get-pinned-messages}.ts`, and `src/mcp/server.ts` still registers seven tools. Anything the next agent finds beyond that was added after this note was written.
+- 2026-08-27 — two decisions taken while writing the sub-project 3 plan that the spec does not contain, recorded here because the plan argues from them.
+  - **A shared `src/telegram/tl-messages.ts`.** Four TL requests — `messages.searchGlobal`, `messages.search`, `messages.getReplies` and the pinned search — return the same union of `messages.Messages` (bounded, no `count`), `messages.MessagesSlice` (`count`, sometimes `nextRate`) and `messages.ChannelMessages` (`count`, no `nextRate`). One reader instead of the same twenty lines in three engines.
+  - **`MessageCursor.sources[].sourceId` is renamed to `handle`.** It no longer holds a marked id: a channel resolved by username must keep travelling by username, because a bare marked id resolves only for peers the account holds and a fresh serverless instance would resume with one Telegram answers `CHANNEL_INVALID`. The wire key stays `i`, so cursors already issued keep decoding.
+- 2026-08-27 — the sub-project 3 spec was **amended during planning** to four cursor kinds rather than two (commit `aaa6fbf`). `get_thread` and `get_pinned_messages` are paginated and §8 named a kind for neither; reusing the sub-project 2 `messages` kind would let a `get_messages` cursor decode cleanly in `get_thread` and page comments from a message id belonging to a different chat.
+
+# Handoff — sub-project 3, Research
+
+Written 2026-08-27 for whichever agent continues this. The SDD ledger under
+`.superpowers/sdd/` is git-ignored and machine-local, so it will not travel:
+this section and git history are the whole record.
+
+**State.** Requirements, spec and plan are done and the owner approved the
+spec. Implementation has not begun. `main` = `origin/main` = `d57e1a5`, working
+tree clean, no feature branches (the owner works directly on `main` until
+launch). The last pushed deployment is still the sub-project 2 one; nothing in
+this sub-project has been deployed.
+
+**Next step.** Execute `docs/superpowers/plans/2026-08-27-gramscope-research.md`
+with `superpowers:subagent-driven-development`, starting at Task 1. Do not
+re-plan and do not re-brainstorm: the plan's twelve tasks are self-contained,
+each carries its own tests and gates, and its final section maps every spec
+section to the task that implements it.
+
+**What must not be redone.** Commits `d331e0e` through `d57e1a5` are the whole
+of this sub-project's requirements work: the two owner open questions answered
+by live probe, the spec, the spec's four-cursor amendment, the scope decisions
+on this card, and the plan. The live Telegram measurements behind them are
+recorded under "Changes and findings" and cost real FLOOD_WAIT budget — read
+them rather than re-probing.
+
+**Obligations while executing.** Push to `main` only where Task 12 says to: a
+push deploys to Vercel. Keep this card current with non-derived facts as they
+happen — findings, rulings, review outcomes — because the ledger does not
+survive a change of machine. Never print the StringSession or any credential.
+Reconnect the ChatGPT connector before acceptance; it caches its tool list at
+install time and this sub-project adds four tools.
+
 # Blocked — awaiting owner
 Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
 "Changes and findings" for what each one produced.
