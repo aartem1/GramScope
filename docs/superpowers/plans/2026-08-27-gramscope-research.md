@@ -2459,6 +2459,627 @@ git add src/telegram/search.ts tests/telegram-search.test.ts
 git commit -m "feat: search named sources and folders with a merged fan-out"
 ```
 
+### Task 7: Expose `search_messages`
+
+Spec §6.1 and §9. The response is flat and date-ordered with a per-source
+roll-up, not grouped: a global search page is a slice of a ranked stream across
+all chats, so its groups would be an artifact of the page and the same source
+would reappear as a fresh group on every subsequent page.
+
+**Files:**
+- Create: `src/mcp/tools/search-messages.ts`
+- Modify: `src/mcp/server.ts`
+- Modify: `src/mcp/tool-result.ts`
+- Modify: `tests/logging.test.ts` (append one test)
+- Modify: `tests/mcp-handler.test.ts` (nine tools)
+
+**Interfaces:**
+- Consumes: `searchMessages`, `SearchResult` (Tasks 5-6); `telegramMessageSchema`; `MEDIA_TYPES`; `MAX_SOURCES_PER_CALL`; `runTool`.
+- Produces: `function registerSearchMessages(server: McpServer): void`
+
+- [ ] **Step 1: Write the failing log test**
+
+```ts
+// append to tests/logging.test.ts, inside the "runTool logging" describe
+  it("counts a flat search page by its hits, not by its sources", async () => {
+    const lines: string[] = [];
+    await runTool(
+      "search_messages",
+      async () => ({
+        results: [
+          { id: 1, chat_id: "-100111", date: "x", source_title: "Alpha" },
+          { id: 2, chat_id: "-100222", date: "x", source_title: "Beta" },
+          { id: 3, chat_id: "-100222", date: "x", source_title: "Beta" },
+        ],
+        sources: [
+          { source_id: "-100111", title: "Alpha", hit_count: 1 },
+          { source_id: "-100222", title: "Beta", hit_count: 2 },
+        ],
+      }),
+      (line) => lines.push(line),
+    );
+    expect(lines[0]).toContain("count=3");
+  });
+```
+
+- [ ] **Step 2: Run it to verify it fails**
+
+Run: `npx vitest run tests/logging.test.ts`
+Expected: FAIL — `count=2`, because `countOf` finds `sources` before `results`.
+
+- [ ] **Step 3: Teach `countOf` the flat shape**
+
+```ts
+// src/mcp/tool-result.ts — inside countOf, reorder the keys and say why
+  // `results` first: a flat search page carries BOTH a results list and a
+  // sources roll-up, and what the call returned is the hits, not the number
+  // of sources they came from.
+  for (const key of ["results", "sources", "folders", "groups"]) {
+```
+
+- [ ] **Step 4: Verify the log test passes**
+
+Run: `npx vitest run tests/logging.test.ts`
+Expected: PASS, including the pre-existing `get_messages` count test.
+
+- [ ] **Step 5: Register the tool**
+
+```ts
+// src/mcp/tools/search-messages.ts
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { searchMessages } from "../../telegram/search";
+import { MAX_SOURCES_PER_CALL } from "../../telegram/messages";
+import { MEDIA_TYPES } from "../../telegram/message-slice";
+import { telegramMessageSchema } from "../../schemas/message";
+import { runTool } from "../tool-result";
+
+export function registerSearchMessages(server: McpServer): void {
+  server.registerTool(
+    "search_messages",
+    {
+      title: "Search Telegram messages",
+      description:
+        "Full-text search over Telegram messages. With no source_ids and no folder_ids it searches EVERY chat the account participates in, in one call. Naming source_ids or folder_ids instead searches those sources only, up to " +
+        `${MAX_SOURCES_PER_CALL} of them. There is no third mode and no engine to choose: it follows from the arguments. It cannot search public channels the account has not joined — that requires Telegram Premium and costs Stars — but it CAN search inside one such channel when you name it by @username or t.me link in source_ids. Results are a flat list ordered newest first, NOT grouped by source: every hit carries chat_id and source_title, and the sources roll-up says how many hits on THIS page came from each source. total_matches is Telegram's own estimate for the whole query and drifts; use it to decide whether to narrow, not to compute with. from/to and media_type are applied by Telegram, so a filtered page is never short for that reason. exclude_source_ids works only together with source_ids or folder_ids. To continue, resend every filter unchanged with next_cursor; changing the query or a filter invalidates it. Read-only.`,
+      inputSchema: z.object({
+        query: z.string().min(1).describe("The text to search for."),
+        source_ids: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Sources to search. Each may be a marked id from list_dialogs, a @username, or a t.me link — including channels the account has not joined.",
+          ),
+        folder_ids: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Folder ids from list_folders, expanded to their member sources.",
+          ),
+        exclude_source_ids: z
+          .array(z.string())
+          .optional()
+          .describe(
+            "Subtracted from the union of source_ids and folder_ids. Rejected without one of those, because an account-wide search cannot exclude.",
+          ),
+        from: z
+          .string()
+          .optional()
+          .describe("ISO 8601. Inclusive lower bound on message date."),
+        to: z
+          .string()
+          .optional()
+          .describe("ISO 8601. Inclusive upper bound on message date."),
+        media_type: z.enum(MEDIA_TYPES).optional(),
+        limit: z.number().int().min(1).max(100).default(20),
+        cursor: z
+          .string()
+          .describe(
+            "Opaque continuation token from a previous response's next_cursor. Copy it back exactly as received, character for character; it is not human-readable and must not be shortened, re-typed or reconstructed. Resend the same query and filters with it.",
+          )
+          .optional(),
+      }),
+      outputSchema: z.object({
+        results: z.array(
+          telegramMessageSchema.extend({ source_title: z.string() }),
+        ),
+        sources: z.array(
+          z.object({
+            source_id: z.string(),
+            title: z.string(),
+            hit_count: z.number().int(),
+            error: z
+              .object({ code: z.string(), message: z.string() })
+              .optional(),
+          }),
+        ),
+        total_matches: z.number().int().optional(),
+        next_cursor: z.string().optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) => runTool("search_messages", () => searchMessages(input)),
+  );
+}
+```
+
+```ts
+// src/mcp/server.ts — import and call, after registerGetThread(server);
+import { registerSearchMessages } from "./tools/search-messages";
+// ...
+  registerSearchMessages(server);
+```
+
+- [ ] **Step 6: Extend the handler test to nine tools**
+
+```ts
+// tests/mcp-handler.test.ts — the name list
+  it("advertises all nine tools", async () => {
+    const tools = await listTools();
+    expect(tools.map((tool) => tool.name).sort()).toEqual([
+      "get_channel",
+      "get_message",
+      "get_messages",
+      "get_thread",
+      "get_unread_summary",
+      "list_dialogs",
+      "list_folders",
+      "mark_read",
+      "search_messages",
+    ]);
+  });
+```
+
+- [ ] **Step 7: Run the gates**
+
+Run: `npm run test && npm run typecheck && npm run lint`
+Expected: all green.
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add src/mcp/tools/search-messages.ts src/mcp/server.ts src/mcp/tool-result.ts tests/logging.test.ts tests/mcp-handler.test.ts
+git commit -m "feat: expose search_messages with a flat, date-ordered page"
+```
+
+---
+
+### Task 8: `resolve_telegram_url` — turn a pasted link into something callable
+
+Spec §6.3. The tool never joins anything. Invite links are previewed through
+`messages.checkChatInvite`, which returns a title and a participant count
+without joining and without a usable peer.
+
+**Files:**
+- Modify: `src/telegram/dialogs.ts` (export `fetchChannelDetails`)
+- Create: `src/telegram/resolve.ts`
+- Create: `src/mcp/tools/resolve-telegram-url.ts`
+- Modify: `src/mcp/server.ts`
+- Test: `tests/telegram-resolve.test.ts`
+- Modify: `tests/mcp-handler.test.ts` (ten tools)
+
+**Interfaces:**
+- Consumes: `parseTelegramName`, `resolveSource` (Task 1); `toSource`, `foldersByPeer`, `fetchChannelDetails` from `src/telegram/dialogs.ts`; `fetchFolders`; `fetchDialogIndex`; `entityMarkedId`, `sourceType` from `src/telegram/peer-id.ts`.
+- Produces:
+  - `type ResolvedUrl = { kind: "source" | "post" | "invite"; source?: { source_id?: string; title: string; username?: string; type: "channel" | "group" | "chat"; subscriber_count?: number; linked_discussion_id?: string; joined: boolean; folder_ids?: string[] }; message_id?: number; comment_id?: number }`
+  - `function resolveTelegramUrl(input: { url: string }): Promise<ResolvedUrl>`
+  - `function registerResolveTelegramUrl(server: McpServer): void`
+
+**One `channels.getFullChannel` per invocation, never more.** It is the only
+source of `subscriber_count` for a channel the account does not hold and of
+`linked_discussion_id`, and it floods after roughly twenty calls with a wait
+teleproto absorbs by sleeping. This tool resolves exactly one peer, so one call
+is the ceiling by construction — do not add a second for the linked group.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/telegram-resolve.test.ts
+import { afterEach, describe, expect, it } from "vitest";
+import { resolveTelegramUrl } from "@/telegram/resolve";
+import {
+  __resetClientForTests,
+  __setClientFactoryForTests,
+} from "@/telegram/client";
+import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
+
+const HELD = "-1001111111111";
+
+function install(options: {
+  entity?: Record<string, unknown>;
+  full?: unknown;
+  invite?: unknown;
+}) {
+  const sent: string[] = [];
+  __setClientFactoryForTests(async () => ({
+    connected: true,
+    connect: async () => true,
+    getDialogs: async () => [
+      {
+        id: HELD,
+        title: "Alpha",
+        entity: { className: "Channel", id: 1111111111n, title: "Alpha" },
+        dialog: { readInboxMaxId: 0 },
+        unreadCount: 0,
+        date: 1,
+        message: { id: 1 },
+      },
+    ],
+    getEntity: async () =>
+      options.entity ?? { className: "Channel", id: 1111111111n, title: "Alpha" },
+    getMessages: async () => [],
+    invoke: async (request: unknown) => {
+      const r = request as { className: string };
+      sent.push(r.className);
+      if (r.className === "messages.CheckChatInvite") return options.invite;
+      if (r.className === "channels.GetFullChannel") return options.full;
+      return {};
+    },
+  }));
+  return sent;
+}
+
+afterEach(() => {
+  __setClientFactoryForTests(undefined);
+  __resetClientForTests();
+  __resetPeerCacheForTests();
+});
+
+describe("resolveTelegramUrl", () => {
+  it("resolves a channel the account already holds", async () => {
+    const sent = install({
+      full: {
+        fullChat: { about: "a", linkedChatId: 2222222222n, participantsCount: 40 },
+      },
+    });
+    const result = await resolveTelegramUrl({ url: "https://t.me/alpha" });
+
+    expect(result.kind).toBe("source");
+    expect(result.source).toMatchObject({
+      source_id: HELD,
+      title: "Alpha",
+      type: "channel",
+      joined: true,
+      linked_discussion_id: "-1002222222222",
+    });
+    expect(sent.filter((c) => c === "channels.GetFullChannel")).toHaveLength(1);
+  });
+
+  it("marks a channel the account has not joined", async () => {
+    install({
+      entity: {
+        className: "Channel",
+        id: 999n,
+        title: "Outside",
+        username: "outside",
+        participantsCount: 12345,
+      },
+      full: { fullChat: {} },
+    });
+    const result = await resolveTelegramUrl({ url: "t.me/outside" });
+    expect(result.source).toMatchObject({
+      source_id: "-100999",
+      username: "outside",
+      subscriber_count: 12345,
+      joined: false,
+    });
+  });
+
+  it("reads a post link, and a comment link under it", async () => {
+    install({ full: { fullChat: {} } });
+    const post = await resolveTelegramUrl({ url: "https://t.me/alpha/500" });
+    expect(post.kind).toBe("post");
+    expect(post.message_id).toBe(500);
+    expect(post.comment_id).toBeUndefined();
+
+    const comment = await resolveTelegramUrl({
+      url: "https://t.me/alpha/500?comment=42",
+    });
+    expect(comment.kind).toBe("post");
+    expect(comment.message_id).toBe(500);
+    expect(comment.comment_id).toBe(42);
+  });
+
+  it("previews an invite without joining and without a peer id", async () => {
+    const sent = install({
+      invite: {
+        className: "ChatInvite",
+        title: "Private Room",
+        participantsCount: 7,
+        megagroup: true,
+      },
+    });
+    const result = await resolveTelegramUrl({ url: "https://t.me/+AbCdEf" });
+
+    expect(result.kind).toBe("invite");
+    expect(result.source).toEqual({
+      title: "Private Room",
+      type: "group",
+      subscriber_count: 7,
+      joined: false,
+    });
+    expect(sent).toEqual(["messages.CheckChatInvite"]);
+  });
+
+  it("reports an invite the account already joined as joined", async () => {
+    install({
+      invite: {
+        className: "ChatInviteAlready",
+        chat: { className: "Channel", id: 1111111111n, title: "Alpha" },
+      },
+    });
+    const result = await resolveTelegramUrl({ url: "t.me/joinchat/AbCdEf" });
+    expect(result.kind).toBe("invite");
+    expect(result.source).toMatchObject({
+      source_id: HELD,
+      title: "Alpha",
+      joined: true,
+    });
+  });
+
+  it("fails a private internal link the account cannot hold", async () => {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      getDialogs: async () => [],
+      getEntity: async () => {
+        throw Object.assign(new Error("x"), { errorMessage: "CHANNEL_INVALID" });
+      },
+      getMessages: async () => [],
+      invoke: async () => ({}),
+    }));
+    await expect(
+      resolveTelegramUrl({ url: "https://t.me/c/9999999999/12" }),
+    ).rejects.toMatchObject({ code: "CHANNEL_NOT_FOUND" });
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `npx vitest run tests/telegram-resolve.test.ts`
+Expected: FAIL — `Failed to resolve import "@/telegram/resolve"`.
+
+- [ ] **Step 3: Export the single getFullChannel call site**
+
+```ts
+// src/telegram/dialogs.ts — change the declaration only
+export async function fetchChannelDetails(
+  client: TelegramLike,
+  entity: unknown,
+): Promise<SourceDetails> {
+```
+
+- [ ] **Step 4: Write the engine**
+
+```ts
+// src/telegram/resolve.ts
+import { withTelegram, getApi, type TelegramLike } from "./client";
+import { fetchDialogIndex } from "./dialog-index";
+import { fetchFolders } from "./folders";
+import { fetchChannelDetails, foldersByPeer, toSource } from "./dialogs";
+import { parseTelegramName, resolveSource } from "./peer-resolve";
+import { entityMarkedId, sourceType } from "./peer-id";
+import { GramScopeError } from "../errors/taxonomy";
+
+export type ResolvedUrl = {
+  kind: "source" | "post" | "invite";
+  source?: {
+    source_id?: string;
+    title: string;
+    username?: string;
+    type: "channel" | "group" | "chat";
+    subscriber_count?: number;
+    linked_discussion_id?: string;
+    joined: boolean;
+    folder_ids?: string[];
+  };
+  message_id?: number;
+  comment_id?: number;
+};
+
+/**
+ * messages.checkChatInvite previews a private chat without joining it. A
+ * preview carries no usable peer, so source_id is absent unless the account is
+ * already a member — in which case Telegram returns the chat itself.
+ */
+async function previewInvite(
+  client: TelegramLike,
+  hash: string,
+  joinedIds: Set<string>,
+  folderIndex: Map<string, string[]>,
+): Promise<ResolvedUrl> {
+  const Api = await getApi();
+  const raw = (await client.invoke(
+    new Api.messages.CheckChatInvite({ hash }),
+  )) as Record<string, unknown> | undefined;
+  const invite = raw ?? {};
+
+  const chat = invite.chat as Record<string, unknown> | undefined;
+  if (chat) {
+    // ChatInviteAlready or ChatInvitePeek: a real entity came back.
+    const source = toSource(chat, folderIndex);
+    return {
+      kind: "invite",
+      source: {
+        ...(source.id ? { source_id: source.id } : {}),
+        title: source.title,
+        ...(source.username !== undefined ? { username: source.username } : {}),
+        type: source.type,
+        ...(source.subscriber_count !== undefined
+          ? { subscriber_count: source.subscriber_count }
+          : {}),
+        joined: source.id ? joinedIds.has(source.id) : false,
+        ...(source.folder_ids ? { folder_ids: source.folder_ids } : {}),
+      },
+    };
+  }
+
+  const title = typeof invite.title === "string" ? invite.title : "";
+  const count =
+    typeof invite.participantsCount === "number"
+      ? invite.participantsCount
+      : undefined;
+  return {
+    kind: "invite",
+    source: {
+      title,
+      // An invite preview is not an entity, so sourceType cannot read it: the
+      // flags are what Telegram gives here.
+      type:
+        invite.megagroup === true
+          ? "group"
+          : invite.broadcast === true || invite.channel === true
+            ? "channel"
+            : "chat",
+      ...(count !== undefined ? { subscriber_count: count } : {}),
+      joined: false,
+    },
+  };
+}
+
+export async function resolveTelegramUrl(input: {
+  url: string;
+}): Promise<ResolvedUrl> {
+  const link = parseTelegramName(input.url);
+  const folders = await fetchFolders();
+  const folderIndex = foldersByPeer(folders);
+  const index = await fetchDialogIndex();
+
+  return withTelegram(async (client) => {
+    if (link.kind === "invite") {
+      return previewInvite(
+        client,
+        link.hash,
+        new Set(index.byId.keys()),
+        folderIndex,
+      );
+    }
+
+    const resolved = await resolveSource(client, index, input.url);
+    const entity =
+      resolved.entity ?? (await client.getEntity(resolved.handle));
+    if (entityMarkedId(entity) === undefined) {
+      throw new GramScopeError(
+        "CHANNEL_NOT_FOUND",
+        `Could not resolve ${input.url} to a Telegram peer`,
+      );
+    }
+
+    // The ONE getFullChannel of this call. Broadcast channels and megagroups
+    // carry their subscriber count and linked group only here; a failure costs
+    // those two fields, never the call.
+    const details =
+      sourceType(entity) === "channel" || sourceType(entity) === "group"
+        ? await fetchChannelDetails(client, entity).catch(() => ({}))
+        : {};
+
+    const source = toSource(entity, folderIndex, {
+      id: resolved.source_id,
+      title: resolved.title,
+      ...details,
+    });
+
+    return {
+      kind: link.messageId !== undefined ? "post" : "source",
+      source: {
+        source_id: source.id,
+        title: source.title,
+        ...(source.username !== undefined ? { username: source.username } : {}),
+        type: source.type,
+        ...(source.subscriber_count !== undefined
+          ? { subscriber_count: source.subscriber_count }
+          : {}),
+        ...(source.linked_discussion_id !== undefined
+          ? { linked_discussion_id: source.linked_discussion_id }
+          : {}),
+        joined: index.byId.has(source.id),
+        ...(source.folder_ids ? { folder_ids: source.folder_ids } : {}),
+      },
+      ...(link.messageId !== undefined ? { message_id: link.messageId } : {}),
+      ...(link.commentId !== undefined ? { comment_id: link.commentId } : {}),
+    };
+  });
+}
+```
+
+- [ ] **Step 5: Run the engine test to verify it passes**
+
+Run: `npx vitest run tests/telegram-resolve.test.ts`
+Expected: PASS, 6 tests.
+
+- [ ] **Step 6: Register the tool**
+
+```ts
+// src/mcp/tools/resolve-telegram-url.ts
+import { z } from "zod";
+import type { McpServer } from "@modelcontextprotocol/server";
+import { resolveTelegramUrl } from "../../telegram/resolve";
+import { runTool } from "../tool-result";
+
+export function registerResolveTelegramUrl(server: McpServer): void {
+  server.registerTool(
+    "resolve_telegram_url",
+    {
+      title: "Resolve a Telegram link",
+      description:
+        "Turn a Telegram link, @username or bare name into something the other tools can call. Accepts t.me/name, t.me/name/123, t.me/name/123?comment=456, t.me/c/<id>/<msg>, t.me/+hash and t.me/joinchat/hash. kind says what the link points at: a source, a specific post, or an invite. joined says whether the account is a member — it does NOT have to be for get_messages, get_thread or search_messages to read a public channel, so a resolved source_id or @username can be passed straight to them. An invite preview has no source_id and cannot be read; joining is not supported. A t.me/c/ link resolves only for chats the account is already in. This tool never joins anything and changes nothing.",
+      inputSchema: z.object({
+        url: z
+          .string()
+          .min(1)
+          .describe("A t.me link, a @username, or a bare channel name."),
+      }),
+      outputSchema: z.object({
+        kind: z.enum(["source", "post", "invite"]),
+        source: z
+          .object({
+            source_id: z.string().optional(),
+            title: z.string(),
+            username: z.string().optional(),
+            type: z.enum(["channel", "group", "chat"]),
+            subscriber_count: z.number().int().optional(),
+            linked_discussion_id: z.string().optional(),
+            joined: z.boolean(),
+            folder_ids: z.array(z.string()).optional(),
+          })
+          .optional(),
+        message_id: z.number().int().optional(),
+        comment_id: z.number().int().optional(),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async (input) =>
+      runTool("resolve_telegram_url", () => resolveTelegramUrl(input)),
+  );
+}
+```
+
+```ts
+// src/mcp/server.ts — import and call, after registerSearchMessages(server);
+import { registerResolveTelegramUrl } from "./tools/resolve-telegram-url";
+// ...
+  registerResolveTelegramUrl(server);
+```
+
+- [ ] **Step 7: Extend the handler test to ten tools**
+
+Add `"resolve_telegram_url"` to the sorted name list and rename the test to
+"advertises all ten tools". The sorted position is after `mark_read` and before
+`search_messages`.
+
+- [ ] **Step 8: Run the gates**
+
+Run: `npm run test && npm run typecheck && npm run lint`
+Expected: all green.
+
+- [ ] **Step 9: Commit**
+
+```bash
+git add src/telegram/resolve.ts src/telegram/dialogs.ts src/mcp/tools/resolve-telegram-url.ts src/mcp/server.ts tests/telegram-resolve.test.ts tests/mcp-handler.test.ts
+git commit -m "feat: expose resolve_telegram_url for links, usernames and invites"
+```
+
 ## Resume note
 
 Planning is in progress in this file. The tasks are appended in order, and each
