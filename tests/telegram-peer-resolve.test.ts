@@ -1,0 +1,157 @@
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  parseTelegramName,
+  resolveSource,
+  __resetPeerCacheForTests,
+} from "@/telegram/peer-resolve";
+import type { TelegramLike } from "@/telegram/client";
+import { GramScopeError } from "@/errors/taxonomy";
+
+const HELD = "-1001111111111";
+
+function entry(id: string, title: string, username?: string) {
+  return {
+    source_id: id,
+    title,
+    ...(username !== undefined ? { username } : {}),
+    unread_count: 0,
+    read_inbox_max_id: 0,
+    folder_ids: [] as string[],
+  };
+}
+
+const index = {
+  byId: new Map([[HELD, entry(HELD, "Held Channel", "held")]]),
+  folders: [],
+};
+
+function client(entities: Record<string, Record<string, unknown>>) {
+  const calls: string[] = [];
+  const fake = {
+    calls,
+    connect: async () => true,
+    invoke: async () => ({}),
+    getDialogs: async () => [],
+    getMessages: async () => [],
+    getEntity: async (target: string) => {
+      calls.push(target);
+      const found = entities[target];
+      if (!found) throw new Error("CHANNEL_INVALID");
+      return found;
+    },
+  };
+  return fake as unknown as TelegramLike & { calls: string[] };
+}
+
+afterEach(() => __resetPeerCacheForTests());
+
+describe("parseTelegramName", () => {
+  it("reads every form of a source name", () => {
+    expect(parseTelegramName("-1001234567890")).toEqual({
+      kind: "internal",
+      markedId: "-1001234567890",
+    });
+    expect(parseTelegramName("@exampleuser")).toEqual({
+      kind: "username",
+      username: "exampleuser",
+    });
+    expect(parseTelegramName("exampleuser")).toEqual({
+      kind: "username",
+      username: "exampleuser",
+    });
+    expect(parseTelegramName("https://t.me/exampleuser")).toEqual({
+      kind: "username",
+      username: "exampleuser",
+    });
+    expect(parseTelegramName("t.me/s/exampleuser")).toEqual({
+      kind: "username",
+      username: "exampleuser",
+    });
+    expect(parseTelegramName("https://t.me/exampleuser/123")).toEqual({
+      kind: "username",
+      username: "exampleuser",
+      messageId: 123,
+    });
+    expect(parseTelegramName("https://t.me/exampleuser/123?comment=456")).toEqual({
+      kind: "username",
+      username: "exampleuser",
+      messageId: 123,
+      commentId: 456,
+    });
+    expect(parseTelegramName("https://t.me/c/1234567890/55")).toEqual({
+      kind: "internal",
+      markedId: "-1001234567890",
+      messageId: 55,
+    });
+    expect(parseTelegramName("https://t.me/+AbCdEf")).toEqual({
+      kind: "invite",
+      hash: "AbCdEf",
+    });
+    expect(parseTelegramName("https://t.me/joinchat/AbCdEf")).toEqual({
+      kind: "invite",
+      hash: "AbCdEf",
+    });
+  });
+
+  it("rejects what is not a source name", () => {
+    for (const bad of ["", "   ", "https://example.com/exampleuser", "a b c"]) {
+      expect(() => parseTelegramName(bad), bad).toThrow(GramScopeError);
+    }
+  });
+});
+
+describe("resolveSource", () => {
+  it("answers from the dialog index without a round trip", async () => {
+    const fake = client({});
+    const resolved = await resolveSource(fake, index, HELD);
+    expect(resolved).toEqual({
+      source_id: HELD,
+      title: "Held Channel",
+      username: "held",
+      handle: "held",
+    });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("matches an index entry by its username too", async () => {
+    const fake = client({});
+    expect((await resolveSource(fake, index, "@Held")).source_id).toBe(HELD);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("resolves an outside channel by username and keeps it as the handle", async () => {
+    const fake = client({
+      outside: { className: "Channel", id: 999n, title: "Outside", username: "outside" },
+    });
+    const resolved = await resolveSource(fake, index, "https://t.me/outside");
+    expect(resolved).toEqual({
+      source_id: "-100999",
+      title: "Outside",
+      username: "outside",
+      handle: "outside",
+      entity: {
+        className: "Channel",
+        id: 999n,
+        title: "Outside",
+        username: "outside",
+      },
+    });
+    expect(fake.calls).toEqual(["outside"]);
+  });
+
+  it("memoizes a resolution for the life of the instance", async () => {
+    const fake = client({
+      outside: { className: "Channel", id: 999n, title: "Outside", username: "outside" },
+    });
+    await resolveSource(fake, index, "@outside");
+    await resolveSource(fake, index, "https://t.me/outside/17");
+    expect(fake.calls).toEqual(["outside"]);
+  });
+
+  it("refuses an invite link as a source name", async () => {
+    const fake = client({});
+    await expect(resolveSource(fake, index, "t.me/+AbCdEf")).rejects.toThrow(
+      /resolve_telegram_url/,
+    );
+  });
+});
