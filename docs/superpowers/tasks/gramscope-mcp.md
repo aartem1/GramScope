@@ -53,6 +53,8 @@ created: 2026-08-26
   - A post with zero comments and a channel with no linked group both fail `getReplies` with the same `MSG_ID_INVALID`. The two are indistinguishable by error, so the post's own `replies.replies` counter is the pre-check, not a try/catch.
   - `messages.getDiscussionMessage` maps a post to its anchor message in the discussion group and carries `maxId` / `unreadCount`; it is the join point if comment read state is ever wanted.
 - 2026-08-27 — **`channels.getFullChannel` floods fast.** About 20 calls in 5 seconds triggered a 27-second FLOOD_WAIT, which teleproto absorbs by sleeping — so a fan-out over it does not fail, it silently stalls the whole request past any serverless budget. Linked-chat discovery must be cached or done in small batches, never per-source inside a tool call.
+- 2026-08-27 — sub-project 3 (Research) scope decisions, taken with the owner during brainstorming. It ships `search_messages`, `get_thread`, `resolve_telegram_url` and `get_pinned_messages`. **Saved Messages reading and search move out of Slice 3 into sub-project 5**, next to `save_message`: the dedicated account's Saved Messages is empty and nothing writes to it until that tool exists, so they would ship decorative — the same argument that pulled `mark_read` into sub-project 2, applied in the other direction. Sources may be named three ways — marked id, username, or `t.me` URL — and the sub-project 2 reading tools are extended to accept all three, because a resolved link that no tool accepts is a dead end.
+- 2026-08-27 — **the grouped-by-source house format is overturned for search only.** Sub-project 2 carried forward that search should match the grouped shape. A global search page is a slice of a ranked stream across all chats, so its groups would be an artifact of the page and the same source would reappear as a fresh group on every subsequent page. `search_messages` therefore returns a flat, date-ordered list plus a per-source roll-up; `get_messages` keeps its groups, where one group per requested source is stable. The rule that replaces it: the shape follows whether the page's groups are stable, not the tool's arity.
 - 2026-08-27 — the brand assets live in the repository: `app/icon.svg`, `public/favicon.ico`, `public/avatar-512.png` (master), `public/avatar-512-min.png` (4KB, for the plugin upload), `public/avatar-256.jpg`.
 
 # Blocked — awaiting owner
@@ -92,6 +94,7 @@ From Task 12 (`tools/list` handler test):
 - spec (sub-project 1, Foundation): docs/superpowers/specs/2026-08-26-gramscope-foundation-design.md
 - plan (sub-project 1, Foundation): docs/superpowers/plans/2026-08-26-gramscope-foundation.md
 - spec (sub-project 2, Reading): docs/superpowers/specs/2026-08-27-gramscope-reading-design.md
+- spec (sub-project 3, Research): docs/superpowers/specs/2026-08-27-gramscope-research-design.md
 - plan (sub-project 2, Reading): docs/superpowers/plans/2026-08-27-gramscope-reading.md
 - ledger (sub-project 2, Reading): .superpowers/sdd/2026-08-27-gramscope-reading/progress.md — git-ignored, machine-local. It opens with a "How to resume this work in another tool" block; `/sp:next` reads it automatically.
 - ledger: deleted with the plan workspace after the final whole-branch review came back clean, per superpowers:subagent-driven-development. Recover sub-project 1's history from `git log` if needed.
