@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertSameScope,
   decodeCursor,
   decodeMessageCursor,
+  decodePinnedCursor,
+  decodeSearchGlobalCursor,
+  decodeSearchSourcesCursor,
+  decodeThreadCursor,
   encodeCursor,
   encodeMessageCursor,
+  encodePinnedCursor,
+  encodeSearchGlobalCursor,
+  encodeSearchSourcesCursor,
+  encodeThreadCursor,
+  scopeFingerprint,
   type DialogCursor,
   type MessageCursor,
 } from "@/pagination";
@@ -191,5 +201,74 @@ describe("cursor transport robustness", () => {
       error = caught;
     }
     expect((error as GramScopeError).message).toMatch(/exactly as/i);
+  });
+});
+
+describe("scopeFingerprint", () => {
+  it("ignores key order and absent filters", () => {
+    expect(scopeFingerprint({ q: "x", from: undefined })).toBe(
+      scopeFingerprint({ from: undefined, q: "x" }),
+    );
+    expect(scopeFingerprint({ q: "x" })).toBe(
+      scopeFingerprint({ q: "x", to: undefined }),
+    );
+  });
+
+  it("changes when any filter changes", () => {
+    const base = scopeFingerprint({ q: "x", sources: ["-1001"] });
+    expect(scopeFingerprint({ q: "y", sources: ["-1001"] })).not.toBe(base);
+    expect(scopeFingerprint({ q: "x", sources: ["-1002"] })).not.toBe(base);
+    expect(scopeFingerprint({ q: "x", sources: ["-1001"], to: "2026" })).not.toBe(
+      base,
+    );
+  });
+});
+
+describe("the search cursors", () => {
+  it("round-trips a global cursor", () => {
+    const cursor = { rate: 42, peer: "-100111", id: 7, fingerprint: "abc" };
+    expect(decodeSearchGlobalCursor(encodeSearchGlobalCursor(cursor))).toEqual(
+      cursor,
+    );
+  });
+
+  it("round-trips a per-source cursor", () => {
+    const cursor = {
+      sources: [
+        { handle: "-100111", offsetId: 9 },
+        { handle: "exampleuser", offsetId: 0 },
+      ],
+      fingerprint: "abc",
+    };
+    expect(decodeSearchSourcesCursor(encodeSearchSourcesCursor(cursor))).toEqual(
+      cursor,
+    );
+  });
+
+  it("round-trips thread and pinned cursors", () => {
+    const cursor = { offsetId: 5, fingerprint: "abc" };
+    expect(decodeThreadCursor(encodeThreadCursor(cursor))).toEqual(cursor);
+    expect(decodePinnedCursor(encodePinnedCursor(cursor))).toEqual(cursor);
+  });
+
+  it("rejects a cursor from another tool", () => {
+    const thread = encodeThreadCursor({ offsetId: 5, fingerprint: "abc" });
+    expect(() => decodePinnedCursor(thread)).toThrow(GramScopeError);
+    expect(() => decodeSearchGlobalCursor(thread)).toThrow(GramScopeError);
+    expect(() => decodeSearchSourcesCursor(thread)).toThrow(GramScopeError);
+  });
+});
+
+describe("assertSameScope", () => {
+  it("passes an unchanged scope and rejects a changed one", () => {
+    expect(() => assertSameScope("abc", "abc")).not.toThrow();
+    try {
+      assertSameScope("abc", "def");
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(GramScopeError);
+      expect((err as GramScopeError).code).toBe("INVALID_CURSOR");
+      expect((err as GramScopeError).message).toMatch(/scope/i);
+    }
   });
 });

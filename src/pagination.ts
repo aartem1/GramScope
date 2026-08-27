@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { GramScopeError } from "./errors/taxonomy";
 
@@ -137,4 +138,172 @@ export function decodeMessageCursor(raw: string): MessageCursor {
       offsetId: source.o,
     })),
   };
+}
+
+export const SEARCH_GLOBAL_CURSOR_KIND = "search_global";
+export const SEARCH_SOURCES_CURSOR_KIND = "search_sources";
+export const THREAD_CURSOR_KIND = "thread";
+export const PINNED_CURSOR_KIND = "pinned";
+
+/** Sorted keys and dropped undefined, so an absent filter and an omitted one
+ * fingerprint alike and key order never matters. */
+function stable(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stable);
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([key, entry]) => [key, stable(entry)]),
+    );
+  }
+  return value;
+}
+
+/**
+ * Spec §8. A page-two cursor must not survive a changed query: without this the
+ * second page silently answers a different question than the first.
+ */
+export function scopeFingerprint(parts: Record<string, unknown>): string {
+  return createHash("sha256")
+    .update(JSON.stringify(stable(parts)))
+    .digest("base64url")
+    .slice(0, 16);
+}
+
+export function assertSameScope(found: string, expected: string): void {
+  if (found === expected) return;
+  throw new GramScopeError(
+    "INVALID_CURSOR",
+    "This cursor was issued for a different query, source selection or date range — the scope changed, so it no longer describes the same result set. Start a new search without a cursor.",
+  );
+}
+
+export type SearchGlobalCursor = {
+  /** The previous page's next_rate, Telegram's own resume key. */
+  rate: number;
+  /** Marked id of the last hit served; resolved to an InputPeer on resume. */
+  peer: string;
+  id: number;
+  fingerprint: string;
+};
+
+const searchGlobalPayloadSchema = z.object({
+  v: z.literal(CURSOR_VERSION),
+  k: z.literal(SEARCH_GLOBAL_CURSOR_KIND),
+  r: z.number().int(),
+  p: z.string(),
+  i: z.number().int(),
+  f: z.string(),
+});
+
+export function encodeSearchGlobalCursor(cursor: SearchGlobalCursor): string {
+  return encodePayload({
+    v: CURSOR_VERSION,
+    k: SEARCH_GLOBAL_CURSOR_KIND,
+    r: cursor.rate,
+    p: cursor.peer,
+    i: cursor.id,
+    f: cursor.fingerprint,
+  });
+}
+
+export function decodeSearchGlobalCursor(raw: string): SearchGlobalCursor {
+  const payload = decodePayload(
+    raw,
+    SEARCH_GLOBAL_CURSOR_KIND,
+    searchGlobalPayloadSchema,
+  );
+  return {
+    rate: payload.r,
+    peer: payload.p,
+    id: payload.i,
+    fingerprint: payload.f,
+  };
+}
+
+export type SearchSourcesCursor = {
+  /** `handle`, not a marked id: see ResolvedSource.handle. */
+  sources: Array<{ handle: string; offsetId: number }>;
+  fingerprint: string;
+};
+
+const searchSourcesPayloadSchema = z.object({
+  v: z.literal(CURSOR_VERSION),
+  k: z.literal(SEARCH_SOURCES_CURSOR_KIND),
+  s: z.array(z.object({ h: z.string(), o: z.number().int() })),
+  f: z.string(),
+});
+
+export function encodeSearchSourcesCursor(cursor: SearchSourcesCursor): string {
+  return encodePayload({
+    v: CURSOR_VERSION,
+    k: SEARCH_SOURCES_CURSOR_KIND,
+    s: cursor.sources.map((source) => ({
+      h: source.handle,
+      o: source.offsetId,
+    })),
+    f: cursor.fingerprint,
+  });
+}
+
+export function decodeSearchSourcesCursor(raw: string): SearchSourcesCursor {
+  const payload = decodePayload(
+    raw,
+    SEARCH_SOURCES_CURSOR_KIND,
+    searchSourcesPayloadSchema,
+  );
+  return {
+    sources: payload.s.map((source) => ({
+      handle: source.h,
+      offsetId: source.o,
+    })),
+    fingerprint: payload.f,
+  };
+}
+
+/** get_thread and get_pinned_messages page one stream by offset_id. Same
+ * shape, separate kinds: a thread cursor must not decode as a pinned one. */
+export type OffsetCursor = { offsetId: number; fingerprint: string };
+
+function offsetPayloadSchema<K extends string>(kind: K) {
+  return z.object({
+    v: z.literal(CURSOR_VERSION),
+    k: z.literal(kind),
+    o: z.number().int(),
+    f: z.string(),
+  });
+}
+
+function encodeOffsetCursor(kind: string, cursor: OffsetCursor): string {
+  return encodePayload({
+    v: CURSOR_VERSION,
+    k: kind,
+    o: cursor.offsetId,
+    f: cursor.fingerprint,
+  });
+}
+
+function decodeOffsetCursor<K extends string>(
+  raw: string,
+  kind: K,
+): OffsetCursor {
+  const payload = decodePayload(raw, kind, offsetPayloadSchema(kind));
+  return { offsetId: payload.o, fingerprint: payload.f };
+}
+
+export function encodeThreadCursor(cursor: OffsetCursor): string {
+  return encodeOffsetCursor(THREAD_CURSOR_KIND, cursor);
+}
+
+export function decodeThreadCursor(raw: string): OffsetCursor {
+  return decodeOffsetCursor(raw, THREAD_CURSOR_KIND);
+}
+
+export function encodePinnedCursor(cursor: OffsetCursor): string {
+  return encodeOffsetCursor(PINNED_CURSOR_KIND, cursor);
+}
+
+export function decodePinnedCursor(raw: string): OffsetCursor {
+  return decodeOffsetCursor(raw, PINNED_CURSOR_KIND);
 }
