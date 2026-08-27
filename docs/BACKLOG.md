@@ -73,3 +73,51 @@ The agent should ideally receive normalized candidates with provenance, then use
 - TelegramChannels.me API: https://telegramchannels.me/api-doc
 - Nicegram Hub: https://nicegram.app/hub/
 - Telega.in catalogue: https://telega.in/catalog
+
+## Threads as a public discovery source
+
+**Idea:** add Threads as a second high-quality public information source, focused on agent-driven search over public posts rather than subscriptions.
+
+### Why it fits
+
+The official Threads API supports public keyword/topic search, so GramScope could answer questions such as:
+
+- "What are people on Threads saying about GPT-6 in the last hour?"
+- "Summarize the main reactions to this launch over the last day."
+- "Find recent Threads posts about Claude Code from the last week."
+
+This does not require following the authors first. The useful model is on-demand public discovery rather than maintaining a subscription graph.
+
+### Expected integration shape
+
+A minimal future tool could look like:
+
+- `search_threads(query, from?, to?, sort?, limit?)`
+
+The adapter should return normalized post data such as text, author, timestamp, permalink and source metadata. The agent can run several simple searches for a broader topic, merge and deduplicate results, then perform its own semantic ranking and summarization.
+
+### Access and operational constraints
+
+- Official Meta Threads API; no browser scraping should be required.
+- Requires a Meta developer app, a Threads account/profile and OAuth.
+- Public keyword search requires the relevant Threads search permission and, for production use across other users' public content, Meta Advanced Access / App Review.
+- Long-lived access tokens still require lifecycle management and refresh.
+- API usage is currently not priced per request, but rate limits and permission requirements must be revalidated before implementation because Meta can change them.
+- Current search supports recent/top-style discovery and time-bounded queries, which maps well to hour/day/week agent requests.
+
+### Main risk
+
+The technical adapter is relatively straightforward. The real dependency is **Meta approval**. Do not commit significant implementation effort until a small spike proves that the intended personal research/listening use case can obtain the required public keyword-search access.
+
+### Suggested spike if this is promoted
+
+1. Create a Threads-enabled Meta developer app.
+2. Implement OAuth and obtain the required search permission.
+3. Confirm public search works for posts outside the authorized user's own content.
+4. Test practical queries over 1 hour, 1 day and 1 week windows.
+5. Measure result quality, pagination behaviour and effective rate limits.
+6. Only then design the permanent GramScope adapter.
+
+### Research reference
+
+- Meta Threads API collection: https://www.postman.com/meta/threads/collection/dht3nzz/threads-api
