@@ -70,35 +70,41 @@ created: 2026-08-26
 
 # Handoff — sub-project 3, Research
 
-Written 2026-08-27 for whichever agent continues this. The SDD ledger under
-`.superpowers/sdd/` is git-ignored and machine-local, so it will not travel:
-this section and git history are the whole record.
+Rewritten 2026-08-27. The SDD ledger under `.superpowers/sdd/` is git-ignored
+and machine-local, so it will not travel: this section and git history are the
+whole record.
 
-**State.** Requirements, spec and plan are done and the owner approved the
-spec. Implementation has not begun. `main` = `origin/main` = `d57e1a5`, working
-tree clean, no feature branches (the owner works directly on `main` until
-launch). The last pushed deployment is still the sub-project 2 one; nothing in
-this sub-project has been deployed.
+**State.** All twelve plan tasks are done, reviewed and pushed, and the owner's
+ChatGPT connector acceptance passed (see "Changes and findings"). The final
+whole-implementation review of `3832daa..7ddece2` then returned **Needs fixes**
+with three Important findings, and fix round 1/5 is implemented at
+`71420c8..ad2bec8` — three commits, one per finding. Fast gates green at
+327 tests, typecheck and lint clean; the live tier is 25/25 with no skips.
+A scoped re-review of `7ddece2..ad2bec8` is what closes the round.
 
-**Next step.** Execute `docs/superpowers/plans/2026-08-27-gramscope-research.md`
-with `superpowers:subagent-driven-development`, starting at Task 1. Do not
-re-plan and do not re-brainstorm: the plan's twelve tasks are self-contained,
-each carries its own tests and gates, and its final section maps every spec
-section to the task that implements it.
+`main` is ahead of `origin/main`: the fix commits and the card update are
+**not pushed**, because a push deploys to Vercel and the owner authorizes that
+explicitly. The deployed production build is still `7ddece2`, which carries all
+three defects.
 
-**What must not be redone.** Commits `d331e0e` through `d57e1a5` are the whole
-of this sub-project's requirements work: the two owner open questions answered
-by live probe, the spec, the spec's four-cursor amendment, the scope decisions
-on this card, and the plan. The live Telegram measurements behind them are
-recorded under "Changes and findings" and cost real FLOOD_WAIT budget — read
-them rather than re-probing.
+**Next step.** Take the scoped re-review's verdict. On `Approved`, record the
+round complete in the ledger, ask the owner to authorize the push, then push
+and confirm the Vercel deployment reaches Ready and `/api/mcp` still answers
+401 with its `WWW-Authenticate` challenge. On `Needs fixes`, open fix round 2/5
+against the same three findings; the budget is five rounds.
 
-**Obligations while executing.** Push to `main` only where Task 12 says to: a
-push deploys to Vercel. Keep this card current with non-derived facts as they
-happen — findings, rulings, review outcomes — because the ledger does not
-survive a change of machine. Never print the StringSession or any credential.
-Reconnect the ChatGPT connector before acceptance; it caches its tool list at
-install time and this sub-project adds four tools.
+**What must not be redone.** Sub-project 3 itself is finished and accepted —
+do not re-plan, re-brainstorm or re-execute any of the twelve tasks. The three
+findings are already fixed; verify the fix rather than rewriting it. The live
+Telegram measurements under "Changes and findings" cost real FLOOD_WAIT budget,
+so read them rather than re-probing.
+
+**Obligations.** Keep this card current with non-derived facts as they happen,
+because the ledger does not survive a change of machine. Never print the
+StringSession or any credential. Reconnect the ChatGPT connector before any
+acceptance run; it caches its tool list at install time. Only the three fixed
+tool descriptions changed, but the connector must still be reconnected to see
+them.
 
 # Blocked — awaiting owner
 Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
