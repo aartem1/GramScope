@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   getMessage,
   getMessages,
-  MAX_RAW_SOURCE_NAMES_PER_CALL,
+  MAX_NETWORK_RESOLUTIONS_PER_CALL,
   parseDateBound,
   renderPage,
   resolveSourceSet,
@@ -135,11 +135,12 @@ describe("resolveSourceSet", () => {
     expect((error as GramScopeError).code).toBe("INVALID_INPUT");
   });
 
-  it("rejects a raw name list past the pre-resolution limit", () => {
+  it("rejects more unjoined names than one call may look up", () => {
     // The 25-source ceiling now counts canonical sources and so cannot be
-    // applied before resolution. This looser guard is what still bounds how
-    // many entity resolutions one call can buy.
-    const over = MAX_RAW_SOURCE_NAMES_PER_CALL + 1;
+    // applied before resolution. This guard bounds what resolution costs:
+    // names the dialog index cannot answer, which are the ones that reach
+    // the network.
+    const over = MAX_NETWORK_RESOLUTIONS_PER_CALL + 1;
     const many = Array.from({ length: over }, (_, i) => `-100${i}`);
     const error = (() => {
       try {
@@ -151,6 +152,32 @@ describe("resolveSourceSet", () => {
     })();
     expect((error as GramScopeError).code).toBe("INVALID_INPUT");
     expect((error as GramScopeError).message).toContain(String(over));
+    // The message must name the ceiling the caller is actually splitting
+    // toward, not only the lookup budget it happened to trip.
+    expect((error as GramScopeError).message).toContain("25");
+  });
+
+  it("does not charge held sources or their exclusions against that budget", () => {
+    // A whole folder minus half of it was rejected once: every member is a
+    // peer the account holds, so resolving them costs nothing.
+    const many = Array.from({ length: 60 }, (_, i) => `-100${i}`);
+    const wide = {
+      byId: new Map(many.map((id) => [id, entry(id, id)])),
+      folders: [
+        {
+          id: "9",
+          title: "Wide",
+          included_peer_ids: many,
+          excluded_peer_ids: [],
+          order: 0,
+        },
+      ],
+    };
+    const set = resolveSourceSet(
+      { folder_ids: ["9"], exclude_source_ids: many.slice(0, 35), limit: 20 },
+      wide,
+    );
+    expect(set).toHaveLength(60);
   });
 
   it("takes its source set from the cursor and ignores source_ids", () => {
@@ -167,11 +194,11 @@ describe("resolveSourceSet", () => {
     expect(set).toEqual([{ handle: B, offsetId: 77 }]);
   });
 
-  it("applies the pre-resolution limit to a cursor too", () => {
+  it("applies the lookup budget to a cursor too", () => {
     // Catches returning decoded cursor sources without any bound at all: a
     // cursor is client-supplied and must not buy more resolutions than a
     // fresh selection can.
-    const over = MAX_RAW_SOURCE_NAMES_PER_CALL + 1;
+    const over = MAX_NETWORK_RESOLUTIONS_PER_CALL + 1;
     const error = (() => {
       try {
         resolveSourceSet(
@@ -595,6 +622,118 @@ describe("getMessages", () => {
     expect(page.sources).toHaveLength(1);
     expect(page.sources[0]!.error?.code).toBe("CHANNEL_NOT_FOUND");
     expect(reads).toEqual([]);
+  });
+
+  /**
+   * Resolves `@outside` over the network but refuses its marked id, which is
+   * the real cold-instance asymmetry: a peer the account has not joined
+   * answers to its username and not to a bare id.
+   */
+  function outsideFactory(lookups: string[] = []) {
+    return async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => dialogs,
+      getEntity: async (target: string) => {
+        lookups.push(target);
+        if (target === "outside") {
+          return {
+            className: "Channel",
+            id: { value: 555n },
+            usernames: [
+              { username: "outside", active: true, editable: true },
+              { username: "outside_news", active: true },
+            ],
+          };
+        }
+        const error = new Error("CHANNEL_INVALID stub");
+        (error as unknown as { errorMessage: string }).errorMessage =
+          "CHANNEL_INVALID";
+        throw error;
+      },
+      getMessages: async () => [],
+    });
+  }
+
+  it("subtracts an unresolvable exclusion by the marked id of a source named otherwise", async () => {
+    // The headline case of the degrade path: the channel was selected by
+    // username, the exclusion names the same peer by an id no cold instance
+    // resolves, and only the resolved source's own marked id can match it.
+    __setClientFactoryForTests(outsideFactory());
+
+    const page = await getMessages({
+      source_ids: ["@outside", A],
+      exclude_source_ids: ["-100555"],
+      limit: 20,
+    });
+
+    expect(page.sources.map((source) => source.source_id)).toEqual([A]);
+  });
+
+  it("subtracts an unresolvable exclusion naming a secondary username", async () => {
+    // A peer with collectible usernames answers to all of them, so the one it
+    // travels by is not the only name that refers to it.
+    __setClientFactoryForTests(outsideFactory());
+
+    const page = await getMessages({
+      source_ids: ["@outside", A],
+      exclude_source_ids: ["@outside_news"],
+      limit: 20,
+    });
+
+    expect(page.sources.map((source) => source.source_id)).toEqual([A]);
+  });
+
+  it("looks a source up once however many ways it is spelled", async () => {
+    const lookups: string[] = [];
+    __setClientFactoryForTests(outsideFactory(lookups));
+
+    await getMessages({
+      source_ids: ["@outside", "https://t.me/outside", "@Outside"],
+      limit: 20,
+    });
+
+    expect(lookups).toEqual(["outside"]);
+  });
+
+  it("fails the call on a malformed exclusion rather than ignoring it", async () => {
+    // Degrading is for a name Telegram cannot find, not for a name that never
+    // named anything: spec §11 answers a bad source name with INVALID_INPUT,
+    // and an exclusion silently dropped returns content the caller excluded.
+    __setClientFactoryForTests(factory({ [ALPHA_HANDLE]: [post(10)] }));
+
+    await expect(
+      getMessages({
+        folder_ids: ["2"],
+        exclude_source_ids: ["Alpha News"],
+        limit: 20,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("fails the call when an exclusion is rate limited", async () => {
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => dialogs,
+      getEntity: async () => {
+        const error = new Error("flood stub");
+        (error as unknown as { errorMessage: string }).errorMessage =
+          "FLOOD_WAIT_30";
+        throw error;
+      },
+      getMessages: async () => [],
+    }));
+
+    await expect(
+      getMessages({
+        source_ids: [A],
+        exclude_source_ids: ["@throttled"],
+        limit: 20,
+      }),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED" });
   });
 
   it("subtracts an exclusion named by marked id", async () => {

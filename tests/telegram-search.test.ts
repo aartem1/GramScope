@@ -11,7 +11,7 @@ import {
   encodeSearchSourcesCursor,
 } from "@/pagination";
 import { GramScopeError } from "@/errors/taxonomy";
-import { MAX_RAW_SOURCE_NAMES_PER_CALL } from "@/telegram/source-selection";
+import { MAX_NETWORK_RESOLUTIONS_PER_CALL } from "@/telegram/source-selection";
 
 const A = "-1001111111111";
 const B = "-1002222222222";
@@ -492,16 +492,16 @@ describe("fan-out search", () => {
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
-  it("counts exclusions toward the pre-resolution name limit", async () => {
-    // The raw guard is what bounds resolutions, and an exclusion costs one
-    // resolution just as a selected source does.
+  it("counts unjoined exclusions toward the lookup budget", async () => {
+    // The guard bounds resolutions, and an exclusion the account has not
+    // joined costs one just as a selected source does.
     const sent = installFanout({});
     await expect(
       searchMessages({
         query: "ai",
         source_ids: [A],
         exclude_source_ids: Array.from(
-          { length: MAX_RAW_SOURCE_NAMES_PER_CALL },
+          { length: MAX_NETWORK_RESOLUTIONS_PER_CALL + 1 },
           (_, n) => `-1009${n}`,
         ),
         limit: 10,

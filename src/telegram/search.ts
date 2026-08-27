@@ -13,7 +13,10 @@ import { mediaFilter, type MediaType } from "./message-slice";
 import { parseDateBound } from "./messages";
 import { inputPeerMarkedId } from "./peer-id";
 import { nameKey } from "./peer-resolve";
-import { assertRawSourceCount, prepareSourceTargets } from "./source-selection";
+import {
+  assertResolutionBudget,
+  prepareSourceTargets,
+} from "./source-selection";
 import { readMessagesPage } from "./tl-messages";
 import {
   assertSameScope,
@@ -280,10 +283,10 @@ async function sourcesPage(
   const targets = cursor
     ? cursor.sources
     : targetNames(input, index).map((handle) => ({ handle, offsetId: 0 }));
-  assertRawSourceCount(
-    targets.length,
-    cursor ? 0 : (input.exclude_source_ids?.length ?? 0),
-  );
+  assertResolutionBudget(index, [
+    ...targets.map((target) => target.handle),
+    ...(cursor ? [] : (input.exclude_source_ids ?? [])),
+  ]);
 
   // Resolution first, in its own pass: it is free for peers the account holds,
   // and doing it before the searches means an excluded source never costs a

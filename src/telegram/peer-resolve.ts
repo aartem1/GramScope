@@ -136,6 +136,34 @@ export function __resetPeerCacheForTests(): void {
   cache.clear();
 }
 
+/** The dialog index answers for every peer the account holds, and only for
+ *  those; a miss is what costs a network round trip. */
+function heldEntry(index: DialogIndex, link: TelegramLink) {
+  if (link.kind === "invite") return undefined;
+  if (link.kind === "internal") return index.byId.get(link.markedId);
+  return [...index.byId.values()].find(
+    (candidate) =>
+      candidate.username?.toLowerCase() === link.username.toLowerCase(),
+  );
+}
+
+/**
+ * Whether resolving this name will stay local. Used to budget a call's
+ * network resolutions before spending any of them.
+ *
+ * The module-level resolve cache is deliberately not consulted: counting it
+ * would make the same request legal on a warm instance and rejected on a cold
+ * one. An unparseable name counts as needing the network, because it fails in
+ * `resolveSource` rather than here.
+ */
+export function resolvesLocally(index: DialogIndex, raw: string): boolean {
+  try {
+    return heldEntry(index, parseTelegramName(raw)) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export async function resolveSource(
   client: TelegramLike,
   index: DialogIndex,
@@ -156,13 +184,7 @@ export async function resolveSource(
   const cached = cache.get(key);
   if (cached) return cached;
 
-  const held =
-    link.kind === "internal"
-      ? index.byId.get(link.markedId)
-      : [...index.byId.values()].find(
-          (candidate) =>
-            candidate.username?.toLowerCase() === link.username.toLowerCase(),
-        );
+  const held = heldEntry(index, link);
 
   if (held) {
     const resolved: ResolvedSource = {

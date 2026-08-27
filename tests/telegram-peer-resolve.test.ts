@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  nameKey,
   parseTelegramName,
   resolveSource,
+  resolvesLocally,
   __resetPeerCacheForTests,
 } from "@/telegram/peer-resolve";
 import type { TelegramLike } from "@/telegram/client";
@@ -121,7 +123,12 @@ describe("resolveSource", () => {
 
   it("resolves an outside channel by username and keeps it as the handle", async () => {
     const fake = client({
-      outside: { className: "Channel", id: 999n, title: "Outside", username: "outside" },
+      outside: {
+        className: "Channel",
+        id: 999n,
+        title: "Outside",
+        username: "outside",
+      },
     });
     const resolved = await resolveSource(fake, index, "https://t.me/outside");
     expect(resolved).toEqual({
@@ -149,7 +156,12 @@ describe("resolveSource", () => {
         title: "Outside",
         username: null,
         usernames: [
-          { className: "Username", username: "outside", editable: true, active: true },
+          {
+            className: "Username",
+            username: "outside",
+            editable: true,
+            active: true,
+          },
           { className: "Username", username: "outside_old", active: true },
         ],
       },
@@ -171,7 +183,12 @@ describe("resolveSource", () => {
 
   it("memoizes a resolution for the life of the instance", async () => {
     const fake = client({
-      outside: { className: "Channel", id: 999n, title: "Outside", username: "outside" },
+      outside: {
+        className: "Channel",
+        id: 999n,
+        title: "Outside",
+        username: "outside",
+      },
     });
     await resolveSource(fake, index, "@outside");
     await resolveSource(fake, index, "https://t.me/outside/17");
@@ -183,5 +200,48 @@ describe("resolveSource", () => {
     await expect(resolveSource(fake, index, "t.me/+AbCdEf")).rejects.toThrow(
       /resolve_telegram_url/,
     );
+  });
+});
+
+describe("nameKey", () => {
+  it("gives every spelling of one peer the same key", () => {
+    expect(nameKey("@Alpha")).toBe("u:alpha");
+    expect(nameKey("alpha")).toBe("u:alpha");
+    expect(nameKey("https://t.me/alpha")).toBe("u:alpha");
+    expect(nameKey("t.me/s/alpha/42")).toBe("u:alpha");
+    expect(nameKey("-1001111111111")).toBe("i:-1001111111111");
+    expect(nameKey("t.me/c/1111111111/42")).toBe("i:-1001111111111");
+    expect(nameKey("t.me/+AbCdEf")).toBe("v:AbCdEf");
+  });
+
+  it("keeps distinct peers apart across key kinds", () => {
+    expect(nameKey("@alpha")).not.toBe(nameKey("@beta"));
+    expect(nameKey("-1001111111111")).not.toBe(nameKey("-1002222222222"));
+    expect(nameKey("@alpha")).not.toBe(nameKey("-1001111111111"));
+  });
+
+  it("falls back to the raw text for a name that does not parse", () => {
+    // Such a name can only ever become an error row, and two identical bad
+    // names are still one row. The prefix keeps it out of the other kinds.
+    expect(nameKey("  Alpha News  ")).toBe("raw:alpha news");
+    expect(nameKey("Alpha News")).toBe(nameKey("alpha news"));
+    expect(nameKey("")).toBe("raw:");
+    expect(nameKey("Alpha News").startsWith("raw:")).toBe(true);
+  });
+});
+
+describe("resolvesLocally", () => {
+  it("is true only for a peer the dialog index already holds", () => {
+    expect(resolvesLocally(index, HELD)).toBe(true);
+    expect(resolvesLocally(index, "@held")).toBe(true);
+    expect(resolvesLocally(index, "https://t.me/HELD")).toBe(true);
+    expect(resolvesLocally(index, "-1009999999999")).toBe(false);
+    expect(resolvesLocally(index, "@outside")).toBe(false);
+  });
+
+  it("counts an unusable name as needing the network", () => {
+    // It fails in resolveSource, not in the budget, so it must not be free.
+    expect(resolvesLocally(index, "Alpha News")).toBe(false);
+    expect(resolvesLocally(index, "t.me/+AbCdEf")).toBe(false);
   });
 });
