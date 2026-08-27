@@ -10,6 +10,48 @@ export const CURSOR_VERSION = 1;
  * foreign cursor to be rejected as INVALID_CURSOR.
  */
 export const DIALOG_CURSOR_KIND = "dialogs";
+export const MESSAGE_CURSOR_KIND = "messages";
+
+const envelopeSchema = z.object({
+  v: z.literal(CURSOR_VERSION),
+  k: z.string(),
+});
+
+function encodePayload(payload: Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+/**
+ * Decodes one cursor kind. The envelope is checked before the body so a
+ * foreign or outdated cursor is rejected on identity rather than on whichever
+ * field happens to differ.
+ */
+function decodePayload<S extends z.ZodType>(
+  raw: string,
+  kind: string,
+  schema: S,
+): z.infer<S> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
+  } catch {
+    throw new GramScopeError("INVALID_CURSOR", "Cursor is not decodable");
+  }
+
+  const envelope = envelopeSchema.safeParse(parsed);
+  if (!envelope.success || envelope.data.k !== kind) {
+    throw new GramScopeError(
+      "INVALID_CURSOR",
+      "Cursor is from another tool or an unsupported version",
+    );
+  }
+
+  const result = schema.safeParse(parsed);
+  if (!result.success) {
+    throw new GramScopeError("INVALID_CURSOR", "Cursor is malformed");
+  }
+  return result.data;
+}
 
 /**
  * Telegram resumes getDialogs from offset_date + offset_id + offset_peer, but
@@ -31,7 +73,7 @@ export type DialogCursor = {
   boundaryIds: string[];
 };
 
-const payloadSchema = z.object({
+const dialogPayloadSchema = z.object({
   v: z.literal(CURSOR_VERSION),
   k: z.literal(DIALOG_CURSOR_KIND),
   d: z.number().int(),
@@ -40,35 +82,56 @@ const payloadSchema = z.object({
 });
 
 export function encodeCursor(cursor: DialogCursor): string {
-  const payload = {
+  return encodePayload({
     v: CURSOR_VERSION,
     k: DIALOG_CURSOR_KIND,
     d: cursor.offsetDate,
     i: cursor.offsetId,
     b: cursor.boundaryIds,
-  };
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  });
 }
 
 export function decodeCursor(raw: string): DialogCursor {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(Buffer.from(raw, "base64url").toString("utf8"));
-  } catch {
-    throw new GramScopeError("INVALID_CURSOR", "Cursor is not decodable");
-  }
-
-  const result = payloadSchema.safeParse(parsed);
-  if (!result.success) {
-    throw new GramScopeError(
-      "INVALID_CURSOR",
-      "Cursor is malformed, from another tool, or from an unsupported version",
-    );
-  }
-
+  const payload = decodePayload(raw, DIALOG_CURSOR_KIND, dialogPayloadSchema);
   return {
-    offsetDate: result.data.d,
-    offsetId: result.data.i,
-    boundaryIds: result.data.b,
+    offsetDate: payload.d,
+    offsetId: payload.i,
+    boundaryIds: payload.b,
+  };
+}
+
+/**
+ * Message ids inside one peer are strictly monotonic, so an offset_id is an
+ * exact resume point: there is no boundary tie to disambiguate and therefore
+ * no boundaryIds equivalent here. `offsetId: 0` means "start from the newest".
+ */
+export type MessageCursor = {
+  sources: Array<{ sourceId: string; offsetId: number }>;
+};
+
+const messagePayloadSchema = z.object({
+  v: z.literal(CURSOR_VERSION),
+  k: z.literal(MESSAGE_CURSOR_KIND),
+  s: z.array(z.object({ i: z.string(), o: z.number().int() })),
+});
+
+export function encodeMessageCursor(cursor: MessageCursor): string {
+  return encodePayload({
+    v: CURSOR_VERSION,
+    k: MESSAGE_CURSOR_KIND,
+    s: cursor.sources.map((source) => ({
+      i: source.sourceId,
+      o: source.offsetId,
+    })),
+  });
+}
+
+export function decodeMessageCursor(raw: string): MessageCursor {
+  const payload = decodePayload(raw, MESSAGE_CURSOR_KIND, messagePayloadSchema);
+  return {
+    sources: payload.s.map((source) => ({
+      sourceId: source.i,
+      offsetId: source.o,
+    })),
   };
 }

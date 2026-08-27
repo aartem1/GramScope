@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { decodeCursor, encodeCursor, type DialogCursor } from "@/pagination";
+import {
+  decodeCursor,
+  decodeMessageCursor,
+  encodeCursor,
+  encodeMessageCursor,
+  type DialogCursor,
+  type MessageCursor,
+} from "@/pagination";
 import { GramScopeError } from "@/errors/taxonomy";
 
 const cursor: DialogCursor = {
@@ -74,5 +81,62 @@ describe("cursors", () => {
       "base64url",
     );
     expect(() => decodeCursor(legacy)).toThrowError(GramScopeError);
+  });
+});
+
+const messageCursor: MessageCursor = {
+  sources: [
+    { sourceId: "-1001234567890", offsetId: 4242 },
+    { sourceId: "-1009876543210", offsetId: 0 },
+  ],
+};
+
+describe("message cursors", () => {
+  it("round-trips a per-source offset list", () => {
+    expect(decodeMessageCursor(encodeMessageCursor(messageCursor))).toEqual(
+      messageCursor,
+    );
+  });
+
+  it("carries its own kind discriminator", () => {
+    const decoded: unknown = JSON.parse(
+      Buffer.from(encodeMessageCursor(messageCursor), "base64url").toString(
+        "utf8",
+      ),
+    );
+    expect(decoded).toMatchObject({ k: "messages" });
+  });
+
+  it("refuses a dialog cursor rather than returning a wrong page", () => {
+    const error = (() => {
+      try {
+        decodeMessageCursor(encodeCursor(cursor));
+      } catch (e) {
+        return e;
+      }
+      return undefined;
+    })();
+    expect(error).toBeInstanceOf(GramScopeError);
+    expect((error as GramScopeError).code).toBe("INVALID_CURSOR");
+  });
+
+  it("refuses a message cursor at the dialog decoder", () => {
+    expect(() => decodeCursor(encodeMessageCursor(messageCursor))).toThrowError(
+      GramScopeError,
+    );
+  });
+
+  it("refuses a future version", () => {
+    const forged = Buffer.from(
+      JSON.stringify({ v: 99, k: "messages", s: [] }),
+    ).toString("base64url");
+    expect(() => decodeMessageCursor(forged)).toThrowError(GramScopeError);
+  });
+
+  it("refuses a structurally wrong payload", () => {
+    const forged = Buffer.from(
+      JSON.stringify({ v: 1, k: "messages", s: [{ i: 1, o: "x" }] }),
+    ).toString("base64url");
+    expect(() => decodeMessageCursor(forged)).toThrowError(GramScopeError);
   });
 });
