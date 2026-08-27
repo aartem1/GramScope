@@ -121,3 +121,76 @@ The technical adapter is relatively straightforward. The real dependency is **Me
 ### Research reference
 
 - Meta Threads API collection: https://www.postman.com/meta/threads/collection/dht3nzz/threads-api
+
+## Multi-source identity and possible rename
+
+**Idea:** if GramScope becomes a real multi-source product rather than a Telegram-specific tool, reconsider the product identity so the name, deployment and plugin presentation describe the broader purpose.
+
+Do **not** rename the project yet. The rename should be triggered only after a second source (for example Threads) works end-to-end and proves that multi-source access is worth keeping. Until then, a rename would create migration work around an unvalidated direction.
+
+### What the product would represent
+
+The broader concept is not "one place for social networks". It is closer to:
+
+> agent access to information streams: search, discovery, reading and monitoring across multiple sources.
+
+That framing leaves room for Telegram and Threads now, and later RSS, Bluesky, GitHub, Hacker News or other sources without forcing every source to be a social network.
+
+### Naming principles
+
+A future name should ideally:
+
+- be source-neutral and not contain `gram`, `telegram`, `threads`, or another provider name;
+- work for both subscribed/private sources and public discovery;
+- still make sense if non-social sources such as RSS, GitHub or Hacker News are added;
+- be short enough for an MCP/plugin name, repository and deployment URL;
+- avoid sounding like a generic enterprise "social listening" dashboard;
+- be checked for active products, GitHub/package collisions, domains and trademarks before adoption.
+
+### Working naming directions
+
+These are exploration candidates, **not approved names**:
+
+1. **FeedScope** — current preferred working direction. Preserves the useful `Scope` continuity from GramScope and suggests looking across many information feeds. Weakness: `feed` slightly understates active global search/discovery.
+2. **Crossfeed** — emphasizes combining multiple independent sources into one agent surface. More distinctive, but availability and naming collisions need a proper check.
+3. **SocialScope** — immediately understandable for Telegram + Threads, but probably too narrow if RSS/GitHub/Hacker News become important. Not preferred for the broader architecture.
+4. **StreamScope** — semantically strong (`information streams` + `scope`) but an active App Store product already uses this name; avoid unless a future naming check finds a safe distinction.
+5. **SignalScope** — conceptually excellent for extracting useful signal from noisy sources, but already used by an active multi-source finance product; avoid.
+6. **SourceScope / SignalLens / PulseScope / SignalAtlas** — useful naming patterns, but current products already use these names; treat them as examples of the direction rather than candidates.
+
+A later naming pass should generate a wider set of more distinctive names rather than over-optimizing the temporary shortlist above.
+
+### Rename scope if promoted
+
+Treat the rename as a deliberate migration, not a search-and-replace. Likely surfaces:
+
+- GitHub repository name and repository description;
+- package/app identifiers where they are product-level rather than Telegram-adapter-specific;
+- README, architecture docs and new specs/tasks;
+- MCP server/plugin name, description and presentation metadata;
+- deployment/service name and public URL/domain;
+- OAuth redirect URLs and provider configuration that depend on the public URL;
+- environment/config names only when they refer to the overall product (Telegram-specific variables should remain Telegram-specific);
+- external links, badges and setup instructions.
+
+Do **not** rewrite historical branches, commits or old design documents merely to erase the GramScope name. Existing history should stay historical; new branches and docs can use the new identity after the migration. Preserve/redirect the old public URL where practical so existing integrations do not break unnecessarily.
+
+### Decision trigger
+
+Revisit this item when all of the following are true:
+
+1. Telegram integration is useful and stable enough to keep.
+2. At least one non-Telegram source works end-to-end through the agent.
+3. The normalized multi-source abstraction is clearer than separate one-off tools.
+4. The cost of keeping the Telegram-specific name becomes greater than the migration cost.
+
+Only then choose a final name and plan the rename across repository, deployment, URLs and plugin metadata.
+
+### Naming collision notes (checked 2026-08-27)
+
+- SignalScope: active multi-source finance product — https://signalscopes.com/
+- SignalLens: active products — https://signallens.io/ and https://signallens.tech/
+- SourceScope / SourceLens patterns are already used by research/recruiting products.
+- PulseScope: active trading product.
+- SignalAtlas: active AI/MCP brand-intelligence product.
+- StreamScope: active App Store product.
