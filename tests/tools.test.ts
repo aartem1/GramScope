@@ -83,6 +83,27 @@ describe("registerTools", () => {
       "changes account state",
     );
   });
+
+  it("tells callers how to reuse sources that are not joined", () => {
+    const server = fakeServer();
+    registerTools(server as never);
+    const sourceTools = [
+      "get_channel",
+      "get_message",
+      "get_messages",
+      "get_pinned_messages",
+      "get_thread",
+      "resolve_telegram_url",
+      "search_messages",
+    ];
+    const contract =
+      "For joined=false, use @username or a t.me URL across calls; marked IDs are reliable only for peers held by the account.";
+
+    for (const name of sourceTools) {
+      const tool = server.tools.find((candidate) => candidate.name === name)!;
+      expect(String(tool.config.description), name).toContain(contract);
+    }
+  });
 });
 
 describe("countOf", () => {
