@@ -1,5 +1,15 @@
-import { getApi, withTelegram, type TelegramLike } from "./client";
-import { mapDialogFilters } from "./folders";
+import {
+  getApi,
+  resolveEntity,
+  toInputPeer,
+  withTelegram,
+  type TelegramLike,
+} from "./client";
+import { mapDialogFilters, peerId } from "./folders";
+import {
+  assertSourceIdsBounded,
+  MAX_SOURCES_PER_CALL,
+} from "./source-selection";
 import { GramScopeError } from "../errors/taxonomy";
 import type { TelegramFolder } from "../schemas/folder";
 
@@ -114,10 +124,36 @@ function folderById(
   return folder;
 }
 
+/**
+ * Resolves names into InputPeers, serially and strictly.
+ *
+ * UpdateDialogFilter replaces the whole filter, so a partial add or create
+ * would report success for a call that did less than it was asked.
+ */
+async function resolveIncludePeers(
+  client: TelegramLike,
+  sourceIds: string[],
+): Promise<unknown[]> {
+  const peers: unknown[] = [];
+  for (const sourceId of sourceIds) {
+    const entity = await resolveEntity(client, sourceId);
+    peers.push(await toInputPeer(entity));
+  }
+  return peers;
+}
+
 export async function createFolder(input: {
   title: string;
   source_ids?: string[];
 }): Promise<TelegramFolder> {
+  if (input.source_ids !== undefined) {
+    assertSourceIdsBounded(
+      input.source_ids,
+      "manage_folder(create)",
+      MAX_SOURCES_PER_CALL,
+    );
+  }
+
   return withTelegram(async (client) => {
     const filters = await fetchRawFilters(client);
     const existing = filters.filter((f) => typeof f.id === "number");
@@ -141,10 +177,9 @@ export async function createFolder(input: {
       excludePeers: [],
     }) as unknown as RawFilter;
 
-    // `input.source_ids` is accepted but not yet honoured: filling a new
-    // folder needs resolveIncludePeers, which Task 9 adds. Task 9 adds the
-    // branch here too. Do NOT reference resolveIncludePeers in this task — it
-    // does not exist yet and this task must compile on its own.
+    if (input.source_ids !== undefined) {
+      filter.includePeers = await resolveIncludePeers(client, input.source_ids);
+    }
 
     return folderById(await writeFilter(client, id, filter), String(id));
   });
@@ -173,5 +208,108 @@ export async function deleteFolder(input: {
     // No filter argument: that is how UpdateDialogFilter deletes.
     await writeFilter(client, Number(filter.id));
     return { deleted_folder_id: input.folder_id, title };
+  });
+}
+
+export async function addFolderSources(input: {
+  folder_id: string;
+  source_ids: string[];
+}): Promise<TelegramFolder> {
+  assertSourceIdsBounded(
+    input.source_ids,
+    "manage_folder(add_sources)",
+    MAX_SOURCES_PER_CALL,
+  );
+
+  return withTelegram(async (client) => {
+    const filter = locate(await fetchRawFilters(client), input.folder_id);
+    const include = Array.isArray(filter.includePeers)
+      ? Array.from(filter.includePeers)
+      : [];
+    const held = new Set(
+      include.map(peerId).filter((id): id is string => id !== undefined),
+    );
+    const resolved = await resolveIncludePeers(client, input.source_ids);
+    const added = resolved.filter((peer) => {
+      const id = peerId(peer);
+      if (id === undefined || held.has(id)) return false;
+      held.add(id);
+      return true;
+    });
+
+    if (include.length + added.length > MAX_FOLDER_SOURCES) {
+      throw new GramScopeError(
+        "INVALID_INPUT",
+        `Folder ${input.folder_id} would hold ${include.length + added.length} sources and Telegram allows at most ${MAX_FOLDER_SOURCES}.`,
+      );
+    }
+
+    filter.includePeers = [...include, ...added];
+    return folderById(
+      await writeFilter(client, Number(filter.id), filter),
+      input.folder_id,
+    );
+  });
+}
+
+export async function removeFolderSources(input: {
+  folder_id: string;
+  source_ids: string[];
+}): Promise<TelegramFolder> {
+  assertSourceIdsBounded(
+    input.source_ids,
+    "manage_folder(remove_sources)",
+    MAX_SOURCES_PER_CALL,
+  );
+
+  return withTelegram(async (client) => {
+    const filter = locate(await fetchRawFilters(client), input.folder_id);
+    const include = Array.isArray(filter.includePeers)
+      ? Array.from(filter.includePeers)
+      : [];
+    const drop = new Set(input.source_ids);
+
+    filter.includePeers = include.filter((peer) => {
+      const id = peerId(peer);
+      return id === undefined || !drop.has(id);
+    });
+
+    return folderById(
+      await writeFilter(client, Number(filter.id), filter),
+      input.folder_id,
+    );
+  });
+}
+
+export async function reorderFolders(input: {
+  folder_ids: string[];
+}): Promise<TelegramFolder[]> {
+  return withTelegram(async (client) => {
+    const filters = await fetchRawFilters(client);
+    const present = filters
+      .filter((filter) => filter.id !== undefined)
+      .map((filter) => String(filter.id));
+    const named = new Set(input.folder_ids);
+    const missing = present.filter((id) => !named.has(id));
+    const unknown = input.folder_ids.filter((id) => !present.includes(id));
+
+    if (
+      missing.length > 0 ||
+      unknown.length > 0 ||
+      named.size !== input.folder_ids.length
+    ) {
+      throw new GramScopeError(
+        "INVALID_INPUT",
+        `reorder takes the complete folder order, each id exactly once. The account holds [${present.join(", ")}]; this call named [${input.folder_ids.join(", ")}].`,
+      );
+    }
+
+    const Api = await getApi();
+    await client.invoke(
+      new Api.messages.UpdateDialogFiltersOrder({
+        order: input.folder_ids.map(Number),
+      }),
+    );
+    return mapDialogFilters({ filters: await fetchRawFilters(client) });
   });
 }

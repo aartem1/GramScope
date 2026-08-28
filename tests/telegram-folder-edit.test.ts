@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  addFolderSources,
   createFolder,
   deleteFolder,
+  removeFolderSources,
+  reorderFolders,
   renameFolder,
 } from "@/telegram/folder-edit";
 import {
@@ -224,6 +227,59 @@ describe("createFolder", () => {
       ),
     ).toBe(false);
   });
+
+  it("adds resolved sources while keeping the required empty peer vectors", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+
+    await createFolder({ title: "New", source_ids: ["@beta"] });
+
+    const filter = lastUpdate(sent).filter as Record<string, unknown>;
+    expect(filter.includePeers).toHaveLength(1);
+    expect(filter.pinnedPeers).toEqual([]);
+    expect(filter.excludePeers).toEqual([]);
+  });
+
+  it("rejects an empty source list before creating a folder", async () => {
+    __setClientFactoryForTests(factory({ sent: [] }));
+
+    await expect(
+      createFolder({ title: "New", source_ids: [] }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("does not create a folder when any source cannot resolve", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async (request: unknown) => {
+        sent.push(request);
+        if ((request as { className?: string }).className === "messages.GetDialogFilters") {
+          return { filters: [richFilter()] };
+        }
+        return true;
+      },
+      getDialogs: async () => [],
+      getEntity: async () => {
+        throw Object.assign(new Error("gone"), {
+          errorMessage: "USERNAME_NOT_OCCUPIED",
+        });
+      },
+      getMessages: async () => [],
+    }));
+
+    await expect(
+      createFolder({ title: "New", source_ids: ["@ghost"] }),
+    ).rejects.toMatchObject({ code: "CHANNEL_NOT_FOUND" });
+    expect(
+      sent.some(
+        (r) =>
+          (r as { className?: string }).className ===
+          "messages.UpdateDialogFilter",
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("deleteFolder", () => {
@@ -241,6 +297,172 @@ describe("deleteFolder", () => {
   it("refuses to delete a shareable folder", async () => {
     __setClientFactoryForTests(factory({ sent: [], filters: [chatlistFilter()] }));
     await expect(deleteFolder({ folder_id: "3" })).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+  });
+});
+
+describe("addFolderSources", () => {
+  it("appends a resolved peer and preserves the unmodelled fields", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+    await addFolderSources({ folder_id: "2", source_ids: ["@beta"] });
+
+    const filter = lastUpdate(sent).filter as Record<string, unknown>;
+    expect(filter.emoticon).toBe("🤖");
+    expect(filter.pinnedPeers).toHaveLength(1);
+    expect(filter.includePeers).toHaveLength(2);
+  });
+
+  it("does not add a peer the folder already holds", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(
+      factory({
+        sent,
+        entities: {
+          "-100111": { className: "Channel", id: { value: 111n } },
+        },
+      }),
+    );
+    await addFolderSources({ folder_id: "2", source_ids: ["-100111"] });
+    const filter = lastUpdate(sent).filter as { includePeers: unknown[] };
+    expect(filter.includePeers).toHaveLength(1);
+  });
+
+  it("fails the whole action when a source does not resolve", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async (request: unknown) => {
+        sent.push(request);
+        if ((request as { className?: string }).className === "messages.GetDialogFilters") {
+          return { filters: [richFilter()] };
+        }
+        return true;
+      },
+      getDialogs: async () => [],
+      getEntity: async () => {
+        throw Object.assign(new Error("gone"), {
+          errorMessage: "USERNAME_NOT_OCCUPIED",
+        });
+      },
+      getMessages: async () => [],
+    }));
+
+    await expect(
+      addFolderSources({ folder_id: "2", source_ids: ["@ghost"] }),
+    ).rejects.toMatchObject({ code: "CHANNEL_NOT_FOUND" });
+    expect(
+      sent.some(
+        (r) =>
+          (r as { className?: string }).className ===
+          "messages.UpdateDialogFilter",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a call that would exceed the folder size limit", async () => {
+    const sent: unknown[] = [];
+    const full = {
+      ...richFilter(),
+      includePeers: Array.from({ length: 100 }, (_, i) => ({
+        className: "InputPeerChannel",
+        channelId: { value: BigInt(1000 + i) },
+      })),
+    };
+    __setClientFactoryForTests(factory({ sent, filters: [full] }));
+    await expect(
+      addFolderSources({ folder_id: "2", source_ids: ["@beta"] }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("rejects an empty source list", async () => {
+    __setClientFactoryForTests(factory({ sent: [] }));
+
+    await expect(
+      addFolderSources({ folder_id: "2", source_ids: [] }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("rejects more than 25 sources in one call", async () => {
+    __setClientFactoryForTests(factory({ sent: [] }));
+    await expect(
+      addFolderSources({
+        folder_id: "2",
+        source_ids: Array.from({ length: 26 }, (_, i) => `-100${i}`),
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+});
+
+describe("removeFolderSources", () => {
+  it("drops the named peer without resolving anything", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(async () => {
+      const client = await factory({ sent })();
+      return {
+        ...client,
+        getEntity: async () => {
+          throw new Error("removal must not resolve peers");
+        },
+      };
+    });
+
+    await removeFolderSources({ folder_id: "2", source_ids: ["-100111"] });
+
+    const filter = lastUpdate(sent).filter as Record<string, unknown>;
+    expect(filter.includePeers).toHaveLength(0);
+    expect(filter.pinnedPeers).toHaveLength(1);
+  });
+
+  it("is a no-op for a peer the folder does not hold", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+    await removeFolderSources({ folder_id: "2", source_ids: ["-100555"] });
+    const filter = lastUpdate(sent).filter as { includePeers: unknown[] };
+    expect(filter.includePeers).toHaveLength(1);
+  });
+
+  it("rejects an empty source list", async () => {
+    __setClientFactoryForTests(factory({ sent: [] }));
+
+    await expect(
+      removeFolderSources({ folder_id: "2", source_ids: [] }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+});
+
+describe("reorderFolders", () => {
+  it("sends the complete order", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(
+      factory({
+        sent,
+        filters: [richFilter(), { ...richFilter(), id: 4 }],
+      }),
+    );
+    await reorderFolders({ folder_ids: ["4", "2"] });
+
+    const order = sent
+      .filter(
+        (r) =>
+          (r as { className?: string }).className ===
+          "messages.UpdateDialogFiltersOrder",
+      )
+      .at(-1) as { order?: number[] };
+    expect(order?.order).toEqual([4, 2]);
+  });
+
+  it("rejects a partial order rather than silently dropping folders", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(
+      factory({
+        sent,
+        filters: [richFilter(), { ...richFilter(), id: 4 }],
+      }),
+    );
+    await expect(reorderFolders({ folder_ids: ["2"] })).rejects.toMatchObject({
       code: "INVALID_INPUT",
     });
   });
