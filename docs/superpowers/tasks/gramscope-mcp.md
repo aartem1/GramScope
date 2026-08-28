@@ -125,10 +125,17 @@ none of them yet written into a spec:
 **Spec for 5a is approved by the owner, 2026-08-28:**
 `docs/superpowers/specs/2026-08-28-gramscope-writes-design.md`, no changes
 requested. The implementation plan is written:
-`docs/superpowers/plans/2026-08-28-gramscope-writes.md`, twelve tasks. Nothing
-is implemented yet; no ledger exists. The next step is the owner's choice of
-execution mode — `superpowers:subagent-driven-development` or
-`superpowers:executing-plans`.
+`docs/superpowers/plans/2026-08-28-gramscope-writes.md`, twelve tasks. The owner
+chose subagent-driven execution on 2026-08-28.
+
+**Execution in flight.** The ledger is
+`.superpowers/sdd/2026-08-28-gramscope-writes/progress.md` — git-ignored and
+machine-local, so on a fresh clone reconstruct position from `git log` instead.
+A pre-flight conflict scan of the plan ran before Task 1 and produced six
+rulings; five of them are already applied to the plan file in commit `038d4de`,
+so the plan text on disk is the corrected one and those corrections must not be
+re-derived. Plan and card are committed through `038d4de`; every commit after it
+is implementation.
 
 Three points the spec left open are decided in the plan, not in the spec, and a
 reviewer may overrule any of them: `leave_channel` covers channels and
