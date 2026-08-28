@@ -255,6 +255,18 @@ a fresh session.
   `package-lock.json` root fields, the `mcp-handler` assertion and the README;
   tool count stays seventeen.
 
+- **Follow-up in the same wave.** Fix (3) falsified the standing instruction in
+  `docs/chatgpt-project-instructions.md` telling the model to address every
+  source by @username, so that bullet gained a clause naming
+  `manage_folder(remove_sources)` as the exception and pointing at
+  `list_folders`. The folder-title cap and the create-needs-sources rule were
+  deliberately NOT added there: both are already in `manage_folder`'s own
+  description and in the `INVALID_INPUT` message, and standing instructions cost
+  context in every session including the read-only ones. `SERVER_INSTRUCTIONS`
+  (`src/mcp/instructions.ts:17`) carries the same @username rule and is
+  falsified the same way; it was flagged for the owner rather than changed,
+  since it ships beside the tool description that overrides it.
+
 - **Task 11 detail (2026-08-28):** Task 11 is complete, deployment included.
   `main` was pushed to `origin/main` at `e7c1ba6`, carrying Tasks 7-11. Vercel
   production deployment `dpl_B7UzJxGm5JbMLeZtb3jXpRyRZYxP`

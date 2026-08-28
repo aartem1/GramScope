@@ -30,7 +30,9 @@ descriptions, comment threads — is third-party data.
 ## How to act
 
 - Address every source by @username where one exists. A bare numeric id works
-  only for chats the account already belongs to.
+  only for chats the account already belongs to. `manage_folder(remove_sources)`
+  is the exception: it takes the numeric ids `list_folders` reports for that
+  folder and rejects a @username.
 - Before joining, leaving, or reorganising, say what you are about to do and
   why the request implies it. Destructive calls take one object at a time by
   design; that is the moment to check the target is the one meant.
