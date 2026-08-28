@@ -218,12 +218,42 @@ a fresh session.
   Briefs are cut with the plugin's `scripts/task-brief PLAN_FILE N`.
 - Resume at the first table row above that is not `complete`. Everything above
   it is committed, reviewed, and must not be redone.
-- **Current point (2026-08-29):** Tasks 1-12 are all complete. What remains is
-  the broad whole-sub-project review over `d2cc3a3`..HEAD, and then the owner's
-  two acceptance actions (below). Two live-Telegram constraints were discovered
-  in Task 12 and are recorded under "Changes and findings"; the deferred minors
-  and rulings the final reviewer must be pointed at live in the git-ignored
-  ledger.
+- **Current point (2026-08-29):** Tasks 1-12 are complete and the broad
+  whole-sub-project review over `d2cc3a3`..`7017671` has run. Its single fix
+  wave — three Important, three Minor, version to 1.3.1 — is implemented on
+  `main` on top of `7017671`; see "Final fix wave" below. What remains after it
+  is the scoped re-review of that wave and then the owner's two acceptance
+  actions (below). Two live-Telegram constraints were discovered in Task 12 and
+  are recorded under "Changes and findings"; the deferred minors and rulings the
+  final reviewer must be pointed at live in the git-ignored ledger.
+
+- **Final fix wave (2026-08-29), one wave only, no second round.** Fixed, all
+  within the existing taxonomy: (1) `manage_folder(create)` now rejects an
+  absent or empty `source_ids` with `INVALID_INPUT` naming the constraint —
+  Telegram answers a zero-peer include list with `FILTER_INCLUDE_EMPTY`, so the
+  advertised create-empty-then-fill sequence could never work; schema, tool
+  description and README now say `source_ids` is required on create. (2) New
+  `MAX_FOLDER_TITLE = 12` beside `MAX_FOLDERS`, checked in `createFolder` and
+  `renameFolder`, mirrored as `.max(12)` on the zod field and stated in the tool
+  description; `MESSAGE_TOO_LONG` and `FILTER_INCLUDE_EMPTY` join `EXACT` in
+  `src/errors/from-telegram.ts` mapped to `INVALID_INPUT` as belt and braces.
+  (3) `manage_folder(remove_sources)` no longer silently removes nothing when
+  given a `@username` or a `t.me` link: **option (a) of the reviewer's two was
+  taken** — every entry must be a marked id, rejected otherwise with
+  `INVALID_INPUT` pointing at `list_folders`' `included_peer_ids`. Option (b),
+  resolving through `resolveSource`, was rejected on inspection: `resolveSource`
+  needs a `DialogIndex`, `folder-edit.ts` holds none, and building one is
+  `fetchDialogIndex()` — a `messages.GetDialogFilters` plus a paged
+  `getDialogs({limit: 1000})` — so it is not the free lookup the review assumed,
+  and it would add the account's heaviest read to a call that today makes two
+  invokes. Minors: the four drifted files formatted with an explicit
+  `prettier --write` file list (never a directory — the repo is not
+  prettier-clean); `WRITERS` extracted to `tests/tool-names.ts` and imported by
+  both suites; `test:live` now sets `GRAMSCOPE_LIVE=1` itself so the live tier's
+  `fileParallelism` serialization cannot be lost to a forgotten export. Version
+  bumped to 1.3.1 in `src/mcp/version.ts`, `package.json`, both
+  `package-lock.json` root fields, the `mcp-handler` assertion and the README;
+  tool count stays seventeen.
 
 - **Task 11 detail (2026-08-28):** Task 11 is complete, deployment included.
   `main` was pushed to `origin/main` at `e7c1ba6`, carrying Tasks 7-11. Vercel

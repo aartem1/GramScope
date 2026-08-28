@@ -72,11 +72,11 @@ function factory(options: {
         };
       }
       return {
-          className: "Channel",
-          id: { value: 999n },
-          title: "Beta",
-          username: "beta",
-          accessHash: { value: 7n },
+        className: "Channel",
+        id: { value: 999n },
+        title: "Beta",
+        username: "beta",
+        accessHash: { value: 7n },
       };
     },
     getMessages: async () => [],

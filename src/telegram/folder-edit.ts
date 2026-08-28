@@ -6,6 +6,7 @@ import {
   type TelegramLike,
 } from "./client";
 import { mapDialogFilters, peerId } from "./folders";
+import { parseTelegramName } from "./peer-resolve";
 import {
   assertSourceIdsBounded,
   MAX_SOURCES_PER_CALL,
@@ -20,6 +21,21 @@ export const MAX_FOLDERS = 10;
 export const MAX_FOLDER_SOURCES = 100;
 
 /**
+ * Telegram's ceiling on a folder title, measured live on 2026-08-29 by
+ * bisection against `messages.updateDialogFilter`: 12 characters is accepted,
+ * 13 fails with MESSAGE_TOO_LONG. It appears in no TL schema and teleproto
+ * does not model it, so it is checked here rather than discovered on the wire
+ * — MESSAGE_TOO_LONG alone tells a caller nothing about which limit it hit.
+ *
+ * Counted in UTF-16 code units, which is what the measurement used. An emoji
+ * title is therefore charged more than Telegram may charge it; the belt-and-
+ * braces MESSAGE_TOO_LONG mapping in errors/from-telegram.ts keeps the other
+ * direction actionable if the real rule ever turns out to be bytes or
+ * codepoints.
+ */
+export const MAX_FOLDER_TITLE = 12;
+
+/**
  * Telegram reserves filter id 0 for "All chats" and 1 for the archive, so a
  * new folder starts at 2.
  */
@@ -27,11 +43,67 @@ const FIRST_FREE_FILTER_ID = 2;
 
 type RawFilter = Record<string, unknown>;
 
+function assertFolderTitle(title: string): void {
+  if (title.length > MAX_FOLDER_TITLE) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      `A folder title may be at most ${MAX_FOLDER_TITLE} characters; this one is ${title.length}. Telegram rejects a longer title. Shorten it.`,
+    );
+  }
+}
+
+/**
+ * The source list a new folder starts with. Telegram refuses a filter whose
+ * include list is empty (FILTER_INCLUDE_EMPTY, measured live 2026-08-29),
+ * exactly as the official app refuses to save an empty folder, so
+ * "create the lane, then file sources into it" is not a sequence this tool
+ * can offer: the first call would fail with a wire code naming nothing.
+ */
+function assertCreateSources(sourceIds: string[] | undefined): string[] {
+  if (sourceIds === undefined || sourceIds.length === 0) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      "manage_folder(create) requires source_ids: a new folder must name at least one source, because Telegram rejects a folder with an empty include list. Create the folder with its first sources, then widen it with add_sources.",
+    );
+  }
+  assertSourceIdsBounded(
+    sourceIds,
+    "manage_folder(create)",
+    MAX_SOURCES_PER_CALL,
+  );
+  return sourceIds;
+}
+
+/**
+ * The marked id a `remove_sources` entry names, or an error.
+ *
+ * A folder stores its members as `InputPeer`s, and this action matches against
+ * the marked ids those carry without resolving anything — which is what lets a
+ * folder be trimmed with no round trip, and what makes a @username or a t.me
+ * link unmatchable here even though `add_sources` accepts both. Silently
+ * removing nothing and reporting success is the failure this rejects.
+ */
+function markedIdToDrop(raw: string): string {
+  let markedId: string | undefined;
+  try {
+    const link = parseTelegramName(raw);
+    if (link.kind === "internal") markedId = link.markedId;
+  } catch {
+    markedId = undefined;
+  }
+  if (markedId === undefined) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      `manage_folder(remove_sources) takes the marked ids a folder holds; "${raw}" is not one. This action resolves no names, so a @username or t.me link would match nothing and remove nothing. Call list_folders and pass entries of the folder's included_peer_ids.`,
+    );
+  }
+  return markedId;
+}
+
 async function fetchRawFilters(client: TelegramLike): Promise<RawFilter[]> {
   const Api = await getApi();
   const raw = (await client.invoke(new Api.messages.GetDialogFilters())) as
-    | { filters?: unknown }
-    | undefined;
+    { filters?: unknown } | undefined;
   const filters = raw?.filters;
   // Array.from, not the value itself: TL list fields arrive as Array
   // subclasses whose filter/map/slice preserve the subclass.
@@ -142,17 +214,17 @@ async function resolveIncludePeers(
   return peers;
 }
 
+/**
+ * `source_ids` is optional in the type and required at run time: the tool layer
+ * hands over whatever the caller sent, and an absent list has to reach a check
+ * that can name the constraint rather than a type error nobody sees.
+ */
 export async function createFolder(input: {
   title: string;
   source_ids?: string[];
 }): Promise<TelegramFolder> {
-  if (input.source_ids !== undefined) {
-    assertSourceIdsBounded(
-      input.source_ids,
-      "manage_folder(create)",
-      MAX_SOURCES_PER_CALL,
-    );
-  }
+  assertFolderTitle(input.title);
+  const sourceIds = assertCreateSources(input.source_ids);
 
   return withTelegram(async (client) => {
     const filters = await fetchRawFilters(client);
@@ -177,9 +249,7 @@ export async function createFolder(input: {
       excludePeers: [],
     }) as unknown as RawFilter;
 
-    if (input.source_ids !== undefined) {
-      filter.includePeers = await resolveIncludePeers(client, input.source_ids);
-    }
+    filter.includePeers = await resolveIncludePeers(client, sourceIds);
 
     return folderById(await writeFilter(client, id, filter), String(id));
   });
@@ -189,6 +259,8 @@ export async function renameFolder(input: {
   folder_id: string;
   title: string;
 }): Promise<TelegramFolder> {
+  assertFolderTitle(input.title);
+
   return withTelegram(async (client) => {
     const filter = locate(await fetchRawFilters(client), input.folder_id);
     await setTitle(filter, input.title);
@@ -261,13 +333,13 @@ export async function removeFolderSources(input: {
     "manage_folder(remove_sources)",
     MAX_SOURCES_PER_CALL,
   );
+  const drop = new Set(input.source_ids.map(markedIdToDrop));
 
   return withTelegram(async (client) => {
     const filter = locate(await fetchRawFilters(client), input.folder_id);
     const include = Array.isArray(filter.includePeers)
       ? Array.from(filter.includePeers)
       : [];
-    const drop = new Set(input.source_ids);
 
     filter.includePeers = include.filter((peer) => {
       const id = peerId(peer);

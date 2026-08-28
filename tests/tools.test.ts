@@ -3,6 +3,7 @@ import { errorResult, okResult, runTool } from "@/mcp/tool-result";
 import { GramScopeError } from "@/errors/taxonomy";
 import { registerTools } from "@/mcp/server";
 import { SERVER_INSTRUCTIONS } from "@/mcp/instructions";
+import { WRITERS } from "./tool-names";
 
 describe("tool results", () => {
   it("wraps data as structured content plus text", () => {
@@ -56,14 +57,6 @@ describe("registerTools", () => {
     "resolve_telegram_url",
     "search_channels",
     "search_messages",
-  ];
-
-  const WRITERS = [
-    "join_channel",
-    "leave_channel",
-    "manage_folder",
-    "mark_read",
-    "mark_unread",
   ];
 
   it("registers all seventeen tools", () => {

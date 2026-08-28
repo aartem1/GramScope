@@ -9,6 +9,7 @@ import {
   reorderFolders,
   MAX_FOLDERS,
   MAX_FOLDER_SOURCES,
+  MAX_FOLDER_TITLE,
 } from "../../telegram/folder-edit";
 import { MAX_SOURCES_PER_CALL } from "../../telegram/source-selection";
 import { telegramFolderSchema } from "../../schemas/folder";
@@ -98,7 +99,7 @@ export function registerManageFolder(server: McpServer): void {
       title: "Manage Telegram folders",
       description:
         "Create, rename, delete and reorder the account's chat folders, and move sources in and out of them. This CHANGES ACCOUNT STATE. Folders are this account's working lanes, so filing sources into them is how later reads get narrowed with list_dialogs(folder_id). delete removes one folder per call and does not touch the chats in it. " +
-        `An account holds at most ${MAX_FOLDERS} folders and a folder at most ${MAX_FOLDER_SOURCES} sources; add_sources and remove_sources take at most ${MAX_SOURCES_PER_CALL} sources per call. reorder takes the complete list of folder ids. A shareable folder cannot be edited here.`,
+        `An account holds at most ${MAX_FOLDERS} folders, a folder title at most ${MAX_FOLDER_TITLE} characters, and a folder at most ${MAX_FOLDER_SOURCES} sources; create, add_sources and remove_sources take at most ${MAX_SOURCES_PER_CALL} sources per call. create must name at least one source: Telegram rejects an empty folder. reorder takes the complete list of folder ids. A shareable folder cannot be edited here.`,
       inputSchema: z.object({
         action: z.enum([
           "create",
@@ -114,14 +115,17 @@ export function registerManageFolder(server: McpServer): void {
           .describe("Required by rename, delete, add_sources, remove_sources."),
         title: z
           .string()
+          .max(MAX_FOLDER_TITLE)
           .optional()
-          .describe("Required by create and rename."),
+          .describe(
+            `Required by create and rename. At most ${MAX_FOLDER_TITLE} characters; Telegram rejects a longer folder title.`,
+          ),
         source_ids: z
           .array(z.string())
           .max(MAX_SOURCES_PER_CALL)
           .optional()
           .describe(
-            "Required by add_sources and remove_sources; optional on create. Numeric ids, @usernames or t.me links.",
+            "Required by create, add_sources and remove_sources. create and add_sources take numeric ids, @usernames or t.me links; remove_sources takes only the numeric ids list_folders reports in included_peer_ids, because it matches them without resolving anything.",
           ),
         folder_ids: z
           .array(z.string())

@@ -655,7 +655,12 @@ Supported actions:
 - `add_sources`;
 - `remove_sources`.
 
-`create` may include sources. `reorder` receives the complete list of folder
+`create` requires sources: Telegram rejects a folder whose include list is
+empty, so a folder is created with its first sources and widened later with
+`add_sources`. A folder title is capped at 12 characters. `add_sources` accepts
+numeric IDs, `@usernames` and `t.me` links; `remove_sources` accepts only the
+numeric IDs `list_folders` reports in `included_peer_ids`, because it matches
+them without resolving anything. `reorder` receives the complete list of folder
 IDs in the wanted order. Deleting a folder does not remove its chats, and
 shareable folders cannot be edited.
 
@@ -1029,7 +1034,7 @@ Use Superpowers to refine the design before implementation, but the likely deliv
 - `search_channels`;
 - `get_similar_channels`.
 
-### Slice 5 — State changes (five deployed in 1.3.0; six planned for full Slice 5)
+### Slice 5 — State changes (five deployed in 1.3.1; six planned for full Slice 5)
 
 - `mark_read`;
 - `mark_unread`;

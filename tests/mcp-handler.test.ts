@@ -4,6 +4,7 @@ import { registerTools } from "@/mcp/server";
 import { MCP_SERVER_VERSION } from "@/mcp/version";
 import { SERVER_INSTRUCTIONS } from "@/mcp/instructions";
 import { readFileSync } from "node:fs";
+import { WRITERS } from "./tool-names";
 
 type Json = Record<string, unknown>;
 
@@ -100,7 +101,7 @@ async function listTools(): Promise<Json[]> {
 }
 
 describe("tools/list over a real MCP server", () => {
-  it("keeps the package and MCP server on app version 1.3.0", () => {
+  it("keeps the package and MCP server on app version 1.3.1", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version?: unknown };
@@ -111,11 +112,11 @@ describe("tools/list over a real MCP server", () => {
       packages?: Record<string, { version?: unknown }>;
     };
 
-    expect(MCP_SERVER_VERSION).toBe("1.3.0");
-    expect(packageJson.version).toBe("1.3.0");
+    expect(MCP_SERVER_VERSION).toBe("1.3.1");
+    expect(packageJson.version).toBe("1.3.1");
     expect(packageJson.version).toBe(MCP_SERVER_VERSION);
-    expect(packageLock.version).toBe("1.3.0");
-    expect(packageLock.packages?.[""]?.version).toBe("1.3.0");
+    expect(packageLock.version).toBe("1.3.1");
+    expect(packageLock.packages?.[""]?.version).toBe("1.3.1");
   });
 
   it("advertises all seventeen tools", async () => {
@@ -151,14 +152,6 @@ describe("tools/list over a real MCP server", () => {
       expect(String(tool.description).length).toBeGreaterThan(40);
     }
   });
-
-  const WRITERS = [
-    "join_channel",
-    "leave_channel",
-    "manage_folder",
-    "mark_read",
-    "mark_unread",
-  ];
 
   it("marks only the writer tools as mutating", async () => {
     const tools = await listTools();

@@ -16,6 +16,14 @@ const EXACT: Record<string, ErrorCode> = {
   SESSION_REVOKED: "AUTH_REQUIRED",
   SESSION_EXPIRED: "AUTH_REQUIRED",
   USER_NOT_PARTICIPANT: "NOT_A_MEMBER",
+  // Both are folder-editing rules Telegram enforces on the wire and documents
+  // nowhere: a title over MAX_FOLDER_TITLE characters, and a filter whose
+  // include list is empty. src/telegram/folder-edit.ts rejects both before the
+  // call with a message that names the constraint; these entries keep the
+  // outcome an INVALID_INPUT the caller can act on rather than an
+  // INTERNAL_ERROR, should a measured limit move or another caller appear.
+  MESSAGE_TOO_LONG: "INVALID_INPUT",
+  FILTER_INCLUDE_EMPTY: "INVALID_INPUT",
 };
 
 /**

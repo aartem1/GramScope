@@ -37,6 +37,18 @@ describe("mapTelegramError", () => {
     ).toBe("AUTH_REQUIRED");
   });
 
+  it("maps the folder-editing wire rules to INVALID_INPUT", () => {
+    // folder-edit.ts rejects an over-long title and an empty include list
+    // before the call. These entries keep the wire-level answer actionable if
+    // a measured limit moves: without them SAFE_CODE reports an
+    // INTERNAL_ERROR, which tells a caller neither the rule nor the fix.
+    for (const code of ["MESSAGE_TOO_LONG", "FILTER_INCLUDE_EMPTY"]) {
+      expect(mapTelegramError(new FakeRpcError(code, 400)).code).toBe(
+        "INVALID_INPUT",
+      );
+    }
+  });
+
   it("passes a GramScopeError through unchanged", () => {
     const original = new GramScopeError("INVALID_CURSOR", "bad cursor");
     expect(mapTelegramError(original)).toBe(original);

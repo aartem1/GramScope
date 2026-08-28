@@ -6,6 +6,7 @@ import {
   removeFolderSources,
   reorderFolders,
   renameFolder,
+  MAX_FOLDER_TITLE,
 } from "@/telegram/folder-edit";
 import {
   __resetClientForTests,
@@ -168,9 +169,7 @@ describe("the folder round-trip rule", () => {
     // folder and destroy it: the chatlist constructor has no excludePeers and
     // no behaviour flags.
     const sent: unknown[] = [];
-    __setClientFactoryForTests(
-      factory({ sent, filters: [chatlistFilter()] }),
-    );
+    __setClientFactoryForTests(factory({ sent, filters: [chatlistFilter()] }));
     await expect(
       renameFolder({ folder_id: "3", title: "Nope" }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
@@ -189,6 +188,17 @@ describe("the folder round-trip rule", () => {
       renameFolder({ folder_id: "99", title: "Nope" }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
+
+  it("rejects a rename to a title over the measured cap", async () => {
+    // Same live cap as create: 13 characters fails with MESSAGE_TOO_LONG,
+    // which used to surface as an INTERNAL_ERROR naming no limit.
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+    await expect(
+      renameFolder({ folder_id: "2", title: "AI Research Sources" }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(sent).toHaveLength(0);
+  });
 });
 
 describe("createFolder", () => {
@@ -205,7 +215,7 @@ describe("createFolder", () => {
         ],
       }),
     );
-    await createFolder({ title: "New" });
+    await createFolder({ title: "New", source_ids: ["@beta"] });
     expect(lastUpdate(sent).id).toBe(3);
   });
 
@@ -216,7 +226,9 @@ describe("createFolder", () => {
       id: i + 2,
     }));
     __setClientFactoryForTests(factory({ sent, filters: many }));
-    await expect(createFolder({ title: "Eleventh" })).rejects.toMatchObject({
+    await expect(
+      createFolder({ title: "Eleventh", source_ids: ["@beta"] }),
+    ).rejects.toMatchObject({
       code: "INVALID_INPUT",
     });
     expect(
@@ -248,6 +260,51 @@ describe("createFolder", () => {
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 
+  it("rejects an absent source list, naming the constraint", async () => {
+    // Live 2026-08-29: Telegram answers a filter with an empty include list
+    // with FILTER_INCLUDE_EMPTY, which the SAFE_CODE branch reported as
+    // "INTERNAL_ERROR: Telegram error: FILTER_INCLUDE_EMPTY" — no code, no
+    // retry guidance, on the sequence the tool advertised as primary.
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+
+    await expect(createFolder({ title: "New" })).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: expect.stringContaining("source_ids"),
+    });
+    expect(
+      sent.some(
+        (r) =>
+          (r as { className?: string }).className ===
+          "messages.UpdateDialogFilter",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a title over the measured Telegram cap", async () => {
+    // Live 2026-08-29: 12 characters is accepted, 13 fails with
+    // MESSAGE_TOO_LONG. "AI Research Sources" is 19.
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+
+    await expect(
+      createFolder({ title: "AI Research Sources", source_ids: ["@beta"] }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("accepts a title at exactly the cap", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+    const exactly = "Twelve chars";
+    expect(exactly).toHaveLength(MAX_FOLDER_TITLE);
+
+    await createFolder({ title: exactly, source_ids: ["@beta"] });
+    const filter = lastUpdate(sent).filter as { title: unknown };
+    const title = filter.title as { text?: string } | string;
+    expect(typeof title === "string" ? title : title.text).toBe(exactly);
+  });
+
   it("does not create a folder when any source cannot resolve", async () => {
     const sent: unknown[] = [];
     __setClientFactoryForTests(async () => ({
@@ -255,7 +312,10 @@ describe("createFolder", () => {
       connect: async () => true,
       invoke: async (request: unknown) => {
         sent.push(request);
-        if ((request as { className?: string }).className === "messages.GetDialogFilters") {
+        if (
+          (request as { className?: string }).className ===
+          "messages.GetDialogFilters"
+        ) {
           return { filters: [richFilter()] };
         }
         return true;
@@ -295,7 +355,9 @@ describe("deleteFolder", () => {
   });
 
   it("refuses to delete a shareable folder", async () => {
-    __setClientFactoryForTests(factory({ sent: [], filters: [chatlistFilter()] }));
+    __setClientFactoryForTests(
+      factory({ sent: [], filters: [chatlistFilter()] }),
+    );
     await expect(deleteFolder({ folder_id: "3" })).rejects.toMatchObject({
       code: "INVALID_INPUT",
     });
@@ -336,7 +398,10 @@ describe("addFolderSources", () => {
       connect: async () => true,
       invoke: async (request: unknown) => {
         sent.push(request);
-        if ((request as { className?: string }).className === "messages.GetDialogFilters") {
+        if (
+          (request as { className?: string }).className ===
+          "messages.GetDialogFilters"
+        ) {
           return { filters: [richFilter()] };
         }
         return true;
@@ -430,6 +495,62 @@ describe("removeFolderSources", () => {
     await expect(
       removeFolderSources({ folder_id: "2", source_ids: [] }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("rejects a @username instead of silently removing nothing", async () => {
+    // The defect: a folder stores marked ids, so a username could never
+    // match. The call rewrote the filter unchanged and reported success —
+    // the post-state folder still holding the source the caller asked to
+    // drop. add_sources accepts "@beta", so the two actions of one tool
+    // disagreed about what a source_ids entry is, silently.
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+
+    await expect(
+      removeFolderSources({ folder_id: "2", source_ids: ["@beta"] }),
+    ).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+      message: expect.stringContaining("included_peer_ids"),
+    });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("rejects a t.me link naming a public channel", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+
+    await expect(
+      removeFolderSources({
+        folder_id: "2",
+        source_ids: ["https://t.me/beta"],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("rejects every entry before touching a folder, not just the first", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+
+    await expect(
+      removeFolderSources({
+        folder_id: "2",
+        source_ids: ["-100111", "@beta"],
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("accepts a t.me/c link, which is a marked id in another spelling", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+
+    await removeFolderSources({
+      folder_id: "2",
+      source_ids: ["https://t.me/c/111/9"],
+    });
+    const filter = lastUpdate(sent).filter as { includePeers: unknown[] };
+    expect(filter.includePeers).toHaveLength(0);
   });
 });
 
