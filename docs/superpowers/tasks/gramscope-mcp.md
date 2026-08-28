@@ -89,48 +89,46 @@ created: 2026-08-26
 
 # Current point
 
-**Sub-projects 1-3 are complete and deployed.** Sub-project 3 (Research) closed
-at `adde93e` after four fix rounds on the final whole-implementation review of
-`3832daa..7ddece2`, the last reviewed `Approved with minors`. Rounds 1-3 each
-introduced the defect the next round fixed, which is why the loop ran long.
+**Sub-projects 1-3 are complete, deployed and accepted.** Sub-project 3
+(Research) closed at `adde93e` after four fix rounds on the final
+whole-implementation review; gates at `f9952d9` were 352 fast tests, typecheck,
+lint and build green, live tier 25/25 with no skips.
 
-| Round | Commits | Fixed |
-| --- | --- | --- |
-| 1 | `71420c8..ad2bec8` | alias canonicalisation, outside-source guidance, `ChatInvitePeek` id |
-| 2 | `eb1f0c9..213513a` | exclusion no longer fails the call; shared `nameKey` |
-| 3 | `a4df5b7..00a2dd2` | lookup budget instead of a name ceiling; exclusion failure discrimination |
-| 4 | `f9952d9` | free refusal before any lookup; `PRIVATE_CHANNEL_NOT_ACCESSIBLE` degrade; unresolvable names uncharged |
+**Sub-project 4, Discovery: implementation in flight on `main`.**
 
-Gates at `f9952d9`: 352 fast tests, typecheck, lint and build green; live tier
-25/25 with no skips.
+- Spec `docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`,
+  approved by the owner and amended at `4639fa4` for the `getFullChannel` flood
+  ceiling.
+- Plan `docs/superpowers/plans/2026-08-28-gramscope-discovery.md` at `56f2ee5`,
+  with two pre-flight rulings on its live tier committed at `4055790`.
+- Executing through `superpowers:subagent-driven-development`. **Base commit for
+  the whole sub-project: `4055790`.** Ledger
+  `.superpowers/sdd/2026-08-28-gramscope-discovery/progress.md` — git-ignored and
+  machine-local, so this card is the record that travels. All seven task briefs
+  are extracted into that directory.
+- **Nothing is pushed.** A push to `main` deploys to Vercel, and the plan pushes
+  once, in Task 7, after the live tier is green. `origin/main` therefore sits at
+  `5d82b02` while local `main` runs ahead.
 
-**Sub-project 4, Discovery, is in brainstorming.** The live probe is spent and
-recorded under "Changes and findings" — do not buy those numbers again. The
-owner settled the two open choices on 2026-08-28: `broadcasts: true` is fixed on
-in `search_channels`, and enrichment is capped at 15 candidates by default and
-25 at most. The spec is written, self-reviewed and committed at `ab24e1f` as
-`docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`.
+Task state, updated as each task closes:
 
-The owner approved that spec unchanged on 2026-08-28, then amended it at
-`4639fa4`: writing the plan surfaced the `getFullChannel` flood measurement the
-first draft had missed, so enrichment is capped at 10 candidates with
-concurrency 3 and an instance-level cache, not 15/25 at concurrency 8.
+| Task | State |
+| --- | --- |
+| 1 Candidate schema and mapping | in flight |
+| 2 Capped, throttled, cached enrichment | not started |
+| 3 `search_channels` engine | not started |
+| 4 `get_similar_channels` engine | not started |
+| 5 Expose both tools, bump to 1.2.0 | not started |
+| 6 Live tier | not started |
+| 7 Deploy and accept | not started |
 
-The plan is written, self-reviewed and committed at `56f2ee5` as
-`docs/superpowers/plans/2026-08-28-gramscope-discovery.md`. Seven tasks: the
-candidate schema and mapping, the capped enrichment, the two engines, tool
-registration with a bump to `1.2.0`, the live tier, deploy and acceptance.
+**Next:** finish the task loop, then the final whole-implementation review over
+`4055790..HEAD`, then Task 7's push and the owner's connector acceptance.
 
-**Next:** `superpowers:subagent-driven-development` at Task 1. No source file of
-sub-project 4 exists yet — nothing under `src/telegram/discovery.ts`,
-`src/schemas/discovery.ts` or `src/mcp/tools/{search-channels,get-similar-channels}.ts`,
-and `src/mcp/server.ts` still registers eleven tools. Anything a later agent
-finds beyond that was added after this note. Sub-projects 5 (State writes) and 6 (Source
-metadata) follow.
-
-**Do not redo:** anything in sub-projects 1-3, or any item the four fix rounds
-closed. The accepted residuals listed under "Changes and findings" are
-decisions, not open defects.
+**Do not redo:** anything in sub-projects 1-3, any item the four fix rounds
+closed, or any task the ledger marks `complete`. The live discovery
+measurements under "Changes and findings" cost real FLOOD_WAIT budget — read
+them rather than re-probing.
 
 # Blocked — awaiting owner
 Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
