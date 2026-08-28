@@ -114,9 +114,18 @@ none of them yet written into a spec:
   folders are the agent's workspace, not the owner's curation. The owner does
   not intend to open Telegram at all. No design may rest on a human noticing
   something in a Telegram client.
-- Open, being asked now: whether the untrusted-content framing is its own
-  cross-cutting sub-project (it touches the read tools already shipped in 1-4)
-  or rides inside 5a.
+- The untrusted-content framing does not become its own sub-project. The
+  ChatGPT Project instructions carry the meaning; the server carries only what
+  they cannot. Shared guidance moves into `ServerOptions.instructions`, said
+  once, and `OUTSIDE_SOURCE_GUIDANCE` is removed from the nine shipped
+  descriptions that repeat it.
+- Invite links, confirmation gates, folder sharing and a folder-kind output
+  field are all out of scope by owner decision.
+
+**Spec for 5a written and committed:**
+`docs/superpowers/specs/2026-08-28-gramscope-writes-design.md`. Awaiting the
+owner's review of the written spec; the next step after approval is
+`superpowers:writing-plans`. Nothing is implemented yet.
 
 **Next: sub-project 5, Writes.** No spec yet. Its scope, per the README tool set
 and the decisions recorded above, is `mark_unread`, `join_channel`,

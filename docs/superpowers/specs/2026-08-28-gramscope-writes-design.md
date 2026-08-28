@@ -13,8 +13,8 @@ tools that change the account's source inventory. **5b** — `save_message`,
 
 Thirteen tools are deployed and exactly one of them writes. ChatGPT can find
 a channel worth following and read it without joining, but it cannot act on
-the finding: it cannot join, cannot leave, cannot file a source into a folder, and cannot flag a source to
-return to. Every organizing action still requires a human in the Telegram
+the finding: it cannot join, cannot leave, cannot file a source into a folder,
+and cannot flag a source to return to. Every organizing action still requires a human in the Telegram
 client — and the owner does not intend to open Telegram at all.
 
 The account is the agent's workspace, not a person's. Its folders were created
