@@ -122,10 +122,22 @@ none of them yet written into a spec:
 - Invite links, confirmation gates, folder sharing and a folder-kind output
   field are all out of scope by owner decision.
 
-**Spec for 5a written and committed:**
-`docs/superpowers/specs/2026-08-28-gramscope-writes-design.md`. Awaiting the
-owner's review of the written spec; the next step after approval is
-`superpowers:writing-plans`. Nothing is implemented yet.
+**Spec for 5a is approved by the owner, 2026-08-28:**
+`docs/superpowers/specs/2026-08-28-gramscope-writes-design.md`, no changes
+requested. The implementation plan is written:
+`docs/superpowers/plans/2026-08-28-gramscope-writes.md`, twelve tasks. Nothing
+is implemented yet; no ledger exists. The next step is the owner's choice of
+execution mode — `superpowers:subagent-driven-development` or
+`superpowers:executing-plans`.
+
+Three points the spec left open are decided in the plan, not in the spec, and a
+reviewer may overrule any of them: `leave_channel` covers channels and
+supergroups only and refuses a legacy chat or a user dialog; the manual unread
+flag is reported by `get_unread_summary` under `group_by: "source"` only;
+`manage_folder(add_sources)` fails the whole action if any named source does not
+resolve. The plan also places `toInputPeer` in `src/telegram/client.ts` and
+`peerKind` in `src/telegram/peer-id.ts`, neither of which the spec's file list
+names, because the teleproto-boundary rule leaves nowhere else for them.
 
 **Next: sub-project 5, Writes.** No spec yet. Its scope, per the README tool set
 and the decisions recorded above, is `mark_unread`, `join_channel`,
