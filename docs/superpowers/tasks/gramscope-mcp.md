@@ -111,10 +111,21 @@ in `search_channels`, and enrichment is capped at 15 candidates by default and
 25 at most. The spec is written, self-reviewed and committed at `ab24e1f` as
 `docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`.
 
-The owner approved that spec unchanged on 2026-08-28.
+The owner approved that spec unchanged on 2026-08-28, then amended it at
+`4639fa4`: writing the plan surfaced the `getFullChannel` flood measurement the
+first draft had missed, so enrichment is capped at 10 candidates with
+concurrency 3 and an instance-level cache, not 15/25 at concurrency 8.
 
-**Next:** `superpowers:writing-plans`. No source file of sub-project 4 exists yet
-and none should until the plan does. Sub-projects 5 (State writes) and 6 (Source
+The plan is written, self-reviewed and committed at `56f2ee5` as
+`docs/superpowers/plans/2026-08-28-gramscope-discovery.md`. Seven tasks: the
+candidate schema and mapping, the capped enrichment, the two engines, tool
+registration with a bump to `1.2.0`, the live tier, deploy and acceptance.
+
+**Next:** `superpowers:subagent-driven-development` at Task 1. No source file of
+sub-project 4 exists yet — nothing under `src/telegram/discovery.ts`,
+`src/schemas/discovery.ts` or `src/mcp/tools/{search-channels,get-similar-channels}.ts`,
+and `src/mcp/server.ts` still registers eleven tools. Anything a later agent
+finds beyond that was added after this note. Sub-projects 5 (State writes) and 6 (Source
 metadata) follow.
 
 **Do not redo:** anything in sub-projects 1-3, or any item the four fix rounds
