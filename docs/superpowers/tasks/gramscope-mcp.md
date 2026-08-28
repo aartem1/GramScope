@@ -86,7 +86,7 @@ created: 2026-08-26
   - `channels.getChannelRecommendations({channel})` returns `messages.ChatsSlice` with `count: 79` and only **10 chats** on this non-Premium account — `count` is what exists, the 10 are what is served, and there is no paging parameter to reach the rest.
   - `channels.getChannelRecommendations({})` — no channel — returns `messages.Chats` with **100 chats** and no `count`: global recommendations derived from the account's own subscriptions, untruncated.
 - 2026-08-28 — the owner reviewed and approved the sub-project 4 (Discovery) spec as written; no changes were requested. The brainstorming approval gate is closed and planning may proceed.
-- 2026-08-28 — **sub-project 4 connector acceptance passed after reconnecting the ChatGPT connector.** `tools/list` exposed exactly 13 expected tools. The initial seed `@exampleaiseed` returned zero similar channels, so the owner followed the public fallback seed `@exampleaichannel`; it returned 10 candidates with `total_similar: 74` and `truncated: true`. All 10 candidates had usernames and 9 had descriptions. Four `get_messages` calls by candidate `@username` succeeded with no failures, and three recommendations were based on the posts read. The scenario made no joins and no Telegram account-state changes.
+- 2026-08-28 — **sub-project 4 connector acceptance passed after reconnecting the ChatGPT connector.** `tools/list` exposed exactly 13 expected tools. The initial seed `@exampleaiseed` returned zero similar channels, so the owner selected the already-followed public channel `@exampleaichannel` as the fallback seed; it returned 10 candidates with `total_similar: 74` and `truncated: true`. All 10 candidates had usernames and 9 had descriptions. Four `get_messages` calls by candidate `@username` succeeded with no failures, and three recommendations were based on the posts read. The scenario made no joins and no Telegram account-state changes.
 
 # Current point
 
@@ -117,7 +117,7 @@ commit is `d7c6435`; it is pushed to `main` and production is Ready.
 | 3 `search_channels` engine | complete, `ecd0b62`, clean after 1 fix round |
 | 4 `get_similar_channels` engine | complete, `2cae8b4`, review returned Approved; one Important finding carried to the final review, see below |
 | 5 Expose both tools, bump to 1.2.0 | complete, `4e57eb5` |
-| 6 Live tier | complete, `d7c6435`; 27 fast test files / 344 tests, typecheck, lint, build, and live tier passed |
+| 6 Live tier | complete, `d7c6435`; 28 fast test files / 378 tests, typecheck, lint, build, and live tier passed |
 | 7 Deploy and accept | complete: `main` pushed, Vercel Ready, OAuth/MCP production checks passed, owner connector acceptance passed |
 
 The final whole-implementation review over `4055790..HEAD` remains the required
