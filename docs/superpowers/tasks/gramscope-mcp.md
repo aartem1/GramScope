@@ -152,7 +152,7 @@ yet complete without re-running anything above it.
 | 7 `leave_channel` | complete, `c02321a`, review clean; 409 tests, sixteen tools |
 | 8 Folder round-trip rule, create/rename/delete | complete, `914ea66`; review closed by TL-constructor ruling, 2 minor test findings deferred; 417 tests |
 | 9 Folder membership and order | complete, `d7f8dc9`, review clean; 431 tests |
-| 10 `manage_folder` tool | not started |
+| 10 `manage_folder` tool | complete, `546b2a9`, review clean; 433 tests, seventeen tools |
 | 11 Version 1.3.0, README, deploy | not started |
 | 12 Live tier | not started |
 
