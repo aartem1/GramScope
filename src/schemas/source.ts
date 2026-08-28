@@ -11,6 +11,7 @@ export const telegramSourceSchema = z.object({
   folder_ids: z.array(z.string()).optional(),
   unread_count: z.number().int().optional(),
   read_inbox_max_id: z.number().int().optional(),
+  unread_mark: z.boolean().optional(),
   linked_discussion_id: z.string().optional(),
 });
 

@@ -640,3 +640,48 @@ describe("getChannel", () => {
     expect(fullFetches).toBe(0);
   });
 });
+
+describe("unread_mark", () => {
+  const folderIndex = new Map<string, string[]>();
+
+  it("carries Dialog.unreadMark through mapDialog", () => {
+    const source = mapDialog(
+      {
+        id: { value: -100111n },
+        title: "Alpha",
+        unreadCount: 0,
+        entity: { className: "Channel", id: { value: 111n } },
+        dialog: { readInboxMaxId: 96, unreadMark: true },
+      },
+      folderIndex,
+    );
+    expect(source.unread_mark).toBe(true);
+  });
+
+  it("omits the field when the flag is absent or false", () => {
+    // Spec §8's standard applied to output: a false on every source in a
+    // 200-row listing is boilerplate the model pays for and learns nothing
+    // from. Absent means not flagged.
+    const unset = mapDialog(
+      {
+        id: { value: -100111n },
+        title: "Alpha",
+        entity: { className: "Channel", id: { value: 111n } },
+        dialog: { readInboxMaxId: 96 },
+      },
+      folderIndex,
+    );
+    expect("unread_mark" in unset).toBe(false);
+
+    const explicitlyFalse = mapDialog(
+      {
+        id: { value: -100111n },
+        title: "Alpha",
+        entity: { className: "Channel", id: { value: 111n } },
+        dialog: { readInboxMaxId: 96, unreadMark: false },
+      },
+      folderIndex,
+    );
+    expect("unread_mark" in explicitlyFalse).toBe(false);
+  });
+});

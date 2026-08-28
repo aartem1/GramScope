@@ -22,6 +22,7 @@ export type DialogEntry = {
   read_inbox_max_id: number;
   latest_message_id?: number;
   latest_message_date?: string;
+  unread_mark?: boolean;
   folder_ids: string[];
 };
 
@@ -49,6 +50,7 @@ export function toEntry(
       ? { latest_message_id: message.id }
       : {}),
     ...(latestDate !== undefined ? { latest_message_date: latestDate } : {}),
+    ...(source.unread_mark === true ? { unread_mark: true } : {}),
     folder_ids: source.folder_ids ?? [],
   };
 }

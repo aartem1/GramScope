@@ -86,6 +86,24 @@ describe("toEntry", () => {
   });
 });
 
+describe("DialogEntry.unread_mark", () => {
+  it("carries the manual flag into the index", () => {
+    const entry = toEntry(
+      {
+        id: { value: -100111n },
+        title: "Alpha",
+        unreadCount: 0,
+        entity: { className: "Channel", id: { value: 111n } },
+        dialog: { readInboxMaxId: 96, unreadMark: true },
+        message: { id: 100, date: 1735689600 },
+      },
+      new Map<string, string[]>(),
+    );
+    expect(entry.unread_mark).toBe(true);
+    expect(entry.unread_count).toBe(0);
+  });
+});
+
 describe("folderMembers", () => {
   const parsed = [
     {

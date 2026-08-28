@@ -53,6 +53,12 @@ export type SourceDetails = {
   title?: string;
   unreadCount?: number;
   readInboxMaxId?: number;
+  /**
+   * Telegram's manual "come back to this" flag (`Dialog.unreadMark`), which is
+   * independent of unreadCount: a source can carry the flag with zero unread
+   * messages, which is exactly what mark_unread produces.
+   */
+  unreadMark?: boolean;
   description?: string;
   linkedDiscussionId?: string;
 };
@@ -97,6 +103,7 @@ export function toSource(
     ...(typeof details.readInboxMaxId === "number"
       ? { read_inbox_max_id: details.readInboxMaxId }
       : {}),
+    ...(details.unreadMark === true ? { unread_mark: true } : {}),
     ...(details.linkedDiscussionId
       ? { linked_discussion_id: details.linkedDiscussionId }
       : {}),
@@ -125,6 +132,7 @@ export function mapDialog(
     ...(typeof inner.readInboxMaxId === "number"
       ? { readInboxMaxId: inner.readInboxMaxId }
       : {}),
+    ...(inner.unreadMark === true ? { unreadMark: true } : {}),
   });
 }
 
