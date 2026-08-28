@@ -153,7 +153,7 @@ yet complete without re-running anything above it.
 | 8 Folder round-trip rule, create/rename/delete | complete, `914ea66`; review closed by TL-constructor ruling, 2 minor test findings deferred; 417 tests |
 | 9 Folder membership and order | complete, `d7f8dc9`, review clean; 431 tests |
 | 10 `manage_folder` tool | complete, `546b2a9`, review clean; 433 tests, seventeen tools |
-| 11 Version 1.3.0, README, deploy | implementation/review complete, `690ecb6`..`3c99774`, clean after 1 fix round; 433 tests + build; production push and deploy verification pending |
+| 11 Version 1.3.0, README, deploy | complete, `690ecb6`..`3c99774`, clean after 1 fix round; 433 tests + build; deployed and verified in production |
 | 12 Live tier | not started |
 
 Rulings made during execution, each of which the owner may overrule:
@@ -216,22 +216,39 @@ a fresh session.
   Briefs are cut with the plugin's `scripts/task-brief PLAN_FILE N`.
 - Resume at the first table row above that is not `complete`. Everything above
   it is committed, reviewed, and must not be redone.
-- **Current point (2026-08-28):** `main` was pushed to `origin/main` at
-  `e7c1ba6`, carrying Tasks 7-11. Vercel production deployment
-  `dpl_B7UzJxGm5JbMLeZtb3jXpRyRZYxP`
+- **Current point (2026-08-28):** Task 11 is complete, deployment included.
+  `main` was pushed to `origin/main` at `e7c1ba6`, carrying Tasks 7-11. Vercel
+  production deployment `dpl_B7UzJxGm5JbMLeZtb3jXpRyRZYxP`
   (`https://gram-scope-abc123def-example-projects.vercel.app`, alias
-  `https://gramscope.vercel.app`) reached `Ready`. The unauthenticated
-  checks passed: `/api/mcp` answers `401` with a `WWW-Authenticate: Bearer`
-  challenge naming the resource metadata, and
-  `/.well-known/oauth-protected-resource` returns the correct `resource` and
-  `authorization_servers`. The authenticated half of acceptance criterion 3
-  (version 1.3.0, non-empty `initialize.instructions`, exactly seventeen tools)
-  needs an owner-issued bearer token: WorkOS AuthKit offers no
-  `client_credentials` grant and refuses the device grant to dynamically
-  registered clients, so the only non-interactive path is a loopback
-  `authorization_code` + PKCE flow the owner approves in a browser. Do not redo
-  Task 11's implementation, tests or review. Next after that check: Task 12,
-  the live tier.
+  `https://gramscope.vercel.app`) reached `Ready`, and every part of
+  acceptance criterion 3 was verified against it — see "Production acceptance
+  of 1.3.0" below. Do not redo Task 11's implementation, tests, review or
+  deployment. Next: Task 12, the live tier, then the broad whole-sub-project
+  review over `d2cc3a3`..HEAD.
+
+- **Production acceptance of 1.3.0, verified 2026-08-28.** Unauthenticated:
+  `/api/mcp` answers `401` with a `WWW-Authenticate: Bearer` challenge naming
+  the resource metadata, and `/.well-known/oauth-protected-resource` returns
+  `resource` = `https://gramscope.vercel.app/api/mcp` with the AuthKit
+  issuer. Authenticated as the owner: `initialize` returns `serverInfo.name`
+  `gramscope`, `serverInfo.version` `1.3.0` and a 777-character `instructions`
+  string; `tools/list` returns exactly seventeen tools — `get_channel`,
+  `get_message`, `get_messages`, `get_pinned_messages`,
+  `get_similar_channels`, `get_thread`, `get_unread_summary`, `join_channel`,
+  `leave_channel`, `list_dialogs`, `list_folders`, `manage_folder`,
+  `mark_read`, `mark_unread`, `resolve_telegram_url`, `search_channels`,
+  `search_messages`.
+
+- **How the authenticated check was made, and the cleanup it left.** WorkOS
+  AuthKit exposes no `client_credentials` grant and refuses the device grant to
+  dynamically registered clients, so the only way to hold an owner token
+  outside ChatGPT is a loopback `authorization_code` + PKCE flow the owner
+  approves in a browser, with `resource` set to the MCP URL so the token's
+  `aud` matches what `verifyOwnerToken` demands. Doing that required
+  registering a throwaway DCR client, `GramScope acceptance probe`,
+  `client_id` `client_01M14EP0KM5CFN1491QE4JZ0M3`. **It still exists in the
+  WorkOS environment and should be deleted** — it is not needed again unless
+  this check is repeated.
 - Gates for every task: `npm run test`, `npm run typecheck`, `npm run lint`.
   The live tier is excluded from `npm run test` by design and runs only in
   Task 12, with `GRAMSCOPE_LIVE=1 npm run test:live`. Never commit the
