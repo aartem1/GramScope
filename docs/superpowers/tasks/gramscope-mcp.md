@@ -86,6 +86,7 @@ created: 2026-08-26
   - `channels.getChannelRecommendations({channel})` returns `messages.ChatsSlice` with `count: 79` and only **10 chats** on this non-Premium account — `count` is what exists, the 10 are what is served, and there is no paging parameter to reach the rest.
   - `channels.getChannelRecommendations({})` — no channel — returns `messages.Chats` with **100 chats** and no `count`: global recommendations derived from the account's own subscriptions, untruncated.
 - 2026-08-28 — the owner reviewed and approved the sub-project 4 (Discovery) spec as written; no changes were requested. The brainstorming approval gate is closed and planning may proceed.
+- 2026-08-28 — **sub-project 4 connector acceptance passed after reconnecting the ChatGPT connector.** `tools/list` exposed exactly 13 expected tools. The initial seed `@exampleaiseed` returned zero similar channels, so the owner followed the public fallback seed `@exampleaichannel`; it returned 10 candidates with `total_similar: 74` and `truncated: true`. All 10 candidates had usernames and 9 had descriptions. Four `get_messages` calls by candidate `@username` succeeded with no failures, and three recommendations were based on the posts read. The scenario made no joins and no Telegram account-state changes.
 
 # Current point
 
@@ -93,8 +94,9 @@ created: 2026-08-26
 at `adde93e`; gates at `f9952d9` were 352 fast tests, typecheck, lint and build
 green, live tier 25/25 with no skips.
 
-**Sub-project 4, Discovery: tasks 1-4 of 7 are done and pushed; task 5 has not
-started.**
+**Sub-project 4, Discovery: tasks 1-7 have completed implementation, live
+verification, deployment, and owner connector acceptance.** The deployment
+commit is `d7c6435`; it is pushed to `main` and production is Ready.
 
 - Spec `docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`,
   approved by the owner and amended at `4639fa4` for the `getFullChannel` flood
@@ -114,25 +116,12 @@ started.**
 | 2 Capped, throttled, cached enrichment | complete, `25ad447`, review clean |
 | 3 `search_channels` engine | complete, `ecd0b62`, clean after 1 fix round |
 | 4 `get_similar_channels` engine | complete, `2cae8b4`, review returned Approved; one Important finding carried to the final review, see below |
-| 5 Expose both tools, bump to 1.2.0 | not started |
-| 6 Live tier | not started |
-| 7 Deploy and accept | not started |
+| 5 Expose both tools, bump to 1.2.0 | complete, `4e57eb5` |
+| 6 Live tier | complete, `d7c6435`; 27 fast test files / 344 tests, typecheck, lint, build, and live tier passed |
+| 7 Deploy and accept | complete: `main` pushed, Vercel Ready, OAuth/MCP production checks passed, owner connector acceptance passed |
 
-Gates at `2cae8b4`: 376 fast tests green, typecheck and lint clean. The live
-tier has not been run against these changes; Task 6 introduces it.
-
-**Everything through `2cae8b4` is pushed, and that is safe:** `src/mcp/server.ts`
-still registers eleven tools and neither engine is reachable from the wire, so
-production behaviour is unchanged. Task 5 is the commit that first changes what
-the deployed server does.
-
-**Next, in order.**
-
-1. Task 5, then 6, then 7 from the plan, each through the same loop:
-   implementer, task review, fix rounds capped at five.
-2. Then the final whole-implementation review over `4055790..HEAD` on the most
-   capable model. Sub-project 3 proved this step is not optional — its per-task
-   reviews all missed three defects that only exist across module boundaries.
+The final whole-implementation review over `4055790..HEAD` remains the required
+closing review before this sub-project is marked closed.
 
 **One finding is open and must be handed to that final reviewer explicitly, not
 left for it to rediscover.** Task 4's review found that
@@ -144,7 +133,7 @@ approved regardless, it is cosmetic to correctness, and Tasks 5-7 add no third
 caller. The suggested fix is a shared `buildCandidatePage(client, index, kept)`
 with each engine computing only its own `truncated` and `total_similar`.
 
-**Do not redo:** tasks 1-3, anything in sub-projects 1-3, or any item the four
+**Do not redo:** tasks 1-7, anything in sub-projects 1-3, or any item the four
 sub-project 3 fix rounds closed. The live discovery measurements under "Changes
 and findings" cost real FLOOD_WAIT budget — read them rather than re-probing.
 
