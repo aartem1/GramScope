@@ -88,11 +88,10 @@ created: 2026-08-26
 
 # Current point
 
-**Sub-project 3, Research: complete.** Twelve plan tasks done and accepted by
-the owner in the ChatGPT connector; the final whole-implementation review of
-`3832daa..7ddece2` closed after four fix rounds, the last reviewed `Approved
-with minors`. Rounds 1-3 each introduced the defect the next round fixed, which
-is why the loop ran long.
+**Sub-projects 1-3 are complete and deployed.** Sub-project 3 (Research) closed
+at `adde93e` after four fix rounds on the final whole-implementation review of
+`3832daa..7ddece2`, the last reviewed `Approved with minors`. Rounds 1-3 each
+introduced the defect the next round fixed, which is why the loop ran long.
 
 | Round | Commits | Fixed |
 | --- | --- | --- |
@@ -101,20 +100,24 @@ is why the loop ran long.
 | 3 | `a4df5b7..00a2dd2` | lookup budget instead of a name ceiling; exclusion failure discrimination |
 | 4 | `f9952d9` | free refusal before any lookup; `PRIVATE_CHANNEL_NOT_ACCESSIBLE` degrade; unresolvable names uncharged |
 
-Everything is pushed and deployed. Gates at `f9952d9`: 352 fast tests,
-typecheck, lint and build green; live tier 25/25 with no skips. The reviewer
-re-ran the fast gates independently and could not construct a legal call round 4
-refuses. Its two minors are handled: the card is this update, and the diagnosis-
-ordering one is an accepted residual listed above.
+Gates at `f9952d9`: 352 fast tests, typecheck, lint and build green; live tier
+25/25 with no skips.
 
-**Next:** sub-project 4, Discovery. It has no spec or plan yet, so it starts at
-`superpowers:brainstorming`. Sub-projects 5 (State writes) and 6 (Source
+**Sub-project 4, Discovery, is in brainstorming.** The live probe is spent and
+recorded under "Changes and findings" — do not buy those numbers again. The
+owner settled the two open choices on 2026-08-28: `broadcasts: true` is fixed on
+in `search_channels`, and enrichment is capped at 15 candidates by default and
+25 at most. The spec is written, self-reviewed and committed at `ab24e1f` as
+`docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`.
+
+**Next:** the owner reviews that spec. On approval the stage is
+`superpowers:writing-plans`; no source file of sub-project 4 exists yet and none
+should until the plan does. Sub-projects 5 (State writes) and 6 (Source
 metadata) follow.
 
 **Do not redo:** anything in sub-projects 1-3, or any item the four fix rounds
-closed. The live Telegram measurements below cost real FLOOD_WAIT budget — read
-them rather than re-probing. The accepted residuals above are decisions, not
-open defects.
+closed. The accepted residuals listed under "Changes and findings" are
+decisions, not open defects.
 
 # Blocked — awaiting owner
 Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
