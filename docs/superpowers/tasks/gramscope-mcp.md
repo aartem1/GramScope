@@ -16,6 +16,8 @@ created: 2026-08-26
 - [x] 2026-08-26 → resolved 2026-08-27: the dedicated Telegram account exists and its credentials, plus GitHub and Vercel access, are in place. `.env.local` and the Vercel environment hold them; nothing was written to the repository.
 
 # Changes and findings
+- 2026-08-29 — two undocumented Telegram folder constraints, measured live in Task 12 rather than read from documentation, each reproduced with an isolated raw-teleproto call before being accepted. **A folder title is capped at 12 characters**; anything longer is rejected with `MESSAGE_TOO_LONG`, a code whose name gives no hint that a title length is what failed. **A folder cannot be created with an empty `includePeers`**; Telegram answers `FILTER_INCLUDE_EMPTY`. `createFolder` and `renameFolder` pass the title straight through to `Api.DialogFilter`, so both are wire-level limits and not GramScope bugs — but GramScope currently surfaces both as a generic `INTERNAL_ERROR`, which tells an agent nothing about how to retry. Making those two messages actionable is a candidate follow-up, deliberately left out of sub-project 5a's scope.
+- 2026-08-29 — the live tier now runs its files **sequentially**, via `fileParallelism: process.env.GRAMSCOPE_LIVE !== "1"` in `vitest.config.ts`. Every live test file mutates the same real Telegram account, so concurrent files are a structural hazard, not merely a timing annoyance: a reproduced failure had `writes.live.test.ts` holding a manual unread flag through a FLOOD_WAIT stretch while `reading.live.test.ts` asserted over the same summary. The condition keys off the same environment variable that already gates every live `describe`, so `npm run test` keeps running its 30 files in parallel.
 - 2026-08-26 — intake: brief lives in README.md; no spec, plan, ledger, or feature branch exists yet.
 - 2026-08-26 — constraint: Telegram folders cap at 10 (20 Premium) with 100 chats each (200 Premium), and are client-side peer groupings — no server-side history-by-folder. Division of labor decided for sub-projects 5 and 6: folders are the few coarse reading lanes (one `getDialogFilters` call resolves all of them, and they are what the human sees as tabs); meta-channel tags carry unbounded cross-cutting metadata (topic, type, language, quality). Neither replaces the other.
 - 2026-08-26 — scope decision (owner delegated it): deliver as six sequential sub-projects, each with its own spec/plan/ledger — 1 Foundation (hosting, OAuth, session bootstrap, shared client/error/pagination/schema conventions, `list_dialogs`, `get_channel`), 2 Reading, 3 Research, 4 Discovery, 5 State writes, 6 Source metadata. Sub-project 1 fixes the conventions the rest inherit and is the only one that must survive real MTProto on serverless.
@@ -154,7 +156,7 @@ yet complete without re-running anything above it.
 | 9 Folder membership and order | complete, `d7f8dc9`, review clean; 431 tests |
 | 10 `manage_folder` tool | complete, `546b2a9`, review clean; 433 tests, seventeen tools |
 | 11 Version 1.3.0, README, deploy | complete, `690ecb6`..`3c99774`, clean after 1 fix round; 433 tests + build; deployed and verified in production |
-| 12 Live tier | not started |
+| 12 Live tier | complete, `9c2b5ec`..`dd47f22`, clean after 1 fix round; live tier 35 passed/1 skipped, fast tier 433 |
 
 Rulings made during execution, each of which the owner may overrule:
 
@@ -216,7 +218,14 @@ a fresh session.
   Briefs are cut with the plugin's `scripts/task-brief PLAN_FILE N`.
 - Resume at the first table row above that is not `complete`. Everything above
   it is committed, reviewed, and must not be redone.
-- **Current point (2026-08-28):** Task 11 is complete, deployment included.
+- **Current point (2026-08-29):** Tasks 1-12 are all complete. What remains is
+  the broad whole-sub-project review over `d2cc3a3`..HEAD, and then the owner's
+  two acceptance actions (below). Two live-Telegram constraints were discovered
+  in Task 12 and are recorded under "Changes and findings"; the deferred minors
+  and rulings the final reviewer must be pointed at live in the git-ignored
+  ledger.
+
+- **Task 11 detail (2026-08-28):** Task 11 is complete, deployment included.
   `main` was pushed to `origin/main` at `e7c1ba6`, carrying Tasks 7-11. Vercel
   production deployment `dpl_B7UzJxGm5JbMLeZtb3jXpRyRZYxP`
   (`https://gram-scope-abc123def-example-projects.vercel.app`, alias
