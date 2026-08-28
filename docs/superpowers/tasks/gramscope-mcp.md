@@ -148,7 +148,7 @@ yet complete without re-running anything above it.
 | 3 `get_unread_summary` reports the manual flag | complete, `f42bd9c`, review clean; 392 tests |
 | 4 `peerKind`, `toInputPeer`, `markUnread` engine | complete, `1432f22`..`7c6b4b0`, clean after 1 fix round; 399 tests |
 | 5 `mark_unread` tool | complete, `067047d`, review clean; 400 tests, fourteen tools |
-| 6 `join_channel` | in flight |
+| 6 `join_channel` | `f550122` + fix `cc46c43`, 405 tests; review found 1 Important, the fix is committed, **scoped re-review was in flight when this was written** — re-run it or judge `f550122..cc46c43` directly before marking complete |
 | 7 `leave_channel` | not started |
 | 8 Folder round-trip rule, create/rename/delete | not started |
 | 9 Folder membership and order | not started |
@@ -165,10 +165,49 @@ Rulings made during execution, each of which the owner may overrule:
   copies the enum's array before sorting it; Task 8 implements `createFolder`
   without the `source_ids` branch, which Task 9 adds.
 - Task 4: the duplicated `source_ids` validation guard is extracted into
-  `src/telegram/source-selection.ts`, taking the tool name and the ceiling as
-  parameters. Task 9's folder editing uses that helper instead of writing its own
-  `assertBatchSize`. This overrides the plan text, which wrote each guard out in
-  full.
+  `src/telegram/source-selection.ts` as `assertSourceIdsBounded(ids, toolName,
+  ceiling)`. **Task 9's folder editing must use that helper instead of writing
+  its own `assertBatchSize`, passing `MAX_SOURCES_PER_CALL`** — the plan text
+  still says `assertBatchSize`, and this ruling overrides it.
+- Task 5: `tests/mcp-handler.test.ts` got a local writers array in place of a
+  chain of `!==` comparisons, folded into Task 6 rather than deferred, because
+  the chain would have reached five clauses by Task 10.
+- Task 6: the `peerKind` guard moves above the membership branch in
+  `joinChannel`, and the entity is resolved once up front for both branches.
+  The plan text put the guard in only the not-held branch, so a numeric id
+  naming an already-held private chat returned `already_member: true` — a
+  success for a target the tool's own description says cannot be joined. Same
+  shape as the pre-flight ruling for `leaveChannel`: kind is a property of the
+  target, not of membership. The `sourceType` test around `fetchChannelDetails`
+  disappeared with it, since every entity surviving the guard is a channel.
+
+## How to resume sub-project 5a
+
+Read this before dispatching anything, whether you are Codex on this machine or
+a fresh session.
+
+- The plan is `docs/superpowers/plans/2026-08-28-gramscope-writes.md`, executed
+  with `superpowers:subagent-driven-development`: one implementer subagent per
+  task, a spec-plus-quality review after each, a scoped re-review after each fix
+  round, and one broad whole-branch review at the end.
+- **The plan text on disk is already corrected.** Five pre-flight rulings were
+  applied to it at `038d4de` and must not be re-derived. The rulings above,
+  however, override the plan text where they conflict — the plan file was not
+  rewritten for them.
+- The working ledger and the per-task briefs live in
+  `.superpowers/sdd/2026-08-28-gramscope-writes/`, which is **git-ignored**. On
+  this machine they are intact and are the fuller record. On a fresh clone they
+  do not exist: rebuild what you need from this card, the plan, and `git log`.
+  Briefs are cut with the plugin's `scripts/task-brief PLAN_FILE N`.
+- Resume at the first table row above that is not `complete`. Everything above
+  it is committed, reviewed, and must not be redone.
+- Nothing has been pushed. `main` is thirteen commits ahead of `origin/main`,
+  and a push deploys to Vercel production. Task 11 is where the plan expects
+  the deploy; do not push earlier without meaning to deploy.
+- Gates for every task: `npm run test`, `npm run typecheck`, `npm run lint`.
+  The live tier is excluded from `npm run test` by design and runs only in
+  Task 12, with `GRAMSCOPE_LIVE=1 npm run test:live`. Never commit the
+  `tsconfig.json` churn `npm run build` leaves behind.
 
 Three points the spec left open are decided in the plan, not in the spec, and a
 reviewer may overrule any of them: `leave_channel` covers channels and
