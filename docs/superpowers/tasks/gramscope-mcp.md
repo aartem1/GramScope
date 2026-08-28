@@ -134,8 +134,41 @@ machine-local, so on a fresh clone reconstruct position from `git log` instead.
 A pre-flight conflict scan of the plan ran before Task 1 and produced six
 rulings; five of them are already applied to the plan file in commit `038d4de`,
 so the plan text on disk is the corrected one and those corrections must not be
-re-derived. Plan and card are committed through `038d4de`; every commit after it
-is implementation.
+re-derived. **Base commit for the whole sub-project: `d2cc3a3`.** Every commit
+after it is implementation.
+
+Outcomes below are filled in as each task closes, so another agent — Codex on
+this machine, or any fresh session — can resume from the first row that is not
+yet complete without re-running anything above it.
+
+| Task | State |
+| --- | --- |
+| 1 Server-level instructions replace the per-tool guidance | complete, `f032556`, review clean; 385 tests |
+| 2 `unread_mark` on the read side | complete, `2616025`, review clean, no findings; 388 tests |
+| 3 `get_unread_summary` reports the manual flag | complete, `f42bd9c`, review clean; 392 tests |
+| 4 `peerKind`, `toInputPeer`, `markUnread` engine | `1432f22`, 397 tests; review Approved with 1 Important (duplicated `source_ids` guard) — fix round 1 in flight |
+| 5 `mark_unread` tool | not started |
+| 6 `join_channel` | not started |
+| 7 `leave_channel` | not started |
+| 8 Folder round-trip rule, create/rename/delete | not started |
+| 9 Folder membership and order | not started |
+| 10 `manage_folder` tool | not started |
+| 11 Version 1.3.0, README, deploy | not started |
+| 12 Live tier | not started |
+
+Rulings made during execution, each of which the owner may overrule:
+
+- Pre-flight, applied to the plan at `038d4de`: `leaveChannel`'s kind check moves
+  above the membership early-return; the folder-edit test fake applies the writes
+  it receives to its own filter list; Task 1 extracts a shared `connectServer`
+  test helper instead of duplicating the handshake; Task 10's schema assertion
+  copies the enum's array before sorting it; Task 8 implements `createFolder`
+  without the `source_ids` branch, which Task 9 adds.
+- Task 4: the duplicated `source_ids` validation guard is extracted into
+  `src/telegram/source-selection.ts`, taking the tool name and the ceiling as
+  parameters. Task 9's folder editing uses that helper instead of writing its own
+  `assertBatchSize`. This overrides the plan text, which wrote each guard out in
+  full.
 
 Three points the spec left open are decided in the plan, not in the spec, and a
 reviewer may overrule any of them: `leave_channel` covers channels and
