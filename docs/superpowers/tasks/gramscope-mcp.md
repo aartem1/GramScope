@@ -96,10 +96,16 @@ at `adde93e`; gates at `f9952d9` were 352 fast tests, typecheck, lint and build
 green, live tier 25/25 with no skips.
 
 **Sub-project 4, Discovery is closed, deployed, accepted, and review-clean.**
-All production code and fixes through
-`3c7383b2292387e523915ba07005a14f094b1427` are pushed to `main`.
-The closure documentation commit is intentionally local and must not be pushed,
-to avoid a docs-only Vercel deployment.
+Everything through the closure commit `6b3d4bb` is pushed to `main`; the remote
+and the local branch are level. An earlier note here said the docs-only closure
+commit should stay local to avoid a redundant Vercel deploy; that was overridden
+on 2026-08-28 by the owner's standing "push everything" instruction.
+
+**Next: sub-project 5, Writes.** No spec yet. Its scope, per the README tool set
+and the decisions recorded above, is `mark_unread`, `join_channel`,
+`leave_channel`, `manage_folder`, `save_message`, and the Saved Messages reads
+(`get_saved_messages`, `search_saved_messages`) that sub-project 3 deferred here.
+Sub-project 6 (source notes in the private metadata channel) follows.
 
 - Spec `docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`,
   approved by the owner and amended at `4639fa4` for the `getFullChannel` flood
