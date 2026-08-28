@@ -94,8 +94,9 @@ created: 2026-08-26
 at `adde93e`; gates at `f9952d9` were 352 fast tests, typecheck, lint and build
 green, live tier 25/25 with no skips.
 
-**Sub-project 4, Discovery: tasks 1-7 have completed implementation, live
-verification, deployment, and owner connector acceptance.** The deployment
+**Sub-project 4, Discovery: Tasks 1-6 are complete. Task 7 is in progress:**
+deployment, production checks, and owner connector acceptance are complete, but
+its required whole-implementation review is still in flight. The deployment
 commit is `d7c6435`; it is pushed to `main` and production is Ready.
 
 - Spec `docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`,
@@ -118,7 +119,7 @@ commit is `d7c6435`; it is pushed to `main` and production is Ready.
 | 4 `get_similar_channels` engine | complete, `2cae8b4`, review returned Approved; one Important finding carried to the final review, see below |
 | 5 Expose both tools, bump to 1.2.0 | complete, `4e57eb5` |
 | 6 Live tier | complete, `d7c6435`; 28 fast test files / 378 tests, typecheck, lint, build, and live tier passed |
-| 7 Deploy and accept | complete: `main` pushed, Vercel Ready, OAuth/MCP production checks passed, owner connector acceptance passed |
+| 7 Deploy and accept | in progress: `main` pushed, Vercel Ready, OAuth/MCP production checks passed, and owner connector acceptance passed; required closing review in flight |
 
 The final whole-implementation review over `4055790..HEAD` remains the required
 closing review before this sub-project is marked closed.
