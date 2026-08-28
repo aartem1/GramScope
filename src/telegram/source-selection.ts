@@ -103,6 +103,39 @@ export function assertResolutionBudget(
   }
 }
 
+/**
+ * The source_ids bound every write tool enforces before touching the
+ * network: reject an empty or an over-limit selection up front. Lives here,
+ * not in each tool's own module, because this module already owns the
+ * question "how many sources may one call name" (MAX_SOURCES_PER_CALL,
+ * assertResolutionBudget above) — markRead and markUnread shared this guard
+ * verbatim before this extraction, and folder editing is a third caller.
+ *
+ * The ceiling is a parameter rather than a constant baked in here because
+ * callers reach for different ceilings that happen to share a value today:
+ * mark_read and mark_unread pass MAX_MARK_READ_SOURCES, folder editing will
+ * pass MAX_SOURCES_PER_CALL — same number, different meaning, and nothing
+ * here should assume they stay equal.
+ */
+export function assertSourceIdsBounded(
+  sourceIds: string[],
+  toolName: string,
+  limit: number,
+): void {
+  if (sourceIds.length === 0) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      "source_ids must name at least one source",
+    );
+  }
+  if (sourceIds.length > limit) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      `${toolName} accepts at most ${limit} sources per call; got ${sourceIds.length}. Split the call.`,
+    );
+  }
+}
+
 function assertEffectiveSourceCount(count: number): void {
   if (count === 0) {
     throw new GramScopeError(

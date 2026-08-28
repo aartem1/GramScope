@@ -7,6 +7,7 @@ import {
 
 const CHANNEL = "-100111";
 const CHAT = "-222";
+const USER = "333";
 
 const dialogs = [
   {
@@ -177,6 +178,40 @@ describe("markUnread", () => {
       code: "PRIVATE_CHANNEL_NOT_ACCESSIBLE",
     });
     expect(result.results).toHaveLength(1);
+  });
+
+  it("builds an InputPeerChat for a legacy chat, not an InputPeerChannel", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(
+      factory({
+        sent,
+        entities: { [CHAT]: { className: "Chat", id: { value: 222n } } },
+      }),
+    );
+    await markUnread({ source_ids: [CHAT], unread: true });
+
+    const request = sent.at(-1) as {
+      peer?: { peer?: { className?: string; chatId?: unknown } };
+    };
+    expect(request.peer?.peer?.className).toBe("InputPeerChat");
+    expect(request.peer?.peer?.chatId).toEqual({ value: 222n });
+  });
+
+  it("builds an InputPeerUser for a user, not an InputPeerChat", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(
+      factory({
+        sent,
+        entities: { [USER]: { className: "User", id: { value: 333n } } },
+      }),
+    );
+    await markUnread({ source_ids: [USER], unread: true });
+
+    const request = sent.at(-1) as {
+      peer?: { peer?: { className?: string; userId?: unknown } };
+    };
+    expect(request.peer?.peer?.className).toBe("InputPeerUser");
+    expect(request.peer?.peer?.userId).toEqual({ value: 333n });
   });
 
   it("rejects an empty or oversized selection", async () => {

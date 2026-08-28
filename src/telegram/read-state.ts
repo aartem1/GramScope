@@ -3,6 +3,7 @@ import { mapTelegramError } from "../errors/from-telegram";
 import { GramScopeError } from "../errors/taxonomy";
 import { getApi, resolveEntity, toInputPeer, withTelegram } from "./client";
 import { fetchDialogIndex } from "./dialog-index";
+import { assertSourceIdsBounded } from "./source-selection";
 
 export const MAX_MARK_READ_SOURCES = 25;
 
@@ -28,8 +29,9 @@ export type MarkReadResult = {
 };
 
 /**
- * The only mutating path in this sub-project, kept in its own file so it can
- * be reviewed on its own.
+ * Advances a source's read pointer to an explicit or implied message id —
+ * one of the two mutating engines this file holds; markUnread below is the
+ * sibling that sets or clears the manual unread flag instead.
  *
  * Peers resolve exactly as reads do. Task 1 verified live that Telegram
  * accepts channels.ReadHistory for channels resolved from marked ids.
@@ -37,18 +39,7 @@ export type MarkReadResult = {
 export async function markRead(
   input: MarkReadInput,
 ): Promise<MarkReadResult> {
-  if (input.source_ids.length === 0) {
-    throw new GramScopeError(
-      "INVALID_INPUT",
-      "source_ids must name at least one source",
-    );
-  }
-  if (input.source_ids.length > MAX_MARK_READ_SOURCES) {
-    throw new GramScopeError(
-      "INVALID_INPUT",
-      `mark_read accepts at most ${MAX_MARK_READ_SOURCES} sources per call; got ${input.source_ids.length}. Split the call.`,
-    );
-  }
+  assertSourceIdsBounded(input.source_ids, "mark_read", MAX_MARK_READ_SOURCES);
 
   const index = await fetchDialogIndex();
   const outcomes = await withTelegram(async (client) => {
@@ -134,18 +125,11 @@ export type MarkUnreadResult = {
 export async function markUnread(
   input: MarkUnreadInput,
 ): Promise<MarkUnreadResult> {
-  if (input.source_ids.length === 0) {
-    throw new GramScopeError(
-      "INVALID_INPUT",
-      "source_ids must name at least one source",
-    );
-  }
-  if (input.source_ids.length > MAX_MARK_READ_SOURCES) {
-    throw new GramScopeError(
-      "INVALID_INPUT",
-      `mark_unread accepts at most ${MAX_MARK_READ_SOURCES} sources per call; got ${input.source_ids.length}. Split the call.`,
-    );
-  }
+  assertSourceIdsBounded(
+    input.source_ids,
+    "mark_unread",
+    MAX_MARK_READ_SOURCES,
+  );
 
   const outcomes = await withTelegram(async (client) => {
     const Api = await getApi();
