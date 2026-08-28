@@ -10,6 +10,7 @@ import { registerJoinChannel } from "./tools/join-channel";
 import { registerLeaveChannel } from "./tools/leave-channel";
 import { registerListDialogs } from "./tools/list-dialogs";
 import { registerListFolders } from "./tools/list-folders";
+import { registerManageFolder } from "./tools/manage-folder";
 import { registerMarkRead } from "./tools/mark-read";
 import { registerMarkUnread } from "./tools/mark-unread";
 import { registerResolveTelegramUrl } from "./tools/resolve-telegram-url";
@@ -28,6 +29,7 @@ export function registerTools(server: McpServer): void {
   registerMarkUnread(server);
   registerJoinChannel(server);
   registerLeaveChannel(server);
+  registerManageFolder(server);
   registerSearchMessages(server);
   registerResolveTelegramUrl(server);
   registerGetPinnedMessages(server);

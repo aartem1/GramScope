@@ -117,7 +117,7 @@ describe("tools/list over a real MCP server", () => {
     expect(packageLock.packages?.[""]?.version).toBe(MCP_SERVER_VERSION);
   });
 
-  it("advertises all sixteen tools", async () => {
+  it("advertises all seventeen tools", async () => {
     const tools = await listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "get_channel",
@@ -131,6 +131,7 @@ describe("tools/list over a real MCP server", () => {
       "leave_channel",
       "list_dialogs",
       "list_folders",
+      "manage_folder",
       "mark_read",
       "mark_unread",
       "resolve_telegram_url",
@@ -151,10 +152,11 @@ describe("tools/list over a real MCP server", () => {
   });
 
   const WRITERS = [
-    "mark_read",
-    "mark_unread",
     "join_channel",
     "leave_channel",
+    "manage_folder",
+    "mark_read",
+    "mark_unread",
   ];
 
   it("marks only the writer tools as mutating", async () => {

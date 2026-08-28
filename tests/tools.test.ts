@@ -59,18 +59,47 @@ describe("registerTools", () => {
   ];
 
   const WRITERS = [
-    "mark_read",
-    "mark_unread",
     "join_channel",
     "leave_channel",
+    "manage_folder",
+    "mark_read",
+    "mark_unread",
   ];
 
-  it("registers all sixteen tools", () => {
+  it("registers all seventeen tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(
       [...READ_ONLY, ...WRITERS].sort(),
     );
+  });
+
+  it("names every manage_folder action in its schema", () => {
+    const server = fakeServer();
+    registerTools(server as never);
+    const tool = server.tools.find((t) => t.name === "manage_folder")!;
+    const schema = tool.config.inputSchema as {
+      shape: { action: { options: string[] } };
+    };
+    // Spread before sorting: sort() is in place and `options` is the live
+    // schema's own array.
+    expect([...schema.shape.action.options].sort()).toEqual(
+      [
+        "add_sources",
+        "create",
+        "delete",
+        "remove_sources",
+        "rename",
+        "reorder",
+      ].sort(),
+    );
+  });
+
+  it("says in manage_folder's description that delete takes one folder", () => {
+    const server = fakeServer();
+    registerTools(server as never);
+    const tool = server.tools.find((t) => t.name === "manage_folder")!;
+    expect(String(tool.config.description)).toContain("one folder");
   });
 
   it("derives readOnlyHint from behaviour, not uniformly", () => {
