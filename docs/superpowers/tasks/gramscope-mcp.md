@@ -113,7 +113,7 @@ started.**
 | 1 Candidate schema and mapping | complete, `c26a657`, review clean |
 | 2 Capped, throttled, cached enrichment | complete, `25ad447`, review clean |
 | 3 `search_channels` engine | complete, `ecd0b62`, clean after 1 fix round |
-| 4 `get_similar_channels` engine | implemented at `2cae8b4`; **its task review was still running when the session ended — its verdict is unknown and must be re-run** |
+| 4 `get_similar_channels` engine | complete, `2cae8b4`, review returned Approved; one Important finding carried to the final review, see below |
 | 5 Expose both tools, bump to 1.2.0 | not started |
 | 6 Live tier | not started |
 | 7 Deploy and accept | not started |
@@ -128,17 +128,21 @@ the deployed server does.
 
 **Next, in order.**
 
-1. Re-run the Task 4 task review over `57ab8f0..2cae8b4` — the previous one's
-   verdict was lost. It must judge two deviations the implementer declared: the
-   shared test helper `installSearch` had its fake `getEntity` changed from
-   returning `{}` to being target-aware, and that helper is also used by Task 3's
-   already-approved tests; and a `__resetClientForTests()` was inserted between
-   two `installSearch` calls in one test.
-2. Then Task 5, 6, 7 from the plan, each through the same loop: implementer,
-   task review, fix rounds capped at five.
-3. Then the final whole-implementation review over `4055790..HEAD` on the most
+1. Task 5, then 6, then 7 from the plan, each through the same loop:
+   implementer, task review, fix rounds capped at five.
+2. Then the final whole-implementation review over `4055790..HEAD` on the most
    capable model. Sub-project 3 proved this step is not optional — its per-task
    reviews all missed three defects that only exist across module boundaries.
+
+**One finding is open and must be handed to that final reviewer explicitly, not
+left for it to rediscover.** Task 4's review found that
+`src/telegram/discovery.ts:154-164` and `:190-198` carry the same
+enrich / map / `fitToSizeCap` / slice block verbatim in both engines, differing
+only in which array feeds the slice. It came from the plan's own snippet, so it
+is plan-mandated. I ruled against opening a fix round for it: the task review
+approved regardless, it is cosmetic to correctness, and Tasks 5-7 add no third
+caller. The suggested fix is a shared `buildCandidatePage(client, index, kept)`
+with each engine computing only its own `truncated` and `total_similar`.
 
 **Do not redo:** tasks 1-3, anything in sub-projects 1-3, or any item the four
 sub-project 3 fix rounds closed. The live discovery measurements under "Changes
