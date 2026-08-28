@@ -144,6 +144,16 @@ describe("registerTools", () => {
     expect(SERVER_INSTRUCTIONS).toContain("third-party data");
   });
 
+  it("names the one action the addressing rule does not cover", () => {
+    // remove_sources matches marked ids without resolving anything, so the
+    // shared @username default is wrong for it. Stating the default here and
+    // not its exception aims the model at the one call that rejects a
+    // @username; docs/chatgpt-project-instructions.md carries the same clause.
+    expect(SERVER_INSTRUCTIONS).toContain(
+      "manage_folder(remove_sources), which takes the marked ids list_folders reports and rejects a @username",
+    );
+  });
+
   it("repeats no shared guidance inside any tool description", () => {
     const server = fakeServer();
     registerTools(server as never);

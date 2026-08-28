@@ -168,6 +168,11 @@ describe("tools/list over a real MCP server", () => {
     expect(String(initialize.instructions)).toContain(
       "Name a source by @username whenever it has one",
     );
+    // The exception clause has to survive the handshake too: it is the half a
+    // model needs at the one call where the default above is wrong.
+    expect(String(initialize.instructions)).toContain(
+      "manage_folder(remove_sources)",
+    );
   });
 
   it("wires the same instructions into the deployed handler", () => {

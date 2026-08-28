@@ -265,7 +265,12 @@ a fresh session.
   context in every session including the read-only ones. `SERVER_INSTRUCTIONS`
   (`src/mcp/instructions.ts:17`) carries the same @username rule and is
   falsified the same way; it was flagged for the owner rather than changed,
-  since it ships beside the tool description that overrides it.
+  since it ships beside the tool description that overrides it. **Ruled on and
+  fixed in the same wave:** `SERVER_INSTRUCTIONS` is what the client receives at
+  `initialize`, so it is the more authoritative of the two texts and carries the
+  same clause now, worded to match the document. Both suites that pin the
+  addressing rule keep the old substring and gained an assertion on the new
+  clause, proved non-vacuous by deleting the clause and watching both fail.
 
 - **Task 11 detail (2026-08-28):** Task 11 is complete, deployment included.
   `main` was pushed to `origin/main` at `e7c1ba6`, carrying Tasks 7-11. Vercel
