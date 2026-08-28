@@ -153,7 +153,7 @@ yet complete without re-running anything above it.
 | 8 Folder round-trip rule, create/rename/delete | complete, `914ea66`; review closed by TL-constructor ruling, 2 minor test findings deferred; 417 tests |
 | 9 Folder membership and order | complete, `d7f8dc9`, review clean; 431 tests |
 | 10 `manage_folder` tool | complete, `546b2a9`, review clean; 433 tests, seventeen tools |
-| 11 Version 1.3.0, README, deploy | not started |
+| 11 Version 1.3.0, README, deploy | implementation/review complete, `690ecb6`..`3c99774`, clean after 1 fix round; 433 tests + build; production push and deploy verification pending |
 | 12 Live tier | not started |
 
 Rulings made during execution, each of which the owner may overrule:
@@ -188,6 +188,13 @@ Rulings made during execution, each of which the owner may overrule:
   Cost if wrong: create writes explicit empty vectors where Telegram might have
   supplied an equivalent default; omitting them instead fails the declared TL
   constructor contract.
+- Task 11: the plan's four-file list omitted `package-lock.json`, but the
+  repository already treated its two root version fields as part of the tested
+  public-version invariant. The lockfile therefore moves to 1.3.0 and the
+  existing assertions stay; removing the assertions to preserve the plan's
+  file list was rejected in review. Cost if wrong: one extra metadata file in
+  the Task 11 diff. README now distinguishes five state-change tools deployed
+  in 1.3.0 from the six planned for full Slice 5; `save_message` remains 5b.
 
 ## How to resume sub-project 5a
 
@@ -209,9 +216,12 @@ a fresh session.
   Briefs are cut with the plugin's `scripts/task-brief PLAN_FILE N`.
 - Resume at the first table row above that is not `complete`. Everything above
   it is committed, reviewed, and must not be redone.
-- Nothing has been pushed. `main` is thirteen commits ahead of `origin/main`,
-  and a push deploys to Vercel production. Task 11 is where the plan expects
-  the deploy; do not push earlier without meaning to deploy.
+- `origin/main` remains at `fedc363` (through Task 6). At this handoff commit,
+  local `main` is eleven commits ahead and contains Tasks 7-10 plus Task 11's
+  reviewed implementation/fix. No push was performed: resume Task 11 by
+  pushing `main`, wait for Vercel production to reach Ready, then verify the
+  deployed MCP reports version 1.3.0, non-empty initialize instructions and
+  exactly seventeen tools. Only then mark Task 11 complete and begin Task 12.
 - Gates for every task: `npm run test`, `npm run typecheck`, `npm run lint`.
   The live tier is excluded from `npm run test` by design and runs only in
   Task 12, with `GRAMSCOPE_LIVE=1 npm run test:live`. Never commit the
