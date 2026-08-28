@@ -216,12 +216,22 @@ a fresh session.
   Briefs are cut with the plugin's `scripts/task-brief PLAN_FILE N`.
 - Resume at the first table row above that is not `complete`. Everything above
   it is committed, reviewed, and must not be redone.
-- `origin/main` remains at `fedc363` (through Task 6). At this handoff commit,
-  local `main` is eleven commits ahead and contains Tasks 7-10 plus Task 11's
-  reviewed implementation/fix. No push was performed: resume Task 11 by
-  pushing `main`, wait for Vercel production to reach Ready, then verify the
-  deployed MCP reports version 1.3.0, non-empty initialize instructions and
-  exactly seventeen tools. Only then mark Task 11 complete and begin Task 12.
+- **Current point (2026-08-28):** `main` was pushed to `origin/main` at
+  `e7c1ba6`, carrying Tasks 7-11. Vercel production deployment
+  `dpl_B7UzJxGm5JbMLeZtb3jXpRyRZYxP`
+  (`https://gram-scope-abc123def-example-projects.vercel.app`, alias
+  `https://gramscope.vercel.app`) reached `Ready`. The unauthenticated
+  checks passed: `/api/mcp` answers `401` with a `WWW-Authenticate: Bearer`
+  challenge naming the resource metadata, and
+  `/.well-known/oauth-protected-resource` returns the correct `resource` and
+  `authorization_servers`. The authenticated half of acceptance criterion 3
+  (version 1.3.0, non-empty `initialize.instructions`, exactly seventeen tools)
+  needs an owner-issued bearer token: WorkOS AuthKit offers no
+  `client_credentials` grant and refuses the device grant to dynamically
+  registered clients, so the only non-interactive path is a loopback
+  `authorization_code` + PKCE flow the owner approves in a browser. Do not redo
+  Task 11's implementation, tests or review. Next after that check: Task 12,
+  the live tier.
 - Gates for every task: `npm run test`, `npm run typecheck`, `npm run lint`.
   The live tier is excluded from `npm run test` by design and runs only in
   Task 12, with `GRAMSCOPE_LIVE=1 npm run test:live`. Never commit the
