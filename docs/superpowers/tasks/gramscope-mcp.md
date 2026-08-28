@@ -85,6 +85,7 @@ created: 2026-08-26
   - `username` is often null while the active handle sits in `usernames[]` (`chatgptv`, `neiroseti` both arrived that way). Read both; `entityUsernames` in peer-id.ts already does.
   - `channels.getChannelRecommendations({channel})` returns `messages.ChatsSlice` with `count: 79` and only **10 chats** on this non-Premium account — `count` is what exists, the 10 are what is served, and there is no paging parameter to reach the rest.
   - `channels.getChannelRecommendations({})` — no channel — returns `messages.Chats` with **100 chats** and no `count`: global recommendations derived from the account's own subscriptions, untruncated.
+- 2026-08-28 — the owner reviewed and approved the sub-project 4 (Discovery) spec as written; no changes were requested. The brainstorming approval gate is closed and planning may proceed.
 
 # Current point
 
@@ -110,9 +111,10 @@ in `search_channels`, and enrichment is capped at 15 candidates by default and
 25 at most. The spec is written, self-reviewed and committed at `ab24e1f` as
 `docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`.
 
-**Next:** the owner reviews that spec. On approval the stage is
-`superpowers:writing-plans`; no source file of sub-project 4 exists yet and none
-should until the plan does. Sub-projects 5 (State writes) and 6 (Source
+The owner approved that spec unchanged on 2026-08-28.
+
+**Next:** `superpowers:writing-plans`. No source file of sub-project 4 exists yet
+and none should until the plan does. Sub-projects 5 (State writes) and 6 (Source
 metadata) follow.
 
 **Do not redo:** anything in sub-projects 1-3, or any item the four fix rounds
