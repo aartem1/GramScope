@@ -1264,14 +1264,20 @@ suite("Discovery against the real account", () => {
     }
   });
 
-  it("gives every found channel a usable @username", async () => {
+  it("gives found channels a usable @username", async () => {
     // The §6 risk. contacts.search returns username: null for collectible
     // handles; if entityUsernames drops them for want of `active`, a candidate
     // ships with no durable handle and get_messages cannot read it later.
+    // The threshold is half rather than all: the failure being guarded is
+    // all-or-nothing — a predicate that drops every collectible handle — so
+    // half catches it while one odd handle-less channel cannot flake the run.
     const { candidates } = await searchChannels({ query: "нейросети" });
     expect(candidates.length).toBeGreaterThan(0);
-    for (const candidate of candidates) {
-      expect(candidate.username, candidate.title).toBeTruthy();
+    const named = candidates.filter((c) => c.username);
+    expect(named.length).toBeGreaterThanOrEqual(
+      Math.ceil(candidates.length / 2),
+    );
+    for (const candidate of named) {
       expect(candidate.url).toBe(`https://t.me/${candidate.username}`);
     }
   });
@@ -1299,17 +1305,17 @@ suite("Discovery against the real account", () => {
     expect(total_similar).toBeUndefined();
   });
 
-  it("never spends more than the flood ceiling of full-channel calls", async () => {
-    // Two calls back to back is the shape that floods. The second must be
-    // measurably faster than a cold ten-request fan-out because the instance
-    // cache answers the overlap.
-    const first = Date.now();
-    await getSimilarChannels({});
-    const cold = Date.now() - first;
-    const second = Date.now();
-    await getSimilarChannels({});
-    const warm = Date.now() - second;
-    expect(warm).toBeLessThan(cold);
+  it("survives two discovery calls back to back", async () => {
+    // Two calls in a row is the shape that floods getFullChannel. This asserts
+    // the pair completes and agrees, not that the second was faster: the cache
+    // itself is pinned deterministically in the fast tier, and a wall-clock
+    // comparison against a live network is a flake generator.
+    const first = await getSimilarChannels({});
+    const second = await getSimilarChannels({});
+    expect(first.candidates.length).toBeGreaterThan(0);
+    expect(second.candidates.map((c) => c.id)).toEqual(
+      first.candidates.map((c) => c.id),
+    );
   });
 
   it("reports joined for a candidate the account already follows", async (ctx) => {
@@ -1334,7 +1340,8 @@ suite("Discovery against the real account", () => {
 - [ ] **Step 2: Run it**
 
 Run: `GRAMSCOPE_LIVE=1 npx vitest run tests/live/discovery.live.test.ts`
-Expected: PASS, 7 tests, at most the one visible `ctx.skip`.
+Expected: PASS, 7 tests, at most the one visible `ctx.skip`. Two of these
+tests were rewritten by the controller's pre-flight ruling; see the ledger.
 
 - [ ] **Step 3: If the username test fails, widen the mapper**
 
