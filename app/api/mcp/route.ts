@@ -3,6 +3,7 @@ import { registerTools } from "@/mcp/server";
 import { verifyOwnerToken } from "@/mcp/auth";
 import { logEvent } from "@/mcp/logging";
 import { MCP_SERVER_VERSION } from "@/mcp/version";
+import { SERVER_INSTRUCTIONS } from "@/mcp/instructions";
 
 /**
  * Spec §7: a 25-source fan-out at 8-way concurrency is four sequential rounds
@@ -17,6 +18,7 @@ const handler = createMcpHandler(
   },
   {
     serverInfo: { name: "gramscope", version: MCP_SERVER_VERSION },
+    instructions: SERVER_INSTRUCTIONS,
     onEvent: (event) => logEvent(event),
   },
 );

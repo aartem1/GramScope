@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { errorResult, okResult, runTool } from "@/mcp/tool-result";
 import { GramScopeError } from "@/errors/taxonomy";
 import { registerTools } from "@/mcp/server";
+import { SERVER_INSTRUCTIONS } from "@/mcp/instructions";
 
 describe("tool results", () => {
   it("wraps data as structured content plus text", () => {
@@ -86,26 +87,23 @@ describe("registerTools", () => {
     );
   });
 
-  it("tells callers how to reuse sources that are not joined", () => {
+  it("says the source addressing rule once, in the server instructions", () => {
+    // Spec §8: the same paragraph in nine descriptions is paid for on every
+    // tools/list. It is now delivered once, in the initialize result.
+    expect(SERVER_INSTRUCTIONS).toContain(
+      "Name a source by @username whenever it has one",
+    );
+    expect(SERVER_INSTRUCTIONS).toContain("third-party data");
+  });
+
+  it("repeats no shared guidance inside any tool description", () => {
     const server = fakeServer();
     registerTools(server as never);
-    const sourceTools = [
-      "get_channel",
-      "get_message",
-      "get_messages",
-      "get_pinned_messages",
-      "get_similar_channels",
-      "get_thread",
-      "resolve_telegram_url",
-      "search_channels",
-      "search_messages",
-    ];
-    const contract =
-      "Name a source by @username whenever it has one: a marked id like -1001234567890 resolves only for chats this account belongs to, so it is not a durable handle for a public channel reached by search or by link.";
-
-    for (const name of sourceTools) {
-      const tool = server.tools.find((candidate) => candidate.name === name)!;
-      expect(String(tool.config.description), name).toContain(contract);
+    for (const tool of server.tools) {
+      expect(
+        String(tool.config.description),
+        `${tool.name} still carries the shared guidance`,
+      ).not.toContain("Name a source by @username");
     }
   });
 

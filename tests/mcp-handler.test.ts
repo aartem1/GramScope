@@ -2,9 +2,77 @@ import { describe, expect, it } from "vitest";
 import { InMemoryTransport, McpServer } from "@modelcontextprotocol/server";
 import { registerTools } from "@/mcp/server";
 import { MCP_SERVER_VERSION } from "@/mcp/version";
+import { SERVER_INSTRUCTIONS } from "@/mcp/instructions";
 import { readFileSync } from "node:fs";
 
 type Json = Record<string, unknown>;
+
+type Connected = {
+  send: (message: Json) => Promise<void>;
+  waitFor: (id: number) => Promise<Json>;
+  close: () => Promise<void>;
+};
+
+/**
+ * Connects a real McpServer over the SDK's in-memory transport, completes the
+ * initialize handshake, and hands back the raw JSON-RPC channel plus the
+ * initialize result. Both the tools/list tests and the instructions test drive
+ * the same handshake, so it lives in one place.
+ */
+async function connectServer(): Promise<{
+  channel: Connected;
+  initialize: Json;
+}> {
+  const server = new McpServer(
+    { name: "gramscope", version: "test" },
+    { instructions: SERVER_INSTRUCTIONS },
+  );
+  registerTools(server);
+
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+
+  await server.connect(serverTransport);
+
+  const inbox: Json[] = [];
+  clientTransport.onmessage = (message) => inbox.push(message as Json);
+  await clientTransport.start();
+
+  const waitFor = async (id: number): Promise<Json> => {
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const found = inbox.find((message) => message.id === id);
+      if (found) return found;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`no response to request ${id}`);
+  };
+
+  await clientTransport.send({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "test", version: "1" },
+    },
+  } as never);
+  const initializeResponse = await waitFor(1);
+
+  await clientTransport.send({
+    jsonrpc: "2.0",
+    method: "notifications/initialized",
+  } as never);
+
+  return {
+    channel: {
+      send: (message) => clientTransport.send(message as never),
+      waitFor,
+      close: () => server.close(),
+    },
+    initialize: initializeResponse.result as Json,
+  };
+}
 
 /**
  * Drives a real McpServer over the SDK's in-memory transport and speaks raw
@@ -14,56 +82,20 @@ type Json = Record<string, unknown>;
  * actually fails.
  */
 async function listTools(): Promise<Json[]> {
-  const server = new McpServer({ name: "gramscope", version: "test" });
-  registerTools(server);
-
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
+  const { channel } = await connectServer();
 
   try {
-    await server.connect(serverTransport);
-
-    const inbox: Json[] = [];
-    clientTransport.onmessage = (message) => inbox.push(message as Json);
-    await clientTransport.start();
-
-    const waitFor = async (id: number): Promise<Json> => {
-      for (let attempt = 0; attempt < 200; attempt++) {
-        const found = inbox.find((message) => message.id === id);
-        if (found) return found;
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      throw new Error(`no response to request ${id}`);
-    };
-
-    await clientTransport.send({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "test", version: "1" },
-      },
-    } as never);
-    await waitFor(1);
-
-    await clientTransport.send({
-      jsonrpc: "2.0",
-      method: "notifications/initialized",
-    } as never);
-
-    await clientTransport.send({
+    await channel.send({
       jsonrpc: "2.0",
       id: 2,
       method: "tools/list",
       params: {},
-    } as never);
-    const response = await waitFor(2);
+    });
+    const response = await channel.waitFor(2);
 
     return ((response.result as Json).tools ?? []) as Json[];
   } finally {
-    await server.close();
+    await channel.close();
   }
 }
 
@@ -123,5 +155,21 @@ describe("tools/list over a real MCP server", () => {
         tool.name !== "mark_read",
       );
     }
+  });
+
+  it("delivers the shared guidance in the initialize result", async () => {
+    const { initialize } = await connectServer();
+    expect(String(initialize.instructions)).toContain(
+      "Name a source by @username whenever it has one",
+    );
+  });
+
+  it("wires the same instructions into the deployed handler", () => {
+    // A source assertion, not a behavioural one: app/api/mcp/route.ts builds
+    // its handler at module scope from runtime env, so importing it here would
+    // require the whole Next request environment. What can go wrong silently
+    // is the constant being written but never passed, and that this catches.
+    const route = readFileSync("app/api/mcp/route.ts", "utf8");
+    expect(route).toContain("SERVER_INSTRUCTIONS");
   });
 });
