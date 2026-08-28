@@ -16,6 +16,14 @@ export default defineConfig(({ mode }) => ({
     // reports as a failure of the code rather than of the budget.
     testTimeout: 120_000,
     hookTimeout: 60_000,
+    // Every live test file mutates the same real Telegram account (folders,
+    // membership, unread flags), so concurrent files are a structural hazard,
+    // not just a slowdown: one file's write can be observed mid-flight by
+    // another file's read assertion. GRAMSCOPE_LIVE=1 is already the flag
+    // that gates the live suites themselves (see tests/live/*.live.test.ts),
+    // so it doubles as the scope for this — the fast tier, which never sets
+    // it, keeps running its files in parallel.
+    fileParallelism: process.env.GRAMSCOPE_LIVE !== "1",
   },
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },

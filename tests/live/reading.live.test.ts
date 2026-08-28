@@ -160,7 +160,10 @@ suite("Reading against the real account", () => {
     expect(bySource.total_unread).toBeGreaterThan(0);
     for (const group of bySource.groups) {
       expect(group.source_id).toBeTruthy();
-      expect(group.unread_count).toBeGreaterThan(0);
+      // summarize() (src/telegram/unread.ts) includes a source with zero
+      // unread messages when its unread_mark is set, so a flag-only group is
+      // legitimate here; a group with neither is still a failure.
+      expect(group.unread_count > 0 || group.unread_mark === true).toBe(true);
     }
 
     // Unread sources can legitimately all sit outside every folder, which
