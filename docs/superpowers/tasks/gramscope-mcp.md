@@ -99,9 +99,12 @@ schema. Two Minors: `PRIVATE_CHANNEL_NOT_ACCESSIBLE` is over-broad on the
 rethrow side for an `internal`-kind exclusion, and the budget message
 misdiagnoses unparseable names and invite links, which never reach the network.
 
-**Next:** fix round 4/5 against those three. Restore a generous raw-name cap
-alongside the budget — 50 was what caused the round-2 regression — and consider a
-`byUsername` map on `DialogIndex` to make `resolvesLocally` O(1).
+**In flight:** fix round 4/5 against those three, owner asked for all of them
+(base `00a2dd2`). Approach: reject on the exact count of distinct HELD ids
+before any lookup — that is free and is the reviewer's repro; a generous raw cap
+plus a `byUsername` map on `DialogIndex` for the CPU; degrade
+`PRIVATE_CHANNEL_NOT_ACCESSIBLE` for `internal`-kind exclusions only; stop
+counting names that can never reach the network.
 
 **Do not redo:** the twelve tasks, the three original findings, or the six round-3
 items. The live Telegram measurements below cost real FLOOD_WAIT budget.
