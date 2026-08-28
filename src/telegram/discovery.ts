@@ -1,9 +1,18 @@
 import { fetchChannelDetails } from "./dialogs";
 import type { SourceDetails } from "./dialogs";
 import type { DialogIndex } from "./dialog-index";
-import { entityMarkedId, entityUsernames, sourceType } from "./peer-id";
+import {
+  entityMarkedId,
+  entityUsernames,
+  readBigId,
+  sourceType,
+} from "./peer-id";
 import type { DiscoveredSource } from "../schemas/discovery";
 import type { TelegramLike } from "./client";
+import { getApi, withTelegram } from "./client";
+import { fetchDialogIndex } from "./dialog-index";
+import { GramScopeError } from "../errors/taxonomy";
+import { fitToSizeCap } from "../schemas/size";
 import {
   DISCOVERY_ENRICH_CONCURRENCY,
   mapWithConcurrency,
@@ -96,4 +105,102 @@ export async function enrichCandidates(
       return details;
     },
   );
+}
+
+/**
+ * Measured 2026-08-28: contacts.search caps global results at 10 whatever
+ * `limit` says — 50 and 200 returned the same page — and offers no offset.
+ * A full page is therefore the only available signal that more may exist.
+ */
+const CONTACTS_SEARCH_CAP = 10;
+
+export type SearchChannelsInput = { query: string; limit?: number };
+
+export type SearchChannelsResult = {
+  candidates: DiscoveredSource[];
+  truncated: boolean;
+};
+
+/**
+ * Channel entities from a contacts.Found, in Telegram's order with the
+ * account's own matches first, each peer once. A PeerUser has no channelId, so
+ * users fall out here rather than needing a separate filter.
+ */
+function channelEntities(found: unknown): Record<string, unknown>[] {
+  const reply = (found ?? {}) as {
+    myResults?: unknown[];
+    results?: unknown[];
+    chats?: unknown[];
+  };
+
+  const byBareId = new Map<string, Record<string, unknown>>();
+  for (const chat of Array.from(reply.chats ?? [])) {
+    const bare = readBigId((chat as { id?: unknown }).id);
+    if (bare !== undefined) byBareId.set(bare, chat as Record<string, unknown>);
+  }
+
+  const out: Record<string, unknown>[] = [];
+  const seen = new Set<string>();
+  for (const peer of [
+    ...Array.from(reply.myResults ?? []),
+    ...Array.from(reply.results ?? []),
+  ]) {
+    const bare = readBigId((peer as { channelId?: unknown }).channelId);
+    if (bare === undefined) continue;
+    const entity = byBareId.get(bare);
+    if (entity === undefined) continue;
+    const marked = entityMarkedId(entity);
+    if (marked === undefined || seen.has(marked)) continue;
+    seen.add(marked);
+    out.push(entity);
+  }
+  return out;
+}
+
+export async function searchChannels(
+  input: SearchChannelsInput,
+): Promise<SearchChannelsResult> {
+  const query = (input.query ?? "").trim();
+  if (query.length === 0) {
+    throw new GramScopeError("INVALID_INPUT", "query must not be empty");
+  }
+  const limit = input.limit ?? MAX_ENRICHED_CANDIDATES;
+
+  return withTelegram(async (client) => {
+    const Api = await getApi();
+    const found = await client.invoke(
+      new Api.contacts.Search({
+        q: query,
+        limit: CONTACTS_SEARCH_CAP,
+        // Not an option: it costs nothing, and the quota it frees refills
+        // with channels, which is what this product reads.
+        broadcasts: true,
+      }),
+    );
+
+    const entities = channelEntities(found);
+    const kept = entities.slice(0, limit);
+    const details = await enrichCandidates(client, kept);
+    // Fetched after the search call, not before: both go through the same
+    // cached client, and the search is the call this engine is defined by.
+    const index = await fetchDialogIndex();
+    const candidates = kept.map((entity, i) =>
+      toCandidate(entity, index, details[i]),
+    );
+
+    const fit = fitToSizeCap(candidates, (shown) => ({
+      candidates: shown,
+      truncated: true,
+    }));
+    const shown = candidates.slice(0, fit);
+
+    return {
+      candidates: shown,
+      // One meaning in both tools: the server held more than this response
+      // carries — whether Telegram capped the page or `limit` cut it.
+      truncated:
+        shown.length < entities.length ||
+        entities.length >= CONTACTS_SEARCH_CAP,
+    };
+  });
 }

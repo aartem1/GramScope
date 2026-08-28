@@ -195,3 +195,169 @@ describe("enrichCandidates", () => {
     ]);
   });
 });
+
+import {
+  __resetClientForTests,
+  __setClientFactoryForTests,
+} from "@/telegram/client";
+import { searchChannels } from "@/telegram/discovery";
+
+function found(over: Record<string, unknown>) {
+  return {
+    className: "contacts.Found",
+    myResults: [],
+    results: [],
+    chats: [],
+    users: [],
+    ...over,
+  };
+}
+
+function peerChannel(bare: number) {
+  return { className: "PeerChannel", channelId: BigInt(bare) };
+}
+
+function peerUser(bare: number) {
+  return { className: "PeerUser", userId: BigInt(bare) };
+}
+
+/**
+ * Routes by TL class name, never by the presence of a `channel` field:
+ * GetChannelRecommendations carries one too, so a field test would feed the
+ * recommendation call the enrichment reply. Requests are stored unspread,
+ * because teleproto puts `className` on the prototype.
+ */
+function requestName(request: unknown): string {
+  return String((request as { className?: unknown }).className ?? "");
+}
+
+function isEnrichment(request: unknown): boolean {
+  return requestName(request).includes("GetFullChannel");
+}
+
+function installSearch(reply: unknown) {
+  const sent: unknown[] = [];
+  __setClientFactoryForTests(async () => ({
+    connected: true,
+    connect: async () => true,
+    getDialogs: async () => [],
+    getEntity: async () => ({}),
+    getMessages: async () => [],
+    invoke: async (request: unknown) => {
+      sent.push(request);
+      if (isEnrichment(request)) return { fullChat: { about: "about" } };
+      return reply;
+    },
+  }));
+  return sent;
+}
+
+afterEach(() => {
+  __setClientFactoryForTests(undefined);
+  __resetClientForTests();
+});
+
+describe("searchChannels", () => {
+  it("always asks Telegram for broadcasts only", async () => {
+    const sent = installSearch(found({}));
+    await searchChannels({ query: "нейросети" });
+    expect(requestName(sent[0])).toBe("contacts.Search");
+    expect(sent[0]).toMatchObject({ q: "нейросети", broadcasts: true });
+  });
+
+  it("rejects an empty query without calling Telegram", async () => {
+    const sent = installSearch(found({}));
+    await expect(searchChannels({ query: "   " })).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
+    expect(sent).toEqual([]);
+  });
+
+  it("drops user results and keeps channels", async () => {
+    installSearch(
+      found({
+        results: [peerUser(5), peerChannel(1111111111)],
+        chats: [{ className: "Channel", id: 1111111111n, title: "Alpha" }],
+        users: [{ className: "User", id: 5n, firstName: "Someone" }],
+      }),
+    );
+    const { candidates } = await searchChannels({ query: "alpha" });
+    expect(candidates.map((c) => c.title)).toEqual(["Alpha"]);
+  });
+
+  it("puts the account's own matches first and lists a peer once", async () => {
+    installSearch(
+      found({
+        myResults: [peerChannel(2222222222)],
+        results: [peerChannel(1111111111), peerChannel(2222222222)],
+        chats: [
+          { className: "Channel", id: 1111111111n, title: "Stranger" },
+          { className: "Channel", id: 2222222222n, title: "Mine" },
+        ],
+      }),
+    );
+    const { candidates } = await searchChannels({ query: "x" });
+    expect(candidates.map((c) => c.title)).toEqual(["Mine", "Stranger"]);
+  });
+
+  it("reports truncated at Telegram's cap of ten and not below it", async () => {
+    const ten = Array.from({ length: 10 }, (_, i) => 1000000000 + i);
+    installSearch(
+      found({
+        results: ten.map(peerChannel),
+        chats: ten.map((bare) => ({
+          className: "Channel",
+          id: BigInt(bare),
+          title: `C${bare}`,
+        })),
+      }),
+    );
+    expect((await searchChannels({ query: "x" })).truncated).toBe(true);
+
+    // withTelegram caches the connected client at module scope, so a second
+    // installSearch needs a reset to take effect — see the identical pattern
+    // in tests/telegram-search.test.ts's cursor-resume test.
+    __resetClientForTests();
+    const nine = ten.slice(0, 9);
+    installSearch(
+      found({
+        results: nine.map(peerChannel),
+        chats: nine.map((bare) => ({
+          className: "Channel",
+          id: BigInt(bare),
+          title: `C${bare}`,
+        })),
+      }),
+    );
+    expect((await searchChannels({ query: "x" })).truncated).toBe(false);
+  });
+
+  it("cuts to limit before enriching, not after", async () => {
+    const ten = Array.from({ length: 10 }, (_, i) => 1000000000 + i);
+    const sent = installSearch(
+      found({
+        results: ten.map(peerChannel),
+        chats: ten.map((bare) => ({
+          className: "Channel",
+          id: BigInt(bare),
+          title: `C${bare}`,
+        })),
+      }),
+    );
+    const { candidates, truncated } = await searchChannels({
+      query: "x",
+      limit: 2,
+    });
+    expect(candidates).toHaveLength(2);
+    expect(truncated).toBe(true);
+    expect(sent.filter(isEnrichment)).toHaveLength(2);
+  });
+
+  it("returns an empty list as a success", async () => {
+    installSearch(found({}));
+    await expect(searchChannels({ query: "nothing" })).resolves.toEqual({
+      candidates: [],
+      truncated: false,
+    });
+  });
+});
