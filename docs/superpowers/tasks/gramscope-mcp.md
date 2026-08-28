@@ -115,8 +115,8 @@ Task state, updated as each task closes:
 | Task | State |
 | --- | --- |
 | 1 Candidate schema and mapping | complete, `c26a657`, review clean |
-| 2 Capped, throttled, cached enrichment | in flight |
-| 3 `search_channels` engine | not started |
+| 2 Capped, throttled, cached enrichment | complete, `25ad447`, review clean |
+| 3 `search_channels` engine | in flight |
 | 4 `get_similar_channels` engine | not started |
 | 5 Expose both tools, bump to 1.2.0 | not started |
 | 6 Live tier | not started |
