@@ -5,6 +5,7 @@ import {
   inputPeerMarkedId,
   markedChannelId,
   markedChatId,
+  peerKind,
   readBigId,
   sourceType,
 } from "@/telegram/peer-id";
@@ -152,5 +153,19 @@ describe("sourceType", () => {
   it("falls back to chat for anything unrecognized", () => {
     expect(sourceType({})).toBe("chat");
     expect(sourceType(undefined)).toBe("chat");
+  });
+});
+
+describe("peerKind", () => {
+  it("separates a channel, a legacy chat and a user", () => {
+    // sourceType cannot serve here: it maps Chat to "group" and falls back to
+    // "chat" for a user, so it cannot tell a legacy chat from a user — which
+    // is exactly the distinction InputPeer construction turns on.
+    expect(peerKind({ className: "Channel", id: { value: 1n } })).toBe(
+      "channel",
+    );
+    expect(peerKind({ className: "Chat", id: { value: 1n } })).toBe("chat");
+    expect(peerKind({ className: "User", id: { value: 1n } })).toBe("user");
+    expect(peerKind(undefined)).toBe("user");
   });
 });

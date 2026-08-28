@@ -5,6 +5,7 @@ import {
   mapTelegramError,
   telegramErrorCode,
 } from "../errors/from-telegram";
+import { peerKind } from "./peer-id";
 
 export type TelegramLike = {
   connected?: boolean;
@@ -146,6 +147,37 @@ export async function resolveEntity(
     return await swallowed.run(box, () => client.getEntity(target));
   } catch (err) {
     throw resolutionFailure(err, box.error);
+  }
+}
+
+/**
+ * Builds the `InputPeer` a TL request wants from a resolved entity.
+ *
+ * Most requests do not need this: teleproto converts an `Api.Channel` into an
+ * `InputChannel` on its own when the parameter is typed as one, which is why
+ * markRead never built a peer. `messages.MarkDialogUnread` and
+ * `messages.UpdateDialogFilter` take `InputDialogPeer` and `Vector<InputPeer>`
+ * respectively, and neither is converted for us.
+ *
+ * Lives here rather than in peer-id.ts because this module is the only one
+ * permitted to reach the TL namespace; the kind discrimination is peer-id's.
+ */
+export async function toInputPeer(entity: unknown): Promise<unknown> {
+  const Api = await getApi();
+  const e = (entity ?? {}) as Record<string, unknown>;
+  switch (peerKind(entity)) {
+    case "channel":
+      return new Api.InputPeerChannel({
+        channelId: e.id as never,
+        accessHash: (e.accessHash ?? 0) as never,
+      });
+    case "chat":
+      return new Api.InputPeerChat({ chatId: e.id as never });
+    default:
+      return new Api.InputPeerUser({
+        userId: e.id as never,
+        accessHash: (e.accessHash ?? 0) as never,
+      });
   }
 }
 

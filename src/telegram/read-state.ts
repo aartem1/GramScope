@@ -1,7 +1,7 @@
 import { FANOUT_CONCURRENCY, mapWithConcurrency } from "../concurrency";
 import { mapTelegramError } from "../errors/from-telegram";
 import { GramScopeError } from "../errors/taxonomy";
-import { getApi, resolveEntity, withTelegram } from "./client";
+import { getApi, resolveEntity, toInputPeer, withTelegram } from "./client";
 import { fetchDialogIndex } from "./dialog-index";
 
 export const MAX_MARK_READ_SOURCES = 25;
@@ -97,6 +97,90 @@ export async function markRead(
     ),
     failures: outcomes.filter(
       (outcome): outcome is MarkReadFailure => "code" in outcome,
+    ),
+  };
+}
+
+export type MarkUnreadInput = {
+  source_ids: string[];
+  unread: boolean;
+};
+
+export type MarkUnreadSuccess = {
+  source_id: string;
+  unread_mark: boolean;
+};
+
+export type MarkUnreadFailure = {
+  source_id: string;
+  code: string;
+  message: string;
+};
+
+export type MarkUnreadResult = {
+  results: MarkUnreadSuccess[];
+  failures: MarkUnreadFailure[];
+};
+
+/**
+ * Sets or clears Telegram's manual "come back to this" flag
+ * (`Dialog.unreadMark`), which is independent of the unread COUNT: it does not
+ * rewind the read pointer and clearing it marks nothing read. The read half
+ * that makes it visible is in dialogs.ts and unread.ts.
+ *
+ * `unread:flags.0?true` is a conditional-true TL flag, so `unread: false` is
+ * how the flag is cleared; teleproto omits the bit rather than sending false.
+ */
+export async function markUnread(
+  input: MarkUnreadInput,
+): Promise<MarkUnreadResult> {
+  if (input.source_ids.length === 0) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      "source_ids must name at least one source",
+    );
+  }
+  if (input.source_ids.length > MAX_MARK_READ_SOURCES) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      `mark_unread accepts at most ${MAX_MARK_READ_SOURCES} sources per call; got ${input.source_ids.length}. Split the call.`,
+    );
+  }
+
+  const outcomes = await withTelegram(async (client) => {
+    const Api = await getApi();
+    return mapWithConcurrency(
+      input.source_ids,
+      FANOUT_CONCURRENCY,
+      async (sourceId): Promise<MarkUnreadSuccess | MarkUnreadFailure> => {
+        try {
+          const entity = await resolveEntity(client, sourceId);
+          const peer = await toInputPeer(entity);
+          await client.invoke(
+            new Api.messages.MarkDialogUnread({
+              unread: input.unread,
+              peer: new Api.InputDialogPeer({ peer: peer as never }) as never,
+            }),
+          );
+          return { source_id: sourceId, unread_mark: input.unread };
+        } catch (err) {
+          const mapped = mapTelegramError(err);
+          return {
+            source_id: sourceId,
+            code: mapped.code,
+            message: mapped.message,
+          };
+        }
+      },
+    );
+  });
+
+  return {
+    results: outcomes.filter(
+      (outcome): outcome is MarkUnreadSuccess => "unread_mark" in outcome,
+    ),
+    failures: outcomes.filter(
+      (outcome): outcome is MarkUnreadFailure => "code" in outcome,
     ),
   };
 }

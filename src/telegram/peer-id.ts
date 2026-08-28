@@ -171,3 +171,17 @@ export function sourceType(entity: unknown): "channel" | "group" | "chat" {
   if (name !== undefined && CHAT_CLASSES.has(name)) return "group";
   return "chat";
 }
+
+/**
+ * The discriminator `InputPeer` construction turns on. `sourceType` cannot
+ * serve: it answers the question `TelegramSource.type` asks, mapping a legacy
+ * chat to "group" and everything unrecognised to "chat", so it cannot tell a
+ * legacy chat from a user. Wrong here means an InputPeerChat carrying a user
+ * id, which Telegram answers with PEER_ID_INVALID.
+ */
+export function peerKind(entity: unknown): "channel" | "chat" | "user" {
+  const name = className(entity);
+  if (name !== undefined && CHANNEL_CLASSES.has(name)) return "channel";
+  if (name !== undefined && CHAT_CLASSES.has(name)) return "chat";
+  return "user";
+}

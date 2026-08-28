@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { markRead } from "@/telegram/read-state";
+import { markRead, markUnread } from "@/telegram/read-state";
 import {
   __resetClientForTests,
   __setClientFactoryForTests,
@@ -125,6 +125,69 @@ describe("markRead", () => {
     await expect(
       markRead({
         source_ids: Array.from({ length: 26 }, (_, i) => `-100${i}`),
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+});
+
+describe("markUnread", () => {
+  it("sets the flag through messages.MarkDialogUnread", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+    const result = await markUnread({ source_ids: [CHANNEL], unread: true });
+
+    expect(result.results).toEqual([{ source_id: CHANNEL, unread_mark: true }]);
+    expect(result.failures).toEqual([]);
+
+    const request = sent.at(-1) as {
+      className?: string;
+      unread?: boolean;
+      peer?: { className?: string; peer?: { className?: string } };
+    };
+    expect(request.className).toBe("messages.MarkDialogUnread");
+    expect(request.unread).toBe(true);
+    expect(request.peer?.className).toBe("InputDialogPeer");
+    expect(request.peer?.peer?.className).toBe("InputPeerChannel");
+  });
+
+  it("clears the flag when unread is false", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+    const result = await markUnread({ source_ids: [CHANNEL], unread: false });
+    expect((sent.at(-1) as { unread?: boolean }).unread).toBe(false);
+    expect(result.results[0]!.unread_mark).toBe(false);
+  });
+
+  it("reports a per-source failure without failing the call", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(
+      factory({
+        sent,
+        failOn: CHANNEL,
+        entities: { [CHAT]: { className: "Chat", id: { value: 222n } } },
+      }),
+    );
+    const result = await markUnread({
+      source_ids: [CHANNEL, CHAT],
+      unread: true,
+    });
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]).toMatchObject({
+      source_id: CHANNEL,
+      code: "PRIVATE_CHANNEL_NOT_ACCESSIBLE",
+    });
+    expect(result.results).toHaveLength(1);
+  });
+
+  it("rejects an empty or oversized selection", async () => {
+    __setClientFactoryForTests(factory({ sent: [] }));
+    await expect(
+      markUnread({ source_ids: [], unread: true }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(
+      markUnread({
+        source_ids: Array.from({ length: 26 }, (_, i) => `-100${i}`),
+        unread: true,
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
