@@ -22,11 +22,26 @@ const heldDialogs = [
     dialog: { readInboxMaxId: 96 },
     message: { id: 100, date: 1735689600 },
   },
+  // A held private one-to-one chat, addressed only by its bare marked id
+  // (no username): the regression case for the already-member kind guard.
+  {
+    id: { value: 555n },
+    title: "Dana",
+    unreadCount: 0,
+    entity: {
+      className: "User",
+      id: { value: 555n },
+      firstName: "Dana",
+    },
+    dialog: {},
+    message: {},
+  },
 ];
 
 function factory(options: {
   sent: unknown[];
   entity?: Record<string, unknown>;
+  entities?: Record<string, Record<string, unknown>>;
   failOn?: string;
 }) {
   return async () => ({
@@ -45,6 +60,7 @@ function factory(options: {
           errorMessage: "CHANNEL_PRIVATE",
         });
       }
+      if (options.entities?.[name]) return options.entities[name]!;
       return (
         options.entity ?? {
           className: "Channel",
@@ -93,6 +109,34 @@ describe("joinChannel", () => {
 
     expect(result.already_member).toBe(true);
     expect(result.source.id).toBe(HELD);
+    expect(
+      sent.some(
+        (r) =>
+          (r as { className?: string }).className === "channels.JoinChannel",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects a held non-channel peer instead of reporting already_member", async () => {
+    // Regression: a bare numeric id resolves for any chat the account
+    // already belongs to, DMs included. The kind guard must fire before the
+    // membership branch can short-circuit into a success for one.
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(
+      factory({
+        sent,
+        entities: {
+          "555": {
+            className: "User",
+            id: { value: 555n },
+            firstName: "Dana",
+          },
+        },
+      }),
+    );
+    await expect(joinChannel({ source: "555" })).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
     expect(
       sent.some(
         (r) =>

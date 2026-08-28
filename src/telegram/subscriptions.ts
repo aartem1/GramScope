@@ -2,7 +2,7 @@ import { getApi, resolveEntity, withTelegram } from "./client";
 import { fetchDialogIndex } from "./dialog-index";
 import { fetchChannelDetails, foldersByPeer, toSource } from "./dialogs";
 import { resolveSource } from "./peer-resolve";
-import { peerKind, sourceType } from "./peer-id";
+import { peerKind } from "./peer-id";
 import { GramScopeError } from "../errors/taxonomy";
 import type { TelegramSource } from "../schemas/source";
 
@@ -13,6 +13,12 @@ export type JoinChannelResult = {
 
 /**
  * Subscribes to one public channel.
+ *
+ * The entity is resolved once, and its kind is checked BEFORE the membership
+ * branch: kind is a property of the target, not of membership, so a held DM
+ * (a bare numeric id resolves for any chat the account already belongs to,
+ * private ones included) is rejected exactly like an unheld one instead of
+ * short-circuiting into a silent already_member success.
  *
  * Membership is decided from the dialog index BEFORE any TL call, not from
  * Telegram's answer: channels.JoinChannel on a channel the account already
@@ -32,13 +38,20 @@ export async function joinChannel(input: {
   return withTelegram(async (client) => {
     // resolveSource rejects an invite link with INVALID_INPUT of its own.
     const resolved = await resolveSource(client, index, input.source);
+    const entity =
+      resolved.entity ?? (await resolveEntity(client, resolved.handle));
+
+    if (peerKind(entity) !== "channel") {
+      throw new GramScopeError(
+        "INVALID_INPUT",
+        `${input.source} is not a channel or group. join_channel subscribes to channels and groups; there is nothing to join for a private chat.`,
+      );
+    }
 
     if (index.byId.has(resolved.source_id)) {
-      const entity = await resolveEntity(client, resolved.handle);
-      const details =
-        sourceType(entity) === "channel" || sourceType(entity) === "group"
-          ? await fetchChannelDetails(client, entity).catch(() => ({}))
-          : {};
+      const details = await fetchChannelDetails(client, entity).catch(
+        () => ({}),
+      );
       return {
         source: toSource(entity, folderIndex, {
           id: resolved.source_id,
@@ -47,15 +60,6 @@ export async function joinChannel(input: {
         }),
         already_member: true,
       };
-    }
-
-    const entity =
-      resolved.entity ?? (await resolveEntity(client, resolved.handle));
-    if (peerKind(entity) !== "channel") {
-      throw new GramScopeError(
-        "INVALID_INPUT",
-        `${input.source} is not a channel or group. join_channel subscribes to channels and groups; there is nothing to join for a private chat.`,
-      );
     }
 
     const Api = await getApi();
