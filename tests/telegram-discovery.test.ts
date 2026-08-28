@@ -261,8 +261,8 @@ describe("searchChannels", () => {
   it("always asks Telegram for broadcasts only", async () => {
     const sent = installSearch(found({}));
     await searchChannels({ query: "нейросети" });
-    expect(requestName(sent[0])).toBe("contacts.Search");
-    expect(sent[0]).toMatchObject({ q: "нейросети", broadcasts: true });
+    const search = sent.find((r) => requestName(r) === "contacts.Search");
+    expect(search).toMatchObject({ q: "нейросети", broadcasts: true });
   });
 
   it("rejects an empty query without calling Telegram", async () => {
@@ -351,6 +351,26 @@ describe("searchChannels", () => {
     expect(candidates).toHaveLength(2);
     expect(truncated).toBe(true);
     expect(sent.filter(isEnrichment)).toHaveLength(2);
+  });
+
+  it("reports truncated when limit cuts a page Telegram did not fill", async () => {
+    const five = Array.from({ length: 5 }, (_, i) => 1000000000 + i);
+    installSearch(
+      found({
+        results: five.map(peerChannel),
+        chats: five.map((bare) => ({
+          className: "Channel",
+          id: BigInt(bare),
+          title: `C${bare}`,
+        })),
+      }),
+    );
+    const { candidates, truncated } = await searchChannels({
+      query: "x",
+      limit: 2,
+    });
+    expect(candidates).toHaveLength(2);
+    expect(truncated).toBe(true);
   });
 
   it("returns an empty list as a success", async () => {

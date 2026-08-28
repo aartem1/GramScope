@@ -166,6 +166,8 @@ export async function searchChannels(
   }
   const limit = input.limit ?? MAX_ENRICHED_CANDIDATES;
 
+  const index = await fetchDialogIndex();
+
   return withTelegram(async (client) => {
     const Api = await getApi();
     const found = await client.invoke(
@@ -181,9 +183,6 @@ export async function searchChannels(
     const entities = channelEntities(found);
     const kept = entities.slice(0, limit);
     const details = await enrichCandidates(client, kept);
-    // Fetched after the search call, not before: both go through the same
-    // cached client, and the search is the call this engine is defined by.
-    const index = await fetchDialogIndex();
     const candidates = kept.map((entity, i) =>
       toCandidate(entity, index, details[i]),
     );
