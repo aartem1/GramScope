@@ -149,7 +149,7 @@ yet complete without re-running anything above it.
 | 4 `peerKind`, `toInputPeer`, `markUnread` engine | complete, `1432f22`..`7c6b4b0`, clean after 1 fix round; 399 tests |
 | 5 `mark_unread` tool | complete, `067047d`, review clean; 400 tests, fourteen tools |
 | 6 `join_channel` | complete, `f550122`..`cc46c43`, clean after 1 fix round; 405 tests, fifteen tools |
-| 7 `leave_channel` | in flight |
+| 7 `leave_channel` | complete, `c02321a`, review clean; 409 tests, sixteen tools |
 | 8 Folder round-trip rule, create/rename/delete | not started |
 | 9 Folder membership and order | not started |
 | 10 `manage_folder` tool | not started |
