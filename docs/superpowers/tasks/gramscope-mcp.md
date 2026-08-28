@@ -211,21 +211,33 @@ a fresh session.
   applied to it at `038d4de` and must not be re-derived. The rulings above,
   however, override the plan text where they conflict — the plan file was not
   rewritten for them.
-- The working ledger and the per-task briefs live in
-  `.superpowers/sdd/2026-08-28-gramscope-writes/`, which is **git-ignored**. On
-  this machine they are intact and are the fuller record. On a fresh clone they
-  do not exist: rebuild what you need from this card, the plan, and `git log`.
-  Briefs are cut with the plugin's `scripts/task-brief PLAN_FILE N`.
+- The working ledger and the per-task briefs lived in
+  `.superpowers/sdd/2026-08-28-gramscope-writes/`, which was git-ignored and
+  machine-local. It was **deleted** after the final re-review came back clean,
+  per `superpowers:subagent-driven-development`. Its durable content — every
+  ruling and every deferred item — was lifted into this card first; git history
+  carries the rest.
 - Resume at the first table row above that is not `complete`. Everything above
   it is committed, reviewed, and must not be redone.
-- **Current point (2026-08-29):** Tasks 1-12 are complete and the broad
-  whole-sub-project review over `d2cc3a3`..`7017671` has run. Its single fix
-  wave — three Important, three Minor, version to 1.3.1 — is implemented on
-  `main` on top of `7017671`; see "Final fix wave" below. What remains after it
-  is the scoped re-review of that wave and then the owner's two acceptance
-  actions (below). Two live-Telegram constraints were discovered in Task 12 and
-  are recorded under "Changes and findings"; the deferred minors and rulings the
-  final reviewer must be pointed at live in the git-ignored ledger.
+- **Current point (2026-08-29):** sub-project 5a is finished apart from owner
+  acceptance. All twelve tasks are complete and reviewed. The broad
+  whole-sub-project review over `d2cc3a3`..`7017671` returned Needs fixes with
+  three Important findings; the single fix wave closed them across `f85e101`,
+  `8332274` and `74e0f56`; and the scoped re-review of that wave returned
+  "All findings addressed, no new Critical/Important breakage" with the gates
+  re-run independently (443/443 fast tier, typecheck, lint). Production serves
+  **1.3.1**, and its `401` Bearer challenge and protected-resource document
+  were re-checked after that deploy. The git-ignored ledger was deleted per
+  `superpowers:subagent-driven-development`, so this card is now the whole
+  durable record — the rulings and deferred items below were lifted out of it
+  before deletion. **What remains: the owner's two acceptance actions at the end
+  of this section, one unverified check, and one cleanup.**
+  - Unverified: production 1.3.1 has not been asked for its `initialize`
+    version and `tools/list` count. That check needs an owner-issued bearer
+    token (see "How the authenticated check was made" above) and 1.3.0 passed
+    it; the tool count did not change.
+  - Cleanup: delete the throwaway WorkOS client `GramScope acceptance probe`,
+    `client_id` `client_01M14EP0KM5CFN1491QE4JZ0M3`.
 
 - **Final fix wave (2026-08-29), one wave only, no second round.** Fixed, all
   within the existing taxonomy: (1) `manage_folder(create)` now rejects an
@@ -367,6 +379,141 @@ comparison and the every-candidate-has-a-username assertion, both flake risks);
 and a ruling that the reviewer's concern about de-duplication under-reporting
 `truncated` is not a real gap, because Telegram's `results` list is the one
 capped at ten and its members are distinct.
+
+## Sub-project 5a — rulings taken on the owner's behalf
+
+Lifted from the git-ignored ledger before it was deleted. Each says what was
+decided and what it costs if wrong. Rework any of them freely.
+
+1. **T4** — the review's duplicated-guard finding beat the plan text, which
+   wrote both guards out in full. The guard moved into
+   `src/telegram/source-selection.ts` as `assertSourceIdsBounded(ids, toolName,
+   ceiling)`, which already owns "how many sources may one call name". Cost:
+   one extra import edge, and a helper with two call sites until Task 9 added
+   the third.
+2. **T4** — Task 9 uses that shared helper instead of writing its own
+   `assertBatchSize`. Cost: Task 9's brief and its implementation diverge on a
+   function name.
+3. **T4** — the two Minors went into the fix round rather than the deferred
+   list, because a stale docstring is a factual error the diff introduced and
+   the untested `chat`/`user` branches of `toInputPeer` are the exact failure
+   `peerKind` exists to prevent. Cost: a slightly larger fix diff.
+4. **T5** — `tests/mcp-handler.test.ts` hardcoded `name !== "mark_read" &&
+   name !== "mark_unread"`, which would have grown to five chained clauses;
+   Task 6 extracted a shared writers list instead. Cost: test churn in a file
+   Task 6 already touched.
+5. **T6** — the Important finding beat the plan text: `joinChannel`'s
+   already-member path returned `already_member: true` for a held non-channel
+   peer while the not-held path rejected the same shape. The `peerKind` guard
+   moved above the membership branch, as pre-flight ruling R3 had already done
+   for `leaveChannel`. Kind is a property of the target, not of membership.
+   Cost: `join_channel` on an already-held legacy group now errors instead of
+   reporting `already_member: true` — the more informative answer, since such a
+   group cannot be joined by username at all.
+6. **T6** — the Minor folded into that same fix: once the kind guard runs
+   first, `fetchChannelDetails` needs no type test and the wasted
+   `GetFullChannel` round trip on a legacy group disappears. Cost: none.
+7. **T8** — `pinnedPeers: []` and `excludePeers: []` are retained on a new
+   `DialogFilter` even though the spec says create sets only
+   `id`/`title`/`includePeers`, because teleproto's generated constructor
+   declares all three vectors non-optional. Empty vectors carry no user state.
+   Cost: create writes explicit empty vectors where Telegram might have
+   defaulted them.
+8. **T11** — the lockfile finding beat the plan's four-file list;
+   `package-lock.json` was already part of the tested public-version invariant.
+   Cost: one extra metadata file in the diff.
+9. **T12** — the hung implementer was re-dispatched on the same model rather
+   than escalated, because the failure was procedural (it waited on a
+   background monitor instead of running the suite in the foreground) and its
+   file was complete. Cost: one more wasted dispatch.
+10. **T12** — the live-tier race was fixed in both halves, not either alone.
+    `tests/live/reading.live.test.ts:163` asserted `unread_count > 0` for every
+    source group, which Task 3 had already invalidated, so it was wrong
+    independent of any race; and every live file mutates one shared real
+    account, so `fileParallelism` is now off for the live tier. Cost: the live
+    tier runs serially, and one assertion is looser.
+11. **Final review** — the fix wave took the three Important findings plus
+    Minors 1, 2 and 9 only. Cost: seven small quality items carry into
+    sub-project 5b (listed below).
+12. **Final review** — the version went to **1.3.1**, because production served
+    1.3.0 with behaviour this wave changed and yesterday's acceptance check was
+    made against 1.3.0. Tool count unchanged at seventeen. Cost: a patch
+    version the spec did not explicitly authorize.
+13. **Final review** — the falsified `@username` rule was corrected in
+    `src/mcp/instructions.ts` as well as in the Project document.
+    `SERVER_INSTRUCTIONS` is what the client receives at `initialize` on every
+    session, so it is the more authoritative of the two. Cost: a few more
+    tokens spent on every session, read-only ones included.
+
+## Sub-project 5a — deferred, not blocking
+
+Each was raised in a review, judged non-blocking, and left open on purpose. The
+final reviewer re-triaged every one of them and confirmed each could stay
+deferred.
+
+- `tests/mcp-handler.test.ts` — the `initialize` test does not close its
+  transport, unlike `listTools`' `try/finally`. In-memory transport; no flake
+  risk.
+- `src/mcp/tools/search-channels.ts:391` — prettier flipped the string
+  delimiters as churn from Task 1's refactor.
+- `tests/telegram-unread.test.ts` — `indexWith` uses a truthy check where
+  `src/telegram/unread.ts` uses `=== true`; the production predicate is tested
+  directly.
+- `src/mcp/tools/mark-read.ts` and `mark-unread.ts` are structurally identical
+  registration wrappers. All seventeen registration files share the shape;
+  judged idiom, not defect.
+- **`src/telegram/peer-resolve.ts`'s module-level resolve cache** returns a
+  `ResolvedSource` without re-checking held status, so within one warm instance
+  a name resolved via the network branch keeps its `entity` after a membership
+  change. The final reviewer checked whether join/leave made this worse and
+  found it does not: `fetchDialogIndex()` runs fresh on every call and is not
+  cached, and the cache supplies only the entity and access hash, which survive
+  a membership change. The residual staleness is a cached `title` on the echoed
+  source.
+- `tests/telegram-folder-edit.test.ts` — the create tests do not pin the exact
+  constructor payload shape, and "changes the title and nothing else" asserts
+  the title only; the adjacent preservation test carries the unmodelled-field
+  assertions.
+- `tests/live/writes.live.test.ts:115-118` uses `expect.arrayContaining` rather
+  than full-set equality. Telegram does not guarantee peer order in a returned
+  filter, so a stricter check would trade an assertion for a flake.
+- `tests/live/writes.live.test.ts:53-76` — the join/leave restore path runs
+  only when the account does not already follow the target, so the test can
+  pass having verified little. Inherited from the plan's own design.
+- **Vocabulary drift, now in three places:** `docs/chatgpt-project-instructions.md`
+  and `src/mcp/tools/manage-folder.ts:130` say "numeric ids" where
+  `src/mcp/instructions.ts` says "marked ids". "Marked id" is the project's
+  precise term; unify on the next edit that touches any of them.
+- **`reorder` has no live coverage** and its handling of the reserved id 0 is
+  unverified. `src/telegram/folder-edit.ts` sends only the ids of real filters
+  and `DialogFilterDefault` has no id, so whether Telegram expects 0 in the
+  order vector was never measured. It is the one folder action of six with no
+  real-account evidence.
+- **`manage_folder`'s dispatcher is untested.** `src/mcp/tools/manage-folder.ts`
+  holds the `required()` errors and two distinct response shapes, and no test
+  drives `run()`. The engines beneath it are well covered.
+- **`mark_unread` echoes the caller's own string back as `source_id`**
+  (`src/telegram/read-state.ts`), so `mark_unread(["@exampleuser"])` returns
+  `source_id: "@exampleuser"` with no title. Consistent with `mark_read`'s shape by
+  spec §5.4, but it is the one write of four that does not satisfy §4.2's
+  purpose — that a target which resolved to something other than what the
+  caller meant is visible in the response.
+- **`deleteFolder` pays for a re-read it discards** — `writeFilter` always
+  re-fetches all filters and the delete path throws the result away. One saved
+  round trip per delete.
+- **`add_sources` resolves through raw `resolveEntity`, not `resolveSource`**,
+  so it is the only source-naming path that skips `parseTelegramName`: an
+  invite link reaches teleproto instead of GramScope's own refusal, the
+  dialog-index shortcut is unused, and 25 sources cost 25 serial network
+  resolutions.
+- **`remove_sources` is still a silent no-op for a marked id the folder does
+  not hold.** The fix wave addressed the wrong-format case only.
+- **The 12-character title cap is measured, undocumented, and counted in
+  UTF-16 code units.** If Telegram's rule is bytes, or the cap moves, the
+  `MESSAGE_TOO_LONG` mapping is the only backstop.
+- **`fileParallelism` serializes files, not tests within a file.** Sound as
+  shipped, since no live test is marked `concurrent`; a future
+  `describe.concurrent` would quietly reopen the hazard.
 
 # Blocked — awaiting owner
 Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
