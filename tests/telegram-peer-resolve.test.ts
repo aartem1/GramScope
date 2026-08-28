@@ -3,7 +3,8 @@ import {
   nameKey,
   parseTelegramName,
   resolveSource,
-  resolvesLocally,
+  resolutionCost,
+  localSourceId,
   __resetPeerCacheForTests,
 } from "@/telegram/peer-resolve";
 import type { TelegramLike } from "@/telegram/client";
@@ -230,18 +231,36 @@ describe("nameKey", () => {
   });
 });
 
-describe("resolvesLocally", () => {
-  it("is true only for a peer the dialog index already holds", () => {
-    expect(resolvesLocally(index, HELD)).toBe(true);
-    expect(resolvesLocally(index, "@held")).toBe(true);
-    expect(resolvesLocally(index, "https://t.me/HELD")).toBe(true);
-    expect(resolvesLocally(index, "-1009999999999")).toBe(false);
-    expect(resolvesLocally(index, "@outside")).toBe(false);
+describe("resolutionCost", () => {
+  it("is local only for a peer the dialog index already holds", () => {
+    expect(resolutionCost(index, HELD)).toBe("local");
+    expect(resolutionCost(index, "@held")).toBe("local");
+    expect(resolutionCost(index, "https://t.me/HELD")).toBe("local");
+    expect(resolutionCost(index, "-1009999999999")).toBe("network");
+    expect(resolutionCost(index, "@outside")).toBe("network");
   });
 
-  it("counts an unusable name as needing the network", () => {
-    // It fails in resolveSource, not in the budget, so it must not be free.
-    expect(resolvesLocally(index, "Alpha News")).toBe(false);
-    expect(resolvesLocally(index, "t.me/+AbCdEf")).toBe(false);
+  it("charges nothing for a name no lookup could resolve", () => {
+    // These fail in resolveSource with their own error, so counting them
+    // against a lookup budget would diagnose them as an overflow and ask for
+    // a split that cannot help.
+    expect(resolutionCost(index, "Alpha News")).toBe("never");
+    expect(resolutionCost(index, "")).toBe("never");
+    expect(resolutionCost(index, "t.me/+AbCdEf")).toBe("never");
+    expect(resolutionCost(index, "t.me/joinchat/AbCdEf")).toBe("never");
+  });
+});
+
+describe("localSourceId", () => {
+  it("canonicalises a held peer for free, however it is named", () => {
+    expect(localSourceId(index, HELD)).toBe(HELD);
+    expect(localSourceId(index, "@HELD")).toBe(HELD);
+    expect(localSourceId(index, "https://t.me/held")).toBe(HELD);
+  });
+
+  it("is undefined for anything a lookup would be needed for", () => {
+    expect(localSourceId(index, "@outside")).toBeUndefined();
+    expect(localSourceId(index, "-1009999999999")).toBeUndefined();
+    expect(localSourceId(index, "Alpha News")).toBeUndefined();
   });
 });

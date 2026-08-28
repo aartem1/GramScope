@@ -1,5 +1,5 @@
 import { resolveEntity, type TelegramLike } from "./client";
-import type { DialogIndex } from "./dialog-index";
+import type { DialogEntry, DialogIndex } from "./dialog-index";
 import { entityMarkedId, entityUsername } from "./peer-id";
 import { GramScopeError } from "../errors/taxonomy";
 
@@ -138,29 +138,77 @@ export function __resetPeerCacheForTests(): void {
 
 /** The dialog index answers for every peer the account holds, and only for
  *  those; a miss is what costs a network round trip. */
-function heldEntry(index: DialogIndex, link: TelegramLink) {
+function heldEntry(
+  index: DialogIndex,
+  link: TelegramLink,
+): DialogEntry | undefined {
   if (link.kind === "invite") return undefined;
   if (link.kind === "internal") return index.byId.get(link.markedId);
-  return [...index.byId.values()].find(
-    (candidate) =>
-      candidate.username?.toLowerCase() === link.username.toLowerCase(),
-  );
+  return byUsername(index).get(link.username.toLowerCase());
 }
 
 /**
- * Whether resolving this name will stay local. Used to budget a call's
- * network resolutions before spending any of them.
+ * Usernames of held peers, built once per index. `heldEntry` used to scan every
+ * entry per name, which a caller could drive: the arrays that reach it are
+ * caller-supplied and the scan is linear in the account's dialog count.
+ * Keyed on the index object so `DialogIndex` keeps its shape, and first-wins so
+ * a duplicate username resolves the way the old scan did.
+ */
+const usernameIndexes = new WeakMap<DialogIndex, Map<string, DialogEntry>>();
+
+function byUsername(index: DialogIndex): Map<string, DialogEntry> {
+  let map = usernameIndexes.get(index);
+  if (map) return map;
+
+  map = new Map();
+  for (const entry of index.byId.values()) {
+    const name = entry.username?.toLowerCase();
+    if (name && !map.has(name)) map.set(name, entry);
+  }
+  usernameIndexes.set(index, map);
+  return map;
+}
+
+/**
+ * What resolving this name will cost, before spending any of it.
+ *
+ * `local` — the dialog index answers, no round trip.
+ * `network` — a round trip to Telegram.
+ * `never` — the name cannot be resolved at all: it does not parse, or it is an
+ * invite link. `resolveSource` answers those with their own error, so a budget
+ * that counted them would diagnose an unusable name as a lookup overflow and
+ * ask for a split that cannot help.
  *
  * The module-level resolve cache is deliberately not consulted: counting it
  * would make the same request legal on a warm instance and rejected on a cold
- * one. An unparseable name counts as needing the network, because it fails in
- * `resolveSource` rather than here.
+ * one.
  */
-export function resolvesLocally(index: DialogIndex, raw: string): boolean {
+export type ResolutionCost = "local" | "network" | "never";
+
+export function resolutionCost(
+  index: DialogIndex,
+  raw: string,
+): ResolutionCost {
+  let link: TelegramLink;
   try {
-    return heldEntry(index, parseTelegramName(raw)) !== undefined;
+    link = parseTelegramName(raw);
   } catch {
-    return false;
+    return "never";
+  }
+  if (link.kind === "invite") return "never";
+  return heldEntry(index, link) === undefined ? "network" : "local";
+}
+
+/** The marked id this name reaches without a round trip, if any. Lets a caller
+ *  count part of its selection exactly before deciding to spend lookups. */
+export function localSourceId(
+  index: DialogIndex,
+  raw: string,
+): string | undefined {
+  try {
+    return heldEntry(index, parseTelegramName(raw))?.source_id;
+  } catch {
+    return undefined;
   }
 }
 

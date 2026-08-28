@@ -5,9 +5,11 @@ import type { TelegramLike } from "./client";
 import type { DialogIndex } from "./dialog-index";
 import { entityUsernames } from "./peer-id";
 import {
+  localSourceId,
   nameKey,
+  parseTelegramName,
+  resolutionCost,
   resolveSource,
-  resolvesLocally,
   type ResolvedSource,
 } from "./peer-resolve";
 
@@ -37,15 +39,66 @@ export type PreparedSourceTarget = {
   error?: { code: string; message: string };
 };
 
+/**
+ * A sanity bound on the size of the request itself. Every name still costs a
+ * parse and two map lookups, and the arrays reaching here are caller-supplied,
+ * so something has to be O(1) in the caller's generosity. Set far above any
+ * real selection — Telegram caps a folder at 100 members, 200 with Premium —
+ * so it never decides a legitimate call.
+ */
+export const MAX_SOURCE_NAMES_PER_CALL = 1000;
+
+/**
+ * Rejects, before spending a single lookup, everything that can be decided
+ * without one. Three checks, cheapest first.
+ *
+ * The effective ceiling cannot be checked in full here, because two names the
+ * index cannot answer may still resolve to one peer, so counting names is an
+ * UPPER bound on the canonical set and rejecting on it would refuse legal
+ * calls. What is exact is the held half: those names canonicalise for free.
+ * Network exclusions are subtracted from it because one of them may yet remove
+ * a held source — that is what keeps the bound below the true count.
+ */
 export function assertResolutionBudget(
   index: DialogIndex,
-  names: string[],
+  selected: string[],
+  excluded: string[],
 ): void {
-  const count = names.filter((name) => !resolvesLocally(index, name)).length;
-  if (count > MAX_NETWORK_RESOLUTIONS_PER_CALL) {
+  const total = selected.length + excluded.length;
+  if (total > MAX_SOURCE_NAMES_PER_CALL) {
     throw new GramScopeError(
       "INVALID_INPUT",
-      `This call names ${count} sources this account has not joined; at most ${MAX_NETWORK_RESOLUTIONS_PER_CALL} of those may be looked up in one call, and the call must resolve to at most ${MAX_SOURCES_PER_CALL} distinct sources. Split the call.`,
+      `This call names ${total} sources and exclusions; at most ${MAX_SOURCE_NAMES_PER_CALL} names fit in one call. Split the call.`,
+    );
+  }
+
+  const heldSelected = new Set<string>();
+  for (const name of selected) {
+    const id = localSourceId(index, name);
+    if (id) heldSelected.add(id);
+  }
+  let networkExcluded = 0;
+  for (const name of excluded) {
+    const id = localSourceId(index, name);
+    if (id) heldSelected.delete(id);
+    else if (resolutionCost(index, name) === "network") networkExcluded += 1;
+  }
+
+  const atLeast = heldSelected.size - networkExcluded;
+  if (atLeast > MAX_SOURCES_PER_CALL) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      `This selection already names ${atLeast} sources this account has joined; the limit is ${MAX_SOURCES_PER_CALL}. Split the call.`,
+    );
+  }
+
+  const lookups = [...selected, ...excluded].filter(
+    (name) => resolutionCost(index, name) === "network",
+  ).length;
+  if (lookups > MAX_NETWORK_RESOLUTIONS_PER_CALL) {
+    throw new GramScopeError(
+      "INVALID_INPUT",
+      `This call names ${lookups} sources this account has not joined; at most ${MAX_NETWORK_RESOLUTIONS_PER_CALL} of those may be looked up in one call, and the call must resolve to at most ${MAX_SOURCES_PER_CALL} distinct sources. Split the call.`,
     );
   }
 }
@@ -62,6 +115,30 @@ function assertEffectiveSourceCount(count: number): void {
       "INVALID_INPUT",
       `This selection resolves to ${count} canonical sources; the limit is ${MAX_SOURCES_PER_CALL}. Split the call.`,
     );
+  }
+}
+
+/**
+ * Whether a failed exclusion may fall back to matching by name, rather than
+ * failing the call.
+ *
+ * `CHANNEL_NOT_FOUND` means the name resolves nowhere, which is the
+ * cold-instance case this exists for. `PRIVATE_CHANNEL_NOT_ACCESSIBLE` joins it
+ * only for a marked id: there the peer's identity is precisely what the caller
+ * wrote, so the degrade key is exact — a channel the account was banned from
+ * would otherwise take the whole page down for an exclusion that is provably a
+ * no-op. For a username no id is learned, so the exclusion's target stays
+ * unknown. Every other failure — a malformed name, an invite link, a rate
+ * limit, a transport error — leaves the status unknown, and serving content the
+ * caller asked to omit on a guess is worse than failing.
+ */
+function degrades(code: string, handle: string): boolean {
+  if (code === "CHANNEL_NOT_FOUND") return true;
+  if (code !== "PRIVATE_CHANNEL_NOT_ACCESSIBLE") return false;
+  try {
+    return parseTelegramName(handle).kind === "internal";
+  } catch {
+    return false;
   }
 }
 
@@ -107,10 +184,11 @@ export async function prepareSourceTargets(
   targets: SourceTarget[],
   excludedHandles: string[],
 ): Promise<PreparedSourceTarget[]> {
-  assertResolutionBudget(index, [
-    ...targets.map((target) => target.handle),
-    ...excludedHandles,
-  ]);
+  assertResolutionBudget(
+    index,
+    targets.map((target) => target.handle),
+    excludedHandles,
+  );
 
   const exclusions = await mapWithConcurrency(
     excludedHandles,
@@ -120,11 +198,7 @@ export async function prepareSourceTargets(
         return { id: (await resolveSource(client, index, handle)).source_id };
       } catch (error) {
         const mapped = mapTelegramError(error);
-        // Only a name that resolves NOWHERE may degrade. A malformed name, an
-        // invite link, a rate limit or a transport failure all mean the
-        // exclusion's status is unknown, and serving content the caller asked
-        // to omit on a guess is worse than failing the call.
-        if (mapped.code !== "CHANNEL_NOT_FOUND") throw mapped;
+        if (!degrades(mapped.code, handle)) throw mapped;
         return { key: nameKey(handle) };
       }
     },

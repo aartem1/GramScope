@@ -283,10 +283,11 @@ async function sourcesPage(
   const targets = cursor
     ? cursor.sources
     : targetNames(input, index).map((handle) => ({ handle, offsetId: 0 }));
-  assertResolutionBudget(index, [
-    ...targets.map((target) => target.handle),
-    ...(cursor ? [] : (input.exclude_source_ids ?? [])),
-  ]);
+  assertResolutionBudget(
+    index,
+    targets.map((target) => target.handle),
+    cursor ? [] : (input.exclude_source_ids ?? []),
+  );
 
   // Resolution first, in its own pass: it is free for peers the account holds,
   // and doing it before the searches means an excluded source never costs a

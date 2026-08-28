@@ -3,6 +3,7 @@ import {
   getMessage,
   getMessages,
   MAX_NETWORK_RESOLUTIONS_PER_CALL,
+  MAX_SOURCE_NAMES_PER_CALL,
   parseDateBound,
   renderPage,
   resolveSourceSet,
@@ -153,8 +154,100 @@ describe("resolveSourceSet", () => {
     expect((error as GramScopeError).code).toBe("INVALID_INPUT");
     expect((error as GramScopeError).message).toContain(String(over));
     // The message must name the ceiling the caller is actually splitting
-    // toward, not only the lookup budget it happened to trip.
+    // toward, not only the lookup budget it happened to trip, and it must say
+    // WHAT it counted — the count is of unjoined sources, not of all names.
     expect((error as GramScopeError).message).toContain("25");
+    expect((error as GramScopeError).message).toContain("has not joined");
+  });
+
+  it("rejects a request larger than any real selection", () => {
+    const many = Array.from(
+      { length: MAX_SOURCE_NAMES_PER_CALL + 1 },
+      (_, i) => `-1009${i}`,
+    );
+    const error = (() => {
+      try {
+        resolveSourceSet({ source_ids: many, limit: 20 }, index);
+      } catch (e) {
+        return e;
+      }
+      return undefined;
+    })();
+    expect((error as GramScopeError).code).toBe("INVALID_INPUT");
+    expect((error as GramScopeError).message).toContain(
+      String(MAX_SOURCE_NAMES_PER_CALL + 1),
+    );
+    // The cap's own diagnosis, not the lookup budget's: this call is refused
+    // for its size, and no narrower list of the same size would pass.
+    expect((error as GramScopeError).message).toContain("fit in one call");
+  });
+
+  it("does not count names no lookup could resolve", () => {
+    // An invite link never reaches Telegram, so diagnosing 51 of them as a
+    // lookup overflow would send the caller to split a call splitting cannot
+    // fix. resolveSource answers each with its own error instead.
+    const invites = Array.from(
+      { length: MAX_NETWORK_RESOLUTIONS_PER_CALL + 1 },
+      (_, i) => `https://t.me/+Invite${i}`,
+    );
+    const set = resolveSourceSet(
+      { source_ids: [A, ...invites], limit: 20 },
+      index,
+    );
+    expect(set).toHaveLength(invites.length + 1);
+  });
+
+  it("rejects a selection of held sources past the ceiling before any lookup", () => {
+    // The held half canonicalises for free, so a selection already too wide
+    // must not first buy a lookup for every unjoined name beside it.
+    const many = Array.from({ length: 26 }, (_, i) => `-1009${i}`);
+    const wide = {
+      byId: new Map(many.map((id) => [id, entry(id, id)])),
+      folders: [],
+    };
+    const error = (() => {
+      try {
+        resolveSourceSet(
+          { source_ids: [...many, "@outside"], limit: 20 },
+          wide,
+        );
+      } catch (e) {
+        return e;
+      }
+      return undefined;
+    })();
+    expect((error as GramScopeError).code).toBe("INVALID_INPUT");
+    expect((error as GramScopeError).message).toContain("26");
+    expect((error as GramScopeError).message).toContain("has joined");
+  });
+
+  it("still allows a wide held selection that exclusions bring under the ceiling", () => {
+    // The same check must not resurrect the folder-minus-members rejection.
+    const many = Array.from({ length: 40 }, (_, i) => `-1009${i}`);
+    const wide = {
+      byId: new Map(many.map((id) => [id, entry(id, id)])),
+      folders: [],
+    };
+    const set = resolveSourceSet(
+      { source_ids: many, exclude_source_ids: many.slice(0, 20), limit: 20 },
+      wide,
+    );
+    expect(set).toHaveLength(40);
+  });
+
+  it("does not reject on held sources a network exclusion may yet remove", () => {
+    // An exclusion the index cannot answer may still resolve to a held peer,
+    // so the free count is only a bound once those are subtracted.
+    const many = Array.from({ length: 26 }, (_, i) => `-1009${i}`);
+    const wide = {
+      byId: new Map(many.map((id) => [id, entry(id, id)])),
+      folders: [],
+    };
+    const set = resolveSourceSet(
+      { source_ids: many, exclude_source_ids: ["@elsewhere"], limit: 20 },
+      wide,
+    );
+    expect(set).toHaveLength(26);
   });
 
   it("does not charge held sources or their exclusions against that budget", () => {
@@ -710,6 +803,98 @@ describe("getMessages", () => {
         limit: 20,
       }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("buys no lookup for a selection the held half already oversizes", async () => {
+    // The reviewer's repro: held ids past the ceiling beside unjoined names.
+    // Five unjoined names stay well inside the lookup budget, so only the free
+    // held count can refuse this call — and it must refuse before looking any
+    // of them up.
+    const held = Array.from({ length: 26 }, (_, i) => `${-1009000 - i}`);
+    const lookups: string[] = [];
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () =>
+        held.map((id) => ({
+          id: { value: BigInt(id) },
+          title: id,
+          unreadCount: 0,
+          entity: { className: "Channel", id: { value: BigInt(id.slice(4)) } },
+          dialog: { readInboxMaxId: 0 },
+          message: { id: 1, date: 1735689600 },
+        })),
+      getEntity: async (target: string) => {
+        lookups.push(target);
+        return {};
+      },
+      getMessages: async () => [],
+    }));
+
+    await expect(
+      getMessages({
+        source_ids: [
+          ...held,
+          ...Array.from({ length: 5 }, (_, i) => `@unjoined${i}`),
+        ],
+        limit: 20,
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+
+    expect(lookups).toEqual([]);
+  });
+
+  it("subtracts an exclusion by marked id that the account is banned from", async () => {
+    // CHANNEL_PRIVATE names a peer the caller identified exactly, by the very
+    // id the degrade matches on, so it must not take the page down.
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => dialogs,
+      getEntity: async () => {
+        const error = new Error("banned stub");
+        (error as unknown as { errorMessage: string }).errorMessage =
+          "CHANNEL_PRIVATE";
+        throw error;
+      },
+      getMessages: async () => [post(10)],
+    }));
+
+    const page = await getMessages({
+      source_ids: [A],
+      exclude_source_ids: ["-100999999999"],
+      limit: 20,
+    });
+
+    expect(page.sources.map((source) => source.source_id)).toEqual([A]);
+  });
+
+  it("fails the call when a banned exclusion is named by username", async () => {
+    // No id is learned from a username, so the exclusion's target stays
+    // unknown and the page must not be served on a guess.
+    __setClientFactoryForTests(async () => ({
+      connected: true,
+      connect: async () => true,
+      invoke: async () => ({ filters: [] }),
+      getDialogs: async () => dialogs,
+      getEntity: async () => {
+        const error = new Error("banned stub");
+        (error as unknown as { errorMessage: string }).errorMessage =
+          "CHANNEL_PRIVATE";
+        throw error;
+      },
+      getMessages: async () => [post(10)],
+    }));
+
+    await expect(
+      getMessages({
+        source_ids: [A],
+        exclude_source_ids: ["@banned"],
+        limit: 20,
+      }),
+    ).rejects.toMatchObject({ code: "PRIVATE_CHANNEL_NOT_ACCESSIBLE" });
   });
 
   it("fails the call when an exclusion is rate limited", async () => {

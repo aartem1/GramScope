@@ -9,6 +9,7 @@ import { nameKey, resolveSource } from "./peer-resolve";
 import {
   assertResolutionBudget,
   MAX_NETWORK_RESOLUTIONS_PER_CALL,
+  MAX_SOURCE_NAMES_PER_CALL,
   MAX_SOURCES_PER_CALL,
   prepareSourceTargets,
 } from "./source-selection";
@@ -28,7 +29,11 @@ import {
  * the effective one is counted after resolution. Kept here so callers and
  * tests that have always imported it from this module keep working.
  */
-export { MAX_NETWORK_RESOLUTIONS_PER_CALL, MAX_SOURCES_PER_CALL };
+export {
+  MAX_NETWORK_RESOLUTIONS_PER_CALL,
+  MAX_SOURCE_NAMES_PER_CALL,
+  MAX_SOURCES_PER_CALL,
+};
 
 export type GetMessagesInput = {
   source_ids?: string[];
@@ -99,10 +104,11 @@ export function resolveSourceSet(
     resolved = ordered.map((handle) => ({ handle, offsetId: 0 }));
   }
 
-  assertResolutionBudget(index, [
-    ...resolved.map((target) => target.handle),
-    ...(input.cursor ? [] : (input.exclude_source_ids ?? [])),
-  ]);
+  assertResolutionBudget(
+    index,
+    resolved.map((target) => target.handle),
+    input.cursor ? [] : (input.exclude_source_ids ?? []),
+  );
   if (resolved.length === 0) {
     throw new GramScopeError(
       "INVALID_INPUT",
