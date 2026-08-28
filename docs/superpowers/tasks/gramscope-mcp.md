@@ -68,17 +68,22 @@ created: 2026-08-26
 - 2026-08-27 — **the 25-source ceiling now counts canonical sources, so it cannot be applied before resolution.** A looser pre-resolution guard, `MAX_RAW_SOURCE_NAMES_PER_CALL` = 4x the effective one, is what bounds how many entity resolutions one call can buy, and exclusions count toward it. Every later multi-source tool inherits both limits from `src/telegram/source-selection.ts` rather than defining its own.
 - 2026-08-27 — a re-siting hazard worth remembering: when a contract moves to a later layer, the tests that guarded it move too, and their fixtures must move with them. Two fan-out fixtures resolved every unknown name to the same entity, so after canonicalisation a 26-source selection collapsed to one source and the ceiling tests would have passed having asserted nothing. Distinct names must resolve to distinct peers in any fixture that exercises a ceiling.
 - 2026-08-27 — **the final review's fix rounds cost three iterations, and each round's fix introduced the next round's defect.** The chain is worth keeping because every link was invisible to the fast tier. Round 1 (`71420c8..ad2bec8`) canonicalised aliases, and made an exclusion that cannot be resolved fail the whole call — the realistic path being an agent excluding an unjoined channel by the marked id it was handed, which a cold instance cannot resolve. Round 2 (`eb1f0c9..213513a`) degraded that to name-key matching, and halved a pre-resolution name ceiling to 50, which then rejected a 45-member folder with 20 members excluded (65 names counted, effective set 25) and asked for a split `folder_ids` cannot perform. Round 3 (`a4df5b7..00a2dd2`) replaced that ceiling with a lookup budget. No fast test caught any of the three; each was found by a whole-diff reviewer reading across module boundaries.
-- 2026-08-27 — **the resolution budget counts network lookups, not names.** `resolveSource` answers from the dialog index for every peer the account holds, so a folder selection costs nothing to resolve however wide it is; only names the index cannot answer reach Telegram. `resolvesLocally` in `src/telegram/peer-resolve.ts` is the predicate, `MAX_NETWORK_RESOLUTIONS_PER_CALL` (2x the 25-source ceiling) is the cap, and the module-level resolve cache is deliberately not counted as local so a call is not legal on a warm instance and rejected on a cold one. Every later multi-source tool inherits this from `src/telegram/source-selection.ts` rather than defining its own limits.
+- 2026-08-27 — **a multi-source call is bounded by three checks, cheapest first, all in `src/telegram/source-selection.ts`; every later multi-source tool inherits them rather than defining its own.** (1) `MAX_SOURCE_NAMES_PER_CALL` = 1000 caps the sheer number of names, read from array lengths before any per-name work. (2) The distinct HELD selected sources, minus held exclusions and minus the count of network exclusions, are checked against `MAX_SOURCES_PER_CALL` = 25 — exact and free, because `resolveSource` answers those from the dialog index. (3) `MAX_NETWORK_RESOLUTIONS_PER_CALL` = 2x the ceiling caps the lookups that actually reach Telegram. `resolutionCost` in `src/telegram/peer-resolve.ts` classifies a name `local | network | never`, and `never` — unparseable names and invite links — is charged nothing, because it never reaches the network and diagnosing it as an overflow would ask for a split that cannot help. The module-level resolve cache is deliberately not counted as local, so a call is not legal on a warm instance and rejected on a cold one.
+- 2026-08-27 — **the full 25-source ceiling cannot be applied before resolution, and the reason is worth keeping.** Two names the dialog index cannot answer may resolve to the same peer, so a count of names is an UPPER bound on the canonical result and refusing on it would refuse legal calls. Only the held half is exact. Held exclusions are subtracted or the folder-minus-members case is refused again; network exclusions are subtracted because any one of them may yet resolve to a held peer and remove it. Every direction of imprecision left in that bound makes it looser, never tighter.
+- 2026-08-27 — a peer's username lookup is a per-index `Map` held in a `WeakMap` keyed on the `DialogIndex` object, first-wins, built once. It replaced a linear scan of every dialog per name, which a caller could drive: 200,000 names against a 1000-entry index went from about 4.5s of CPU to 66ms, inside a 60s `maxDuration`. Latent and unreachable today: a `DialogIndex` mutated after first use would be served a stale map, and nothing mutates one after `fetchDialogIndex` builds it.
+- 2026-08-27 — **an exclusion degrades on `CHANNEL_NOT_FOUND`, and on `PRIVATE_CHANNEL_NOT_ACCESSIBLE` only when it was named by marked id** — including a `t.me/c/<id>` link, which parses to the same marked id. There the peer's identity is exactly what the caller wrote, so the degrade key is exact and a channel the account was banned from does not take the whole page down for an exclusion that is provably a no-op. Named by username it still fails the call, because no id is learned and the target stays unknown. The original rule and its reasoning:
 - 2026-08-27 — **an exclusion degrades only on `CHANNEL_NOT_FOUND`.** That code means the name resolves nowhere, which is the cold-instance case the degrade path exists for. A malformed name, an invite link, a rate limit or a transport failure all leave the exclusion's status unknown, and serving content the caller asked to omit on a guess is worse than failing the call — spec §11 also mandates `INVALID_INPUT` for a bad source name, and an exclusion must not be the one place that escapes it. Two reviewers disagreed here; this is the ruling that stands.
 - 2026-08-27 — a deliberate non-fix, so it is not re-raised: a bare unmarked id such as `1234567890` is not matched against a channel's marked id in `aliasKeys`. An unmarked id is not a documented source name, it fails resolution anyway, and matching it would collide with a user id, which Telegram marks as the bare id unchanged.
 - 2026-08-27 — process trap: `npx prettier --write` over a directory reformatted 22 files unrelated to the change, because the repository is not prettier-clean and `npm run lint` does not enforce formatting. Format the files you edited, never a directory, or revert the rest before committing.
+- 2026-08-28 — accepted residuals in sub-project 3, judged not worth a fifth fix round and recorded so they are not re-raised as defects. (a) When a selection's held half is already over the ceiling AND an exclusion is unusable, the caller is told about the ceiling rather than about the bad name; both statements are true and both are `INVALID_INPUT`, so it costs one extra round trip. (b) `25 held + 26 unjoined` names still buys up to 16 lookups before failing at 51 canonical sources — unavoidable, because all 26 could be aliases of the held peers, which would make the call legal; the 50-lookup budget bounds it. (c) If a username were transferred between two channels the account holds within one warm instance, the resolve cache and a fresh dialog index would disagree and the free held count could be inflated by one.
 
 # Current point
 
-Sub-project 3, Research. Twelve plan tasks done and accepted by the owner in the
-ChatGPT connector. The final whole-implementation review of `3832daa..7ddece2`
-returned Needs fixes; four fix rounds have landed, and rounds 1-3 each
-introduced the defect the next round fixed.
+**Sub-project 3, Research: complete.** Twelve plan tasks done and accepted by
+the owner in the ChatGPT connector; the final whole-implementation review of
+`3832daa..7ddece2` closed after four fix rounds, the last reviewed `Approved
+with minors`. Rounds 1-3 each introduced the defect the next round fixed, which
+is why the loop ran long.
 
 | Round | Commits | Fixed |
 | --- | --- | --- |
@@ -87,17 +92,20 @@ introduced the defect the next round fixed.
 | 3 | `a4df5b7..00a2dd2` | lookup budget instead of a name ceiling; exclusion failure discrimination |
 | 4 | `f9952d9` | free refusal before any lookup; `PRIVATE_CHANNEL_NOT_ACCESSIBLE` degrade; unresolvable names uncharged |
 
-`main` = `origin/main` = `f9952d9`, tree clean, pushed and deployed. Gates: 352
-fast tests, typecheck, lint, build green; live tier 25/25 no skips. Every round-4
-guard was proven against a mutation.
+Everything is pushed and deployed. Gates at `f9952d9`: 352 fast tests,
+typecheck, lint and build green; live tier 25/25 with no skips. The reviewer
+re-ran the fast gates independently and could not construct a legal call round 4
+refuses. Its two minors are handled: the card is this update, and the diagnosis-
+ordering one is an accepted residual listed above.
 
-**Next:** scoped re-review of `00a2dd2..f9952d9`. On `Approved` sub-project 3 is
-finished and sub-project 4 (Discovery) starts at `superpowers:brainstorming`; it
-has no spec or plan yet. On `Needs fixes` open round 5/5, the last of the budget.
+**Next:** sub-project 4, Discovery. It has no spec or plan yet, so it starts at
+`superpowers:brainstorming`. Sub-projects 5 (State writes) and 6 (Source
+metadata) follow.
 
-**Do not redo:** the twelve tasks, the three original findings, or any item
-rounds 1-4 closed. The live Telegram measurements below cost real FLOOD_WAIT
-budget.
+**Do not redo:** anything in sub-projects 1-3, or any item the four fix rounds
+closed. The live Telegram measurements below cost real FLOOD_WAIT budget — read
+them rather than re-probing. The accepted residuals above are decisions, not
+open defects.
 
 # Blocked — awaiting owner
 Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
