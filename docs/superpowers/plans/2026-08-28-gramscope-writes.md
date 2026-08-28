@@ -156,52 +156,44 @@ to
   );
 ```
 
-and have `listTools` return the initialize result alongside the tools. The
-smallest change that keeps every existing caller working is a second exported
-helper rather than a new return shape:
+`listTools` already performs the handshake and needs the initialize result that
+it currently discards. Do **not** write a second helper that repeats the
+transport setup: extract the shared part instead. Lift the connect-and-handshake
+block out of `listTools` into
 
 ```ts
-async function initializeResult(): Promise<Json> {
-  const server = new McpServer(
-    { name: "gramscope", version: "test" },
-    { instructions: SERVER_INSTRUCTIONS },
-  );
-  registerTools(server);
+type Connected = {
+  send: (message: Json) => Promise<void>;
+  waitFor: (id: number) => Promise<Json>;
+  close: () => Promise<void>;
+};
 
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-
-  const inbox: Json[] = [];
-  clientTransport.onmessage = (message) => inbox.push(message as Json);
-  await clientTransport.start();
-
-  await clientTransport.send({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "initialize",
-    params: {
-      protocolVersion: "2025-06-18",
-      capabilities: {},
-      clientInfo: { name: "test", version: "1" },
-    },
-  } as never);
-
-  for (let attempt = 0; attempt < 200; attempt++) {
-    const found = inbox.find((message) => message.id === 1);
-    if (found) return (found.result ?? {}) as Json;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error("no initialize response");
+/**
+ * Connects a real McpServer over the SDK's in-memory transport, completes the
+ * initialize handshake, and hands back the raw JSON-RPC channel plus the
+ * initialize result. Both the tools/list tests and the instructions test drive
+ * the same handshake, so it lives in one place.
+ */
+async function connectServer(): Promise<{
+  channel: Connected;
+  initialize: Json;
+}> {
+  // Body: exactly the setup listTools performs today — construct the server
+  // (now with { instructions: SERVER_INSTRUCTIONS } as the second argument),
+  // registerTools, createLinkedPair, connect, collect into `inbox`, start,
+  // send initialize as id 1, await it with the existing 200x10ms poll, send
+  // notifications/initialized, and return the initialize response's `result`
+  // together with send/waitFor/close closures over the same transport.
 }
 ```
 
-and two tests:
+and rewrite `listTools` to call it, keeping its existing return type so every
+test already in the file is untouched. Then add two tests:
 
 ```ts
   it("delivers the shared guidance in the initialize result", async () => {
-    const result = await initializeResult();
-    expect(String(result.instructions)).toContain(
+    const { initialize } = await connectServer();
+    expect(String(initialize.instructions)).toContain(
       "Name a source by @username whenever it has one",
     );
   });
@@ -1494,15 +1486,20 @@ export async function leaveChannel(input: {
       ...details,
     });
 
-    if (!index.byId.has(resolved.source_id)) {
-      return { source, was_member: false };
-    }
-
+    // The kind check comes BEFORE the membership check on purpose. Being a
+    // legacy chat is a property of the target, not of membership: answering
+    // `was_member: false` for one would imply the tool would have worked had
+    // the account been a member, which is not true — leaving a legacy chat is
+    // messages.DeleteChatUser, a different call this sub-project does not make.
     if (peerKind(entity) !== "channel") {
       throw new GramScopeError(
         "INVALID_INPUT",
         `${input.source} is a ${source.type}, not a channel or supergroup. leave_channel unsubscribes from channels and groups only.`,
       );
+    }
+
+    if (!index.byId.has(resolved.source_id)) {
+      return { source, was_member: false };
     }
 
     const Api = await getApi();
@@ -1649,24 +1646,56 @@ function chatlistFilter() {
   };
 }
 
+/**
+ * The fake applies the writes it receives to its own filter list rather than
+ * returning a frozen one. Every action here re-reads after writing — `order` is
+ * a position in the server's list, not a property of the filter, so it cannot
+ * be computed from what was sent — and a fake that could not represent the
+ * write would make the post-state assertions untestable rather than wrong.
+ */
 function factory(options: {
   sent: unknown[];
   filters?: unknown[];
   entities?: Record<string, Record<string, unknown>>;
 }) {
-  const filters = options.filters ?? [
+  const filters: Record<string, unknown>[] = (options.filters ?? [
     { className: "DialogFilterDefault" },
     richFilter(),
-  ];
+  ]) as Record<string, unknown>[];
+
   return async () => ({
     connected: true,
     connect: async () => true,
     invoke: async (request: unknown) => {
       options.sent.push(request);
-      const className = (request as { className?: string }).className;
+      const r = request as Record<string, unknown>;
+      const className = r.className as string | undefined;
+
       if (className === "messages.GetDialogFilters") {
         return { className: "messages.DialogFilters", filters };
       }
+
+      if (className === "messages.UpdateDialogFilter") {
+        const id = Number(r.id);
+        const at = filters.findIndex((f) => Number(f.id) === id);
+        if (r.filter === undefined) {
+          if (at >= 0) filters.splice(at, 1);
+        } else if (at >= 0) {
+          filters[at] = r.filter as Record<string, unknown>;
+        } else {
+          filters.push(r.filter as Record<string, unknown>);
+        }
+        return true;
+      }
+
+      if (className === "messages.UpdateDialogFiltersOrder") {
+        const order = (r.order as number[]) ?? [];
+        filters.sort(
+          (a, b) => order.indexOf(Number(a.id)) - order.indexOf(Number(b.id)),
+        );
+        return true;
+      }
+
       return true;
     },
     getDialogs: async () => [],
@@ -1966,9 +1995,10 @@ export async function createFolder(input: {
       excludePeers: [],
     }) as unknown as RawFilter;
 
-    if (input.source_ids?.length) {
-      filter.includePeers = await resolveIncludePeers(client, input.source_ids);
-    }
+    // `input.source_ids` is accepted but not yet honoured: filling a new
+    // folder needs resolveIncludePeers, which Task 9 adds. Task 9 adds the
+    // branch here too. Do NOT reference resolveIncludePeers in this task —
+    // it does not exist yet and this task must compile on its own.
 
     return folderById(await writeFilter(client, id, filter), String(id));
   });
@@ -2000,12 +2030,6 @@ export async function deleteFolder(input: {
   });
 }
 ```
-
-`resolveIncludePeers` is written in Task 9; until then `create` may be
-implemented with `input.source_ids` ignored and the branch left out, and Task 9
-adds it. Prefer writing the stub in Task 9's order — that is, do this task
-without the `source_ids` branch and add it there — rather than leaving a call
-to a function that does not exist.
 
 If `npm run typecheck` rejects `new Api.TextWithEntities({...})` where
 `DialogFilter.title` is declared as `string`, pass the plain string instead in
@@ -2076,9 +2100,6 @@ describe("addFolderSources", () => {
     // A folder write replaces the filter atomically; a partial add would
     // report success for a call that did less than it was asked.
     const sent: unknown[] = [];
-    __setClientFactoryForTests({
-      ...factory({ sent }),
-    } as never);
     __setClientFactoryForTests(async () => ({
       connected: true,
       connect: async () => true,
@@ -2404,7 +2425,9 @@ rename the count test to seventeen, and add:
     const schema = tool.config.inputSchema as {
       shape: { action: { options: string[] } };
     };
-    expect(schema.shape.action.options.sort()).toEqual(
+    // Spread before sorting: sort() is in place and `options` is the live
+    // schema's own array.
+    expect([...schema.shape.action.options].sort()).toEqual(
       [
         "add_sources",
         "create",
