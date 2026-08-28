@@ -147,8 +147,8 @@ yet complete without re-running anything above it.
 | 2 `unread_mark` on the read side | complete, `2616025`, review clean, no findings; 388 tests |
 | 3 `get_unread_summary` reports the manual flag | complete, `f42bd9c`, review clean; 392 tests |
 | 4 `peerKind`, `toInputPeer`, `markUnread` engine | complete, `1432f22`..`7c6b4b0`, clean after 1 fix round; 399 tests |
-| 5 `mark_unread` tool | in flight |
-| 6 `join_channel` | not started |
+| 5 `mark_unread` tool | complete, `067047d`, review clean; 400 tests, fourteen tools |
+| 6 `join_channel` | in flight |
 | 7 `leave_channel` | not started |
 | 8 Folder round-trip rule, create/rename/delete | not started |
 | 9 Folder membership and order | not started |
