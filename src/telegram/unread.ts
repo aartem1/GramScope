@@ -18,6 +18,7 @@ export type UnreadGroup = {
   read_inbox_max_id?: number;
   latest_message_id?: number;
   latest_message_date?: string;
+  unread_mark?: boolean;
 };
 
 export type UnreadSummaryResult = {
@@ -88,9 +89,17 @@ export function summarize(
   const entries = [...index.byId.values()]
     .filter(
       (entry) =>
-        entry.unread_count > 0 && (!scoped || scoped.has(entry.source_id)),
+        (entry.unread_count > 0 || entry.unread_mark === true) &&
+        (!scoped || scoped.has(entry.source_id)),
     )
-    .sort((a, b) => b.unread_count - a.unread_count);
+    // Count first, then the manual flag as the tie-break, so a flagged source
+    // with no unread messages lands at the end rather than at the top: the
+    // flag says "come back to this", not "this is the busiest".
+    .sort(
+      (a, b) =>
+        b.unread_count - a.unread_count ||
+        Number(b.unread_mark === true) - Number(a.unread_mark === true),
+    );
 
   const total = entries.reduce((sum, entry) => sum + entry.unread_count, 0);
 
@@ -105,6 +114,7 @@ export function summarize(
     ...(entry.latest_message_date !== undefined
       ? { latest_message_date: entry.latest_message_date }
       : {}),
+    ...(entry.unread_mark === true ? { unread_mark: true } : {}),
   }));
 
   return { groups: fitGroups(groups, total), total_unread: total };

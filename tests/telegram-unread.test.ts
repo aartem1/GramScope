@@ -44,8 +44,20 @@ const index: DialogIndex = {
     ],
   ]),
   folders: [
-    { id: "2", title: "AI", included_peer_ids: [A, B], excluded_peer_ids: [], order: 0 },
-    { id: "3", title: "News", included_peer_ids: [C], excluded_peer_ids: [], order: 1 },
+    {
+      id: "2",
+      title: "AI",
+      included_peer_ids: [A, B],
+      excluded_peer_ids: [],
+      order: 0,
+    },
+    {
+      id: "3",
+      title: "News",
+      included_peer_ids: [C],
+      excluded_peer_ids: [],
+      order: 1,
+    },
   ],
 };
 
@@ -126,10 +138,7 @@ describe("summarize by folder", () => {
           read_inbox_max_id: 0,
           folder_ids: [folder.id],
         };
-        return [
-          sourceId,
-          entry,
-        ] as const;
+        return [sourceId, entry] as const;
       }),
     );
 
@@ -137,9 +146,9 @@ describe("summarize by folder", () => {
 
     expect(result.groups.length).toBeLessThan(count);
     expect(result.total_unread).toBe(count);
-    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(
-      MAX_RESPONSE_BYTES,
-    );
+    expect(
+      Buffer.byteLength(JSON.stringify(result), "utf8"),
+    ).toBeLessThanOrEqual(MAX_RESPONSE_BYTES);
   });
 });
 
@@ -179,14 +188,83 @@ describe("summarize response size envelope", () => {
     expect(size(titleLength, true)).toBeGreaterThan(MAX_RESPONSE_BYTES);
 
     const result = summarize(
-      { byId: new Map(groups.map((entry) => [entry.source_id, entry])), folders: [] },
+      {
+        byId: new Map(groups.map((entry) => [entry.source_id, entry])),
+        folders: [],
+      },
       {},
     );
 
     expect(result.groups).toHaveLength(1);
     expect(result.total_unread).toBe(2);
-    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThanOrEqual(
-      MAX_RESPONSE_BYTES,
+    expect(
+      Buffer.byteLength(JSON.stringify(result), "utf8"),
+    ).toBeLessThanOrEqual(MAX_RESPONSE_BYTES);
+  });
+});
+
+describe("the manual unread flag in the summary", () => {
+  function indexWith(entries: Partial<DialogEntry>[]): DialogIndex {
+    const byId = new Map<string, DialogEntry>();
+    for (const entry of entries) {
+      const full: DialogEntry = {
+        source_id: entry.source_id!,
+        title: entry.title ?? entry.source_id!,
+        unread_count: entry.unread_count ?? 0,
+        read_inbox_max_id: 0,
+        folder_ids: [],
+        ...(entry.unread_mark ? { unread_mark: true } : {}),
+      };
+      byId.set(full.source_id, full);
+    }
+    return { byId, folders: [] };
+  }
+
+  it("includes a flagged source that has no unread messages", () => {
+    // Without this, mark_unread ships decorative: it sets a flag no tool can
+    // see. Same failure that moved mark_read into sub-project 2.
+    const result = summarize(
+      indexWith([
+        { source_id: "-100111", title: "Counted", unread_count: 3 },
+        { source_id: "-100222", title: "Flagged", unread_mark: true },
+      ]),
+      {},
     );
+    expect(result.groups.map((g) => g.source_id)).toEqual([
+      "-100111",
+      "-100222",
+    ]);
+    expect(result.groups[1]!.unread_mark).toBe(true);
+    expect(result.groups[1]!.unread_count).toBe(0);
+  });
+
+  it("leaves total_unread a message count", () => {
+    const result = summarize(
+      indexWith([
+        { source_id: "-100111", unread_count: 3 },
+        { source_id: "-100222", unread_mark: true },
+      ]),
+      {},
+    );
+    expect(result.total_unread).toBe(3);
+  });
+
+  it("sorts a flagged source ahead of an unflagged one at the same count", () => {
+    const result = summarize(
+      indexWith([
+        { source_id: "-100111", unread_count: 5 },
+        { source_id: "-100222", unread_count: 5, unread_mark: true },
+      ]),
+      {},
+    );
+    expect(result.groups.map((g) => g.source_id)).toEqual([
+      "-100222",
+      "-100111",
+    ]);
+  });
+
+  it("still reports nothing for a source with neither count nor flag", () => {
+    const result = summarize(indexWith([{ source_id: "-100111" }]), {});
+    expect(result.groups).toEqual([]);
   });
 });
