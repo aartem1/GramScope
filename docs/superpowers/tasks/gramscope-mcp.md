@@ -150,7 +150,7 @@ yet complete without re-running anything above it.
 | 5 `mark_unread` tool | complete, `067047d`, review clean; 400 tests, fourteen tools |
 | 6 `join_channel` | complete, `f550122`..`cc46c43`, clean after 1 fix round; 405 tests, fifteen tools |
 | 7 `leave_channel` | complete, `c02321a`, review clean; 409 tests, sixteen tools |
-| 8 Folder round-trip rule, create/rename/delete | not started |
+| 8 Folder round-trip rule, create/rename/delete | complete, `914ea66`; review closed by TL-constructor ruling, 2 minor test findings deferred; 417 tests |
 | 9 Folder membership and order | not started |
 | 10 `manage_folder` tool | not started |
 | 11 Version 1.3.0, README, deploy | not started |
@@ -180,6 +180,14 @@ Rulings made during execution, each of which the owner may overrule:
   shape as the pre-flight ruling for `leaveChannel`: kind is a property of the
   target, not of membership. The `sourceType` test around `fetchChannelDetails`
   disappeared with it, since every entity surviving the guard is a channel.
+- Task 8: retain `pinnedPeers: []` and `excludePeers: []` when constructing a
+  new `DialogFilter`, despite the spec's shorthand that create sets only `id`,
+  `title` and `includePeers`. Teleproto declares all three peer vectors as
+  required, non-optional constructor fields, and the Task 8 brief therefore
+  supplies the two empty vectors explicitly. They carry no user-selected state.
+  Cost if wrong: create writes explicit empty vectors where Telegram might have
+  supplied an equivalent default; omitting them instead fails the declared TL
+  constructor contract.
 
 ## How to resume sub-project 5a
 
