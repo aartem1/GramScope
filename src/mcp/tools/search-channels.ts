@@ -1,6 +1,9 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { searchChannels } from "../../telegram/discovery";
+import {
+  MAX_ENRICHED_CANDIDATES,
+  searchChannels,
+} from "../../telegram/discovery";
 import { searchChannelsResultSchema } from "../../schemas/discovery";
 import { runTool } from "../tool-result";
 import { OUTSIDE_SOURCE_GUIDANCE } from "../source-guidance";
@@ -22,7 +25,7 @@ export function registerSearchChannels(server: McpServer): void {
           .number()
           .int()
           .min(1)
-          .max(10)
+          .max(MAX_ENRICHED_CANDIDATES)
           .optional()
           .describe("How many candidates to return. 1-10, default 10."),
       }),

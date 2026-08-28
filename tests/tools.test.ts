@@ -122,12 +122,17 @@ describe("registerTools", () => {
     expect(description).toContain("get_similar_channels");
   });
 
-  it("says that similar channels are capped and not rankable by the server", () => {
+  it("states the distinct seeded and global recommendation ceilings", () => {
     const server = fakeServer();
     registerTools(server as never);
     const tool = server.tools.find((t) => t.name === "get_similar_channels")!;
     const description = String(tool.config.description);
-    expect(description).toContain("Premium");
+    expect(description).toContain(
+      "With source supplied, total_similar is the number Telegram knows; only about 10 are served, the remainder requires Telegram Premium, and no argument reaches it.",
+    );
+    expect(description).toContain(
+      "With source omitted, Telegram may offer about 100 ordinary account recommendations; GramScope safely returns only the first limit (maximum 10); there is no pagination or cursor; repeating the same call does not reach the remainder.",
+    );
     expect(description).toContain("never re-ranked");
   });
 });

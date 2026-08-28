@@ -61,14 +61,17 @@ export const MAX_ENRICHED_CANDIDATES = 10;
  * Marked id to fetched details, for the life of the serverless instance. A
  * channel's `about` changes rarely and recommendation sets overlap heavily
  * between calls, so this is what keeps two discovery calls in one conversation
- * from summing past the flood threshold. It holds description and linked-chat
- * only; `joined`, unread state and folder membership are never cached, because
- * those change while `about` does not.
+ * from summing past the flood threshold. Every successful response is cached,
+ * including an empty one, while overlapping misses share one in-flight fetch.
+ * `joined`, unread state and folder membership are never cached, because those
+ * change while channel details rarely do.
  */
 const detailsCache = new Map<string, SourceDetails>();
+const detailsInFlight = new Map<string, Promise<SourceDetails>>();
 
 export function __resetDiscoveryCacheForTests(): void {
   detailsCache.clear();
+  detailsInFlight.clear();
 }
 
 /**
@@ -90,20 +93,28 @@ export async function enrichCandidates(
     kept,
     DISCOVERY_ENRICH_CONCURRENCY,
     async (entity) => {
-      const id = entityMarkedId(entity) ?? "";
-      const cached = detailsCache.get(id);
-      if (cached) return cached;
-
-      const details = await fetchChannelDetails(client, entity).catch(
-        () => ({}) as SourceDetails,
-      );
-      if (
-        details.description !== undefined ||
-        details.linkedDiscussionId !== undefined
-      ) {
-        detailsCache.set(id, details);
+      const id = entityMarkedId(entity);
+      if (id === undefined) {
+        return fetchChannelDetails(client, entity).catch(
+          () => ({}) as SourceDetails,
+        );
       }
-      return details;
+
+      const cached = detailsCache.get(id);
+      if (cached !== undefined) return cached;
+
+      const active = detailsInFlight.get(id);
+      if (active !== undefined) return active;
+
+      const pending = fetchChannelDetails(client, entity)
+        .then((details) => {
+          detailsCache.set(id, details);
+          return details;
+        })
+        .catch(() => ({}) as SourceDetails)
+        .finally(() => detailsInFlight.delete(id));
+      detailsInFlight.set(id, pending);
+      return pending;
     },
   );
 }

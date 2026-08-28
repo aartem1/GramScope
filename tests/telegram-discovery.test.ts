@@ -167,6 +167,40 @@ describe("enrichCandidates", () => {
     expect(calls.length).toBe(3);
   });
 
+  it("caches a successful empty response across sequential calls", async () => {
+    const { client, calls } = fullChannelClient(() => ({ fullChat: {} }));
+    const list = entities(1);
+
+    expect(await enrichCandidates(client, list)).toEqual([{}]);
+    expect(await enrichCandidates(client, list)).toEqual([{}]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("shares uncached detail fetches across concurrent calls", async () => {
+    const { client, calls } = fullChannelClient(() => fullChannel("about"));
+    const list = entities(3);
+
+    await Promise.all([
+      enrichCandidates(client, list),
+      enrichCandidates(client, list),
+    ]);
+
+    expect(calls).toHaveLength(3);
+    expect(new Set(calls)).toEqual(
+      new Set(["1000000000", "1000000001", "1000000002"]),
+    );
+  });
+
+  it("does not share a cache key between malformed entities without ids", async () => {
+    const { client, calls } = fullChannelClient(() => fullChannel("about"));
+    const malformed = [{ className: "Channel", title: "No id" }];
+
+    await enrichCandidates(client, malformed);
+    await enrichCandidates(client, malformed);
+
+    expect(calls).toEqual(["", ""]);
+  });
+
   it("does not cache a failure, so one flood is not permanent", async () => {
     let fail = true;
     const { client, calls } = fullChannelClient(() => {
@@ -271,6 +305,13 @@ describe("searchChannels", () => {
     await searchChannels({ query: "нейросети" });
     const search = sent.find((r) => requestName(r) === "contacts.Search");
     expect(search).toMatchObject({ q: "нейросети", broadcasts: true });
+  });
+
+  it("asks Telegram for its full page when the caller limit is smaller", async () => {
+    const sent = installSearch(found({}));
+    await searchChannels({ query: "нейросети", limit: 2 });
+    const search = sent.find((r) => requestName(r) === "contacts.Search");
+    expect(search).toMatchObject({ limit: 10 });
   });
 
   it("rejects an empty query without calling Telegram", async () => {
