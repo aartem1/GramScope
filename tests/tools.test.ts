@@ -58,9 +58,14 @@ describe("registerTools", () => {
     "search_messages",
   ];
 
-  const WRITERS = ["mark_read", "mark_unread", "join_channel"];
+  const WRITERS = [
+    "mark_read",
+    "mark_unread",
+    "join_channel",
+    "leave_channel",
+  ];
 
-  it("registers all fifteen tools", () => {
+  it("registers all sixteen tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(
@@ -99,6 +104,13 @@ describe("registerTools", () => {
     // are independent, so a caller who reads this as "mark unread" in the
     // message-count sense will expect messages to become readable again.
     expect(description).toContain("separate from the unread count");
+  });
+
+  it("warns in leave_channel's description that a private channel is unrecoverable", () => {
+    const server = fakeServer();
+    registerTools(server as never);
+    const tool = server.tools.find((t) => t.name === "leave_channel")!;
+    expect(String(tool.config.description)).toContain("without a new invite");
   });
 
   it("says the source addressing rule once, in the server instructions", () => {

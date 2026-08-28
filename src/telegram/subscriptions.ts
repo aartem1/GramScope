@@ -2,7 +2,7 @@ import { getApi, resolveEntity, withTelegram } from "./client";
 import { fetchDialogIndex } from "./dialog-index";
 import { fetchChannelDetails, foldersByPeer, toSource } from "./dialogs";
 import { resolveSource } from "./peer-resolve";
-import { peerKind } from "./peer-id";
+import { peerKind, sourceType } from "./peer-id";
 import { GramScopeError } from "../errors/taxonomy";
 import type { TelegramSource } from "../schemas/source";
 
@@ -76,5 +76,65 @@ export async function joinChannel(input: {
       }),
       already_member: false,
     };
+  });
+}
+
+export type LeaveChannelResult = {
+  source: TelegramSource;
+  was_member: boolean;
+};
+
+/**
+ * Unsubscribes from one source, one per call (spec §4.3): a single injected
+ * "leave everything" then costs one visible tool call per source instead of
+ * one call total.
+ *
+ * The echoed source is the pre-leave state on purpose. After the call the
+ * account may hold nothing to describe, and what the caller needs to see is
+ * which object was actually left.
+ */
+export async function leaveChannel(input: {
+  source: string;
+}): Promise<LeaveChannelResult> {
+  const index = await fetchDialogIndex();
+  const folderIndex = foldersByPeer(index.folders);
+
+  return withTelegram(async (client) => {
+    const resolved = await resolveSource(client, index, input.source);
+    const entity =
+      resolved.entity ?? (await resolveEntity(client, resolved.handle));
+
+    const details =
+      sourceType(entity) === "channel" || sourceType(entity) === "group"
+        ? await fetchChannelDetails(client, entity).catch(() => ({}))
+        : {};
+    const source = toSource(entity, folderIndex, {
+      id: resolved.source_id,
+      title: resolved.title,
+      ...details,
+    });
+
+    // The kind check comes BEFORE the membership check on purpose. Being a
+    // legacy chat is a property of the target, not of membership: answering
+    // `was_member: false` for one would imply the tool would have worked had
+    // the account been a member, which is not true — leaving a legacy chat is
+    // messages.DeleteChatUser, a different call this sub-project does not make.
+    if (peerKind(entity) !== "channel") {
+      throw new GramScopeError(
+        "INVALID_INPUT",
+        `${input.source} is a ${source.type}, not a channel or supergroup. leave_channel unsubscribes from channels and groups only.`,
+      );
+    }
+
+    if (!index.byId.has(resolved.source_id)) {
+      return { source, was_member: false };
+    }
+
+    const Api = await getApi();
+    await client.invoke(
+      new Api.channels.LeaveChannel({ channel: entity as never }),
+    );
+
+    return { source, was_member: true };
   });
 }

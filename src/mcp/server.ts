@@ -7,6 +7,7 @@ import { registerGetSimilarChannels } from "./tools/get-similar-channels";
 import { registerGetThread } from "./tools/get-thread";
 import { registerGetUnreadSummary } from "./tools/get-unread-summary";
 import { registerJoinChannel } from "./tools/join-channel";
+import { registerLeaveChannel } from "./tools/leave-channel";
 import { registerListDialogs } from "./tools/list-dialogs";
 import { registerListFolders } from "./tools/list-folders";
 import { registerMarkRead } from "./tools/mark-read";
@@ -26,6 +27,7 @@ export function registerTools(server: McpServer): void {
   registerMarkRead(server);
   registerMarkUnread(server);
   registerJoinChannel(server);
+  registerLeaveChannel(server);
   registerSearchMessages(server);
   registerResolveTelegramUrl(server);
   registerGetPinnedMessages(server);

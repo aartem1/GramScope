@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { joinChannel } from "@/telegram/subscriptions";
+import { joinChannel, leaveChannel } from "@/telegram/subscriptions";
 import {
   __resetClientForTests,
   __setClientFactoryForTests,
@@ -61,15 +61,23 @@ function factory(options: {
         });
       }
       if (options.entities?.[name]) return options.entities[name]!;
-      return (
-        options.entity ?? {
+      if (options.entity) return options.entity;
+      if (name === "alpha") {
+        return {
+          className: "Channel",
+          id: { value: 111n },
+          title: "Alpha",
+          username: "alpha",
+          accessHash: { value: 5n },
+        };
+      }
+      return {
           className: "Channel",
           id: { value: 999n },
           title: "Beta",
           username: "beta",
           accessHash: { value: 7n },
-        }
-      );
+      };
     },
     getMessages: async () => [],
   });
@@ -157,5 +165,52 @@ describe("joinChannel", () => {
     await expect(
       joinChannel({ source: "https://t.me/+abcdef" }),
     ).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+});
+
+describe("leaveChannel", () => {
+  it("leaves a channel the account follows and echoes it as it was", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+    const result = await leaveChannel({ source: "@alpha" });
+
+    expect(result.was_member).toBe(true);
+    expect(result.source).toMatchObject({ id: HELD, username: "alpha" });
+    expect(
+      sent.some(
+        (r) =>
+          (r as { className?: string }).className === "channels.LeaveChannel",
+      ),
+    ).toBe(true);
+  });
+
+  it("is a success with was_member false when the account is not a member", async () => {
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(factory({ sent }));
+    const result = await leaveChannel({ source: "@beta" });
+
+    expect(result.was_member).toBe(false);
+    expect(
+      sent.some(
+        (r) =>
+          (r as { className?: string }).className === "channels.LeaveChannel",
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses a legacy chat rather than guessing at a different TL call", async () => {
+    // channels.LeaveChannel takes an InputChannel. Leaving a legacy chat is
+    // messages.DeleteChatUser and leaving a user dialog is a delete: different
+    // calls with different consequences, none of them in this sub-project.
+    const sent: unknown[] = [];
+    __setClientFactoryForTests(
+      factory({
+        sent,
+        entity: { className: "Chat", id: { value: 222n }, title: "Legacy" },
+      }),
+    );
+    await expect(leaveChannel({ source: "-222" })).rejects.toMatchObject({
+      code: "INVALID_INPUT",
+    });
   });
 });
