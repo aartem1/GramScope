@@ -77,6 +77,15 @@ created: 2026-08-26
 - 2026-08-27 — process trap: `npx prettier --write` over a directory reformatted 22 files unrelated to the change, because the repository is not prettier-clean and `npm run lint` does not enforce formatting. Format the files you edited, never a directory, or revert the rest before committing.
 - 2026-08-28 — accepted residuals in sub-project 3, judged not worth a fifth fix round and recorded so they are not re-raised as defects. (a) When a selection's held half is already over the ceiling AND an exclusion is unusable, the caller is told about the ceiling rather than about the bad name; both statements are true and both are `INVALID_INPUT`, so it costs one extra round trip. (b) `25 held + 26 unjoined` names still buys up to 16 lookups before failing at 51 canonical sources — unavoidable, because all 26 could be aliases of the held peers, which would make the call legal; the 50-lookup budget bounds it. (c) If a username were transferred between two channels the account holds within one warm instance, the resolve cache and a fresh dialog index would disagree and the free held count could be inflated by one.
 
+- 2026-08-28 — **Telegram discovery, measured live against the real account** (throwaway probe, deleted, not committed; sub-project 4 input). Do not re-probe these.
+  - `contacts.search` matches NAMES, not topics: `q=AI` returned zero public channels while `q=artificial intelligence` returned nine. It is a lookup by title and username, so a tool description that lets the agent read it as a topical search engine will produce "no such channels exist" from a query that is merely too short.
+  - `contacts.search` caps global results at **10** regardless of `limit`; 50 and 200 returned the same page. There is no offset or cursor parameter, so the tool is single-page by construction.
+  - The `broadcasts: true` flag both filters out users and refills the quota with channels: `q=нейросети` went from 9 mixed results (4 chats, 5 users) to 10, all channels.
+  - Its `Channel` objects carry `title`, `participantsCount`, `verified`, `scam`, `fake`, `restricted`, `left`, `broadcast`, `megagroup`, `min` — but **no `about`**. A description costs one `getFullChannel` per candidate.
+  - `username` is often null while the active handle sits in `usernames[]` (`chatgptv`, `neiroseti` both arrived that way). Read both; `entityUsernames` in peer-id.ts already does.
+  - `channels.getChannelRecommendations({channel})` returns `messages.ChatsSlice` with `count: 79` and only **10 chats** on this non-Premium account — `count` is what exists, the 10 are what is served, and there is no paging parameter to reach the rest.
+  - `channels.getChannelRecommendations({})` — no channel — returns `messages.Chats` with **100 chats** and no `count`: global recommendations derived from the account's own subscriptions, untruncated.
+
 # Current point
 
 **Sub-project 3, Research: complete.** Twelve plan tasks done and accepted by
