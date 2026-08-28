@@ -87,6 +87,7 @@ created: 2026-08-26
   - `channels.getChannelRecommendations({})` — no channel — returns `messages.Chats` with **100 chats** and no `count`: global recommendations derived from the account's own subscriptions, untruncated.
 - 2026-08-28 — the owner reviewed and approved the sub-project 4 (Discovery) spec as written; no changes were requested. The brainstorming approval gate is closed and planning may proceed.
 - 2026-08-28 — **sub-project 4 connector acceptance passed after reconnecting the ChatGPT connector.** `tools/list` exposed exactly 13 expected tools. The initial seed `@exampleaiseed` returned zero similar channels, so the owner selected the already-followed public channel `@exampleaichannel` as the fallback seed; it returned 10 candidates with `total_similar: 74` and `truncated: true`. All 10 candidates had usernames and 9 had descriptions. Four `get_messages` calls by candidate `@username` succeeded with no failures, and three recommendations were based on the posts read. The scenario made no joins and no Telegram account-state changes.
+- 2026-08-28 — **sub-project 4 is closed, deployed, accepted, and review-clean.** The final whole-implementation review over `4055790..3c38cf9` found 0 Critical, 2 Important, and 4 Minor findings. The Important findings were missing concurrent/empty details-cache flood protection and a misleading global `get_similar_channels` description. Commit `3c7383b2292387e523915ba07005a14f094b1427` fixed both and three opportunistic Minor findings; scoped re-review was CLEAN, addressed 2/2, residual 0/0/0, and Ready to close was Yes. Fresh final gates at that commit passed: 28 test files / 382 tests, typecheck, lint, and Next build; build-induced `tsconfig.json` churn was restored. `origin/main` was independently verified at the same full SHA.
 
 # Current point
 
@@ -94,10 +95,11 @@ created: 2026-08-26
 at `adde93e`; gates at `f9952d9` were 352 fast tests, typecheck, lint and build
 green, live tier 25/25 with no skips.
 
-**Sub-project 4, Discovery: Tasks 1-6 are complete. Task 7 is in progress:**
-deployment, production checks, and owner connector acceptance are complete, but
-its required whole-implementation review is still in flight. The deployment
-commit is `d7c6435`; it is pushed to `main` and production is Ready.
+**Sub-project 4, Discovery is closed, deployed, accepted, and review-clean.**
+All production code and fixes through
+`3c7383b2292387e523915ba07005a14f094b1427` are pushed to `main`.
+The closure documentation commit is intentionally local and must not be pushed,
+to avoid a docs-only Vercel deployment.
 
 - Spec `docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`,
   approved by the owner and amended at `4639fa4` for the `getFullChannel` flood
@@ -105,41 +107,38 @@ commit is `d7c6435`; it is pushed to `main` and production is Ready.
 - Plan `docs/superpowers/plans/2026-08-28-gramscope-discovery.md` at `56f2ee5`,
   with two pre-flight rulings on its live tier at `4055790`.
 - Executed through `superpowers:subagent-driven-development`. **Base commit for
-  the whole sub-project: `4055790`.** Ledger
-  `.superpowers/sdd/2026-08-28-gramscope-discovery/progress.md` holds every
-  ruling and finding in full — it is git-ignored, so it survives a new session
-  on this machine but not a different clone. All seven task briefs sit beside
-  it.
+  the whole sub-project: `4055790`.** Its temporary workspace and ledger were
+  removed after the clean final re-review; this card preserves the durable
+  outcomes, rulings, and deferred items.
 
 | Task | State |
 | --- | --- |
 | 1 Candidate schema and mapping | complete, `c26a657`, review clean |
 | 2 Capped, throttled, cached enrichment | complete, `25ad447`, review clean |
 | 3 `search_channels` engine | complete, `ecd0b62`, clean after 1 fix round |
-| 4 `get_similar_channels` engine | complete, `2cae8b4`, review returned Approved; one Important finding carried to the final review, see below |
+| 4 `get_similar_channels` engine | complete, `2cae8b4`; final review downgraded the duplicated page-building block to deferred Minor, see below |
 | 5 Expose both tools, bump to 1.2.0 | complete, `4e57eb5` |
-| 6 Live tier | complete, `d7c6435`; 28 fast test files / 378 tests, typecheck, lint, build, and live tier passed |
-| 7 Deploy and accept | in progress: `main` pushed, Vercel Ready, OAuth/MCP production checks passed, and owner connector acceptance passed; required closing review in flight |
+| 6 Live tier | complete, `d7c6435`; final gates at `3c7383b` passed: 28 test files / 382 tests, typecheck, lint, and Next build; `tsconfig.json` restored |
+| 7 Deploy and accept | complete: production Ready, OAuth/MCP checks and owner connector acceptance passed; final review fixed and re-reviewed clean |
 
-The final whole-implementation review over `4055790..HEAD` remains the required
-closing review before this sub-project is marked closed.
+Final production deployment: `dpl_Ha9w9mNsBo1wEXwqTpa1PUB78xMB`, target
+`production`, status `Ready`, URL
+`https://gram-scope-xyz789ghi-example-projects.vercel.app`, alias
+`https://gramscope.vercel.app`. `/api/mcp` returned the expected `401`
+Bearer metadata challenge and the protected-resource document was correct.
 
-**One finding is open and must be handed to that final reviewer explicitly, not
-left for it to rediscover.** Task 4's review found that
+**Deferred, non-blocking:** Task 4's review found that
 `src/telegram/discovery.ts:154-164` and `:190-198` carry the same
 enrich / map / `fitToSizeCap` / slice block verbatim in both engines, differing
-only in which array feeds the slice. It came from the plan's own snippet, so it
-is plan-mandated. I ruled against opening a fix round for it: the task review
-approved regardless, it is cosmetic to correctness, and Tasks 5-7 add no third
-caller. The suggested fix is a shared `buildCandidatePage(client, index, kept)`
-with each engine computing only its own `truncated` and `total_similar`.
+only in which array feeds the slice. The final reviewer downgraded this to
+Minor and parked it until the pipeline next changes or a third caller appears.
 
 **Do not redo:** tasks 1-7, anything in sub-projects 1-3, or any item the four
 sub-project 3 fix rounds closed. The live discovery measurements under "Changes
 and findings" cost real FLOOD_WAIT budget — read them rather than re-probing.
 
-**Rulings taken on the owner's behalf so far**, all recorded in full in the
-ledger: two pre-flight rewrites of Task 6's live tests (the wall-clock cache
+**Rulings taken on the owner's behalf so far**, preserved here: two pre-flight
+rewrites of Task 6's live tests (the wall-clock cache
 comparison and the every-candidate-has-a-username assertion, both flake risks);
 and a ruling that the reviewer's concern about de-duplication under-reporting
 `truncated` is not a real gap, because Telegram's `results` list is the one
