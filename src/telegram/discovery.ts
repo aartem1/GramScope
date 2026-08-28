@@ -17,6 +17,7 @@ import {
   DISCOVERY_ENRICH_CONCURRENCY,
   mapWithConcurrency,
 } from "../concurrency";
+import { resolveSource } from "./peer-resolve";
 
 /**
  * Builds one candidate from a TL entity. Pure: everything it needs is either
@@ -200,6 +201,66 @@ export async function searchChannels(
       truncated:
         shown.length < entities.length ||
         entities.length >= CONTACTS_SEARCH_CAP,
+    };
+  });
+}
+
+export type SimilarChannelsInput = { source?: string; limit?: number };
+
+export type SimilarChannelsResult = {
+  candidates: DiscoveredSource[];
+  total_similar?: number;
+  truncated: boolean;
+};
+
+/**
+ * Telegram's own recommendations. With a source: channels similar to it,
+ * returned as a ChatsSlice whose `count` exceeds what it serves — the rest is
+ * Premium-only and no argument reaches it. Without a source: channels
+ * recommended for the account from its own subscriptions, returned as a plain
+ * Chats with no count. One TL method, and the mode follows the argument.
+ */
+export async function getSimilarChannels(
+  input: SimilarChannelsInput,
+): Promise<SimilarChannelsResult> {
+  const limit = input.limit ?? MAX_ENRICHED_CANDIDATES;
+  const index = await fetchDialogIndex();
+
+  return withTelegram(async (client) => {
+    const Api = await getApi();
+
+    const request = input.source
+      ? new Api.channels.GetChannelRecommendations({
+          channel: (await resolveSource(client, index, input.source)).handle,
+        })
+      : new Api.channels.GetChannelRecommendations({});
+
+    const reply = (await client.invoke(request)) as {
+      chats?: unknown[];
+      count?: unknown;
+    };
+
+    const chats = Array.from(reply.chats ?? []) as Record<string, unknown>[];
+    const total = typeof reply.count === "number" ? reply.count : undefined;
+
+    const kept = chats.slice(0, limit);
+    const details = await enrichCandidates(client, kept);
+    const candidates = kept.map((entity, i) =>
+      toCandidate(entity, index, details[i]),
+    );
+
+    const fit = fitToSizeCap(candidates, (shown) => ({
+      candidates: shown,
+      truncated: true,
+    }));
+    const shown = candidates.slice(0, fit);
+
+    return {
+      candidates: shown,
+      ...(total !== undefined ? { total_similar: total } : {}),
+      truncated:
+        shown.length < chats.length ||
+        (total !== undefined && total > shown.length),
     };
   });
 }

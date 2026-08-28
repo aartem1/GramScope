@@ -241,7 +241,15 @@ function installSearch(reply: unknown) {
     connected: true,
     connect: async () => true,
     getDialogs: async () => [],
-    getEntity: async () => ({}),
+    // A Channel entity keyed by the requested username, not {}: Task 4's
+    // seeded getSimilarChannels test resolves an unheld @source over the
+    // network, which needs resolveEntity to find a marked id.
+    getEntity: async (target: string) => ({
+      className: "Channel",
+      id: 9999999999n,
+      title: `Resolved ${target}`,
+      username: target,
+    }),
     getMessages: async () => [],
     invoke: async (request: unknown) => {
       sent.push(request);
@@ -376,6 +384,88 @@ describe("searchChannels", () => {
   it("returns an empty list as a success", async () => {
     installSearch(found({}));
     await expect(searchChannels({ query: "nothing" })).resolves.toEqual({
+      candidates: [],
+      truncated: false,
+    });
+  });
+});
+
+import { getSimilarChannels } from "@/telegram/discovery";
+import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
+
+afterEach(() => {
+  __resetPeerCacheForTests();
+});
+
+function chatsReply(count: number | undefined, ids: number[]) {
+  return {
+    className: count === undefined ? "messages.Chats" : "messages.ChatsSlice",
+    ...(count === undefined ? {} : { count }),
+    chats: ids.map((bare) => ({
+      className: "Channel",
+      id: BigInt(bare),
+      title: `C${bare}`,
+      participantsCount: bare,
+    })),
+  };
+}
+
+describe("getSimilarChannels", () => {
+  it("omits the channel argument entirely when no source is given", async () => {
+    const sent = installSearch(chatsReply(undefined, [1000000001]));
+    await getSimilarChannels({});
+    const recommendation = sent.find(
+      (r) => requestName(r) === "channels.GetChannelRecommendations",
+    );
+    expect(recommendation).toBeDefined();
+    expect((recommendation as { channel?: unknown }).channel).toBeUndefined();
+  });
+
+  it("passes a resolved handle when a source is given", async () => {
+    const sent = installSearch(chatsReply(79, [1000000001]));
+    await getSimilarChannels({ source: "@alpha" });
+    const recommendation = sent.find(
+      (r) => requestName(r) === "channels.GetChannelRecommendations",
+    );
+    expect(recommendation).toMatchObject({ channel: "alpha" });
+  });
+
+  it("reports total_similar in seeded mode and omits it in global mode", async () => {
+    installSearch(chatsReply(79, [1000000001]));
+    const seeded = await getSimilarChannels({ source: "@alpha" });
+    expect(seeded.total_similar).toBe(79);
+    expect(seeded.truncated).toBe(true);
+
+    // withTelegram caches the connected client at module scope, so a second
+    // installSearch needs a reset to take effect — see the identical pattern
+    // in the searchChannels truncation test above.
+    __resetClientForTests();
+    installSearch(chatsReply(undefined, [1000000001]));
+    const global = await getSimilarChannels({});
+    expect(global.total_similar).toBeUndefined();
+    expect(global.truncated).toBe(false);
+  });
+
+  it("never re-sorts Telegram's order", async () => {
+    // Ascending subscriber counts: a tool that ranked by popularity would
+    // reverse these, and README §D forbids the server ranking candidates.
+    installSearch(chatsReply(undefined, [10, 20, 30]));
+    const { candidates } = await getSimilarChannels({});
+    expect(candidates.map((c) => c.subscriber_count)).toEqual([10, 20, 30]);
+  });
+
+  it("cuts a hundred global recommendations to the flood ceiling", async () => {
+    const ids = Array.from({ length: 100 }, (_, i) => 1000000000 + i);
+    const sent = installSearch(chatsReply(undefined, ids));
+    const { candidates, truncated } = await getSimilarChannels({});
+    expect(candidates).toHaveLength(MAX_ENRICHED_CANDIDATES);
+    expect(truncated).toBe(true);
+    expect(sent.filter(isEnrichment)).toHaveLength(MAX_ENRICHED_CANDIDATES);
+  });
+
+  it("returns no recommendations as a success", async () => {
+    installSearch(chatsReply(undefined, []));
+    await expect(getSimilarChannels({})).resolves.toEqual({
       candidates: [],
       truncated: false,
     });
