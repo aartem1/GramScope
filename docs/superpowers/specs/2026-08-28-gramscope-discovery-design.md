@@ -64,6 +64,7 @@ rather than on the API documentation.
 | `contacts.search` usernames | Often `username: null` with the live handle in `usernames[]` (`chatgptv`, `neiroseti` both arrived that way). |
 | `channels.getChannelRecommendations({channel})` | `messages.ChatsSlice`, `count: 79`, **10 chats served**. Non-Premium truncation, and no parameter reaches the rest. |
 | `channels.getChannelRecommendations({})` | `messages.Chats`, **100 chats**, no `count`. Recommendations derived from the account's own subscriptions. |
+| `channels.getFullChannel` (measured 2026-08-27, sub-project 3) | **Floods after roughly 20 calls in 5 seconds** with a 27-second FLOOD_WAIT that teleproto absorbs by sleeping. A fan-out over it does not fail — it silently stalls the request past the serverless budget. |
 
 Two consequences drive the whole design.
 
@@ -71,12 +72,15 @@ Two consequences drive the whole design.
 topical search engine produces "there are no AI channels" from a query that was
 merely too short. §6.1 makes this the first thing the description says.
 
-**Descriptions are not free.** `about` requires one `channels.GetFullChannel`
-per candidate. But every candidate arrives carrying its `accessHash`, so that
-call needs no resolution step: the engine builds `InputChannel` from the id and
-hash it already holds. Enrichment costs exactly one round trip per candidate and
-never touches `contacts.ResolveUsername`, so the sub-project 3 lookup budget is
-not involved.
+**Descriptions are not free, and they are the scarcest thing here.** `about`
+requires one `channels.GetFullChannel` per candidate. Every candidate arrives
+carrying its `accessHash`, so that call needs no resolution step — the engine
+builds `InputChannel` from the id and hash it already holds, never touches
+`contacts.ResolveUsername`, and the sub-project 3 lookup budget is not involved.
+But the flood ceiling above is half of what a naive fan-out would spend, and it
+is the binding constraint on both tools' shape: §7 caps a call at ten
+enrichments, throttles them below the general fan-out concurrency, and caches
+what it fetched.
 
 ## 5. Tool contracts
 
@@ -125,7 +129,7 @@ or call `get_similar_channels` from a channel already known.
 ```ts
 {
   source?: string   // marked id, @username, or t.me URL
-  limit?: number    // 1..25, default 15
+  limit?: number    // 1..10, default 10
 }
 ```
 
@@ -155,10 +159,11 @@ count, so the field is absent rather than invented.
 whenever `total_similar` exceeds the number served — which, on a non-Premium
 account, is every seeded call with more than ten neighbours.
 
-`limit` only bites in global mode, where Telegram returns 100; in seeded mode
-Telegram serves 10 and `limit` can only trim below that. It is a single
-parameter rather than two because it means one thing — how many candidates to
-enrich and return.
+`limit` is capped at 10 because §7 caps enrichment at 10; the two numbers are
+the same number and must not drift apart. In seeded mode Telegram serves 10
+anyway, so the cap costs nothing there. In global mode it means the model sees
+ten of the hundred Telegram offered — `truncated` says so, and a second call
+cannot reach the other ninety, which §12 records as an accepted limitation.
 
 **Order is Telegram's and is never re-sorted.** Not by subscriber count, not by
 anything else. README §D is explicit that the server must not decide which
@@ -215,9 +220,31 @@ and this is the exact defect the sub-project 3 final review found.
 ## 7. Enrichment
 
 Both tools enrich through one shared step. Candidates are cut to `limit` first,
-then `channels.GetFullChannel` runs over them through `mapWithConcurrency` at
-`FANOUT_CONCURRENCY` (8), with `InputChannel` built from the `id` and
-`accessHash` the candidate already carries.
+then `channels.GetFullChannel` runs over the ones not already cached, through
+`mapWithConcurrency` at **`DISCOVERY_ENRICH_CONCURRENCY` = 3**, with
+`InputChannel` built from the `id` and `accessHash` the candidate already
+carries.
+
+Three numbers, all forced by the flood measurement in §4 and none of them free
+to change independently:
+
+- **At most 10 enrichments per call**, half the measured threshold, so one call
+  can never flood on its own.
+- **Concurrency 3, not the house `FANOUT_CONCURRENCY` of 8.** The threshold is
+  20 calls per 5 seconds, so what matters is calls per second, not calls per
+  call. Eight in flight empties a ten-item queue in about two round trips and
+  puts the next tool call inside the same window.
+- **A module-level `Map` from marked id to fetched details, for the life of the
+  serverless instance**, next to the existing resolve cache and with the same
+  lifetime rules. A channel's `about` changes rarely, recommendation sets
+  overlap heavily between calls, and this is what keeps two discovery calls in
+  one conversation from summing to twenty. A cache miss is the normal case on a
+  cold instance and costs exactly what an uncached call costs.
+
+The cache is never consulted for anything but `description` and
+`linked_discussion_id`. `joined`, unread state and folder membership always come
+from the freshly loaded dialog index, because those change while `about` does
+not.
 
 **A failed enrichment costs the description, never the call.** Each fetch is
 caught individually and yields an empty detail set, exactly as `get_channel`
@@ -226,7 +253,7 @@ call that dies because one channel of fifteen refused a full-info request is
 not.
 
 Responses pass through `fitToSizeCap` against `MAX_RESPONSE_BYTES` like every
-other list-returning tool. With 25 candidates carrying a 255-character `about`
+other list-returning tool. With 10 candidates carrying a 255-character `about`
 each the cap is not reachable in practice, so the guard exists for consistency
 rather than for a measured case, and no cursor resumes what it drops — the
 model narrows `limit` instead, which the description says.
@@ -284,6 +311,10 @@ Fast tier, against a fake client that returns fixture TL objects:
 - One failing `GetFullChannel` costs one description and no more.
 - `limit` cuts before enrichment, not after — assert the number of
   `GetFullChannel` calls, which is the whole point of cutting first.
+- A call never issues more than 10 `GetFullChannel` requests, whatever the
+  server returned.
+- A second call over an overlapping candidate set issues `GetFullChannel` only
+  for the candidates the first call did not fetch.
 
 Live tier, `GRAMSCOPE_LIVE=1`, house rule for the file: every loop is preceded
 by an assertion on the length of what it iterates, so an empty result cannot
@@ -314,8 +345,19 @@ Gates before acceptance, as in every prior sub-project: `npm test`,
 
 ## 12. Open questions
 
-None. The two decisions the owner had to make — `broadcasts` fixed on, and the
-15/25 enrichment ceiling — were taken during brainstorming on 2026-08-28.
+None.
+
+The owner's brainstorming decisions of 2026-08-28: `broadcasts: true` is fixed
+on and not exposed; descriptions are always fetched rather than left to a flag.
+
+**Amended 2026-08-28, before planning.** The enrichment ceiling was first
+written as 15 by default and 25 at most. Writing the plan surfaced the
+`getFullChannel` flood measurement recorded on the card on 2026-08-27, which the
+first draft of this spec had not accounted for, and 25 enrichments in one call
+crosses it outright. The owner chose the ceiling of 10 with concurrency 3 and an
+instance-level cache. Accepted limitation, stated here so it is not re-raised as
+a defect: in global mode Telegram offers 100 recommendations and this tool
+surfaces the first 10, with no way to reach the rest — `truncated` reports it.
 
 ## 13. Decisions carried into later sub-projects
 
