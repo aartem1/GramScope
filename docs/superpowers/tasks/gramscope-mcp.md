@@ -75,39 +75,29 @@ created: 2026-08-26
 
 # Current point
 
-Sub-project 3, Research. All twelve plan tasks done and accepted by the owner in
-the ChatGPT connector. The final whole-implementation review of `3832daa..7ddece2`
-returned Needs fixes; three fix rounds have landed and each one's fix introduced
-the next round's defect:
+Sub-project 3, Research. Twelve plan tasks done and accepted by the owner in the
+ChatGPT connector. The final whole-implementation review of `3832daa..7ddece2`
+returned Needs fixes; four fix rounds have landed, and rounds 1-3 each
+introduced the defect the next round fixed.
 
 | Round | Commits | Fixed |
 | --- | --- | --- |
 | 1 | `71420c8..ad2bec8` | alias canonicalisation, outside-source guidance, `ChatInvitePeek` id |
 | 2 | `eb1f0c9..213513a` | exclusion no longer fails the call; shared `nameKey` |
 | 3 | `a4df5b7..00a2dd2` | lookup budget instead of a name ceiling; exclusion failure discrimination |
+| 4 | `f9952d9` | free refusal before any lookup; `PRIVATE_CHANNEL_NOT_ACCESSIBLE` degrade; unresolvable names uncharged |
 
-Everything is pushed and deployed; gates at `00a2dd2` are green (342 fast tests,
-typecheck, lint, build; live tier 25/25 no skips).
+`main` = `origin/main` = `f9952d9`, tree clean, pushed and deployed. Gates: 352
+fast tests, typecheck, lint, build green; live tier 25/25 no skips. Every round-4
+guard was proven against a mutation.
 
-Round 3's re-review returned **Needs fixes**: all six items closed, one new
-Important defect. Round 3 replaced the pre-resolution name cap instead of
-supplementing it, so nothing bounds how many names a call carries before the
-25-source ceiling rejects it — 30 held ids plus 26 unjoined usernames now spends
-26 `getEntity` calls before failing, where `213513a` spent none, and
-`resolvesLocally` rescans the dialog index per name with no array cap in the
-schema. Two Minors: `PRIVATE_CHANNEL_NOT_ACCESSIBLE` is over-broad on the
-rethrow side for an `internal`-kind exclusion, and the budget message
-misdiagnoses unparseable names and invite links, which never reach the network.
+**Next:** scoped re-review of `00a2dd2..f9952d9`. On `Approved` sub-project 3 is
+finished and sub-project 4 (Discovery) starts at `superpowers:brainstorming`; it
+has no spec or plan yet. On `Needs fixes` open round 5/5, the last of the budget.
 
-**In flight:** fix round 4/5 against those three, owner asked for all of them
-(base `00a2dd2`). Approach: reject on the exact count of distinct HELD ids
-before any lookup — that is free and is the reviewer's repro; a generous raw cap
-plus a `byUsername` map on `DialogIndex` for the CPU; degrade
-`PRIVATE_CHANNEL_NOT_ACCESSIBLE` for `internal`-kind exclusions only; stop
-counting names that can never reach the network.
-
-**Do not redo:** the twelve tasks, the three original findings, or the six round-3
-items. The live Telegram measurements below cost real FLOOD_WAIT budget.
+**Do not redo:** the twelve tasks, the three original findings, or any item
+rounds 1-4 closed. The live Telegram measurements below cost real FLOOD_WAIT
+budget.
 
 # Blocked — awaiting owner
 Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
