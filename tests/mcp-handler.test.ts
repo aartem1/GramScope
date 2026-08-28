@@ -68,28 +68,30 @@ async function listTools(): Promise<Json[]> {
 }
 
 describe("tools/list over a real MCP server", () => {
-  it("keeps the package and MCP server on app version 1.1.0", () => {
+  it("keeps the package and MCP server on app version 1.2.0", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version?: unknown };
 
-    expect(MCP_SERVER_VERSION).toBe("1.1.0");
+    expect(MCP_SERVER_VERSION).toBe("1.2.0");
     expect(packageJson.version).toBe(MCP_SERVER_VERSION);
   });
 
-  it("advertises all eleven tools", async () => {
+  it("advertises all thirteen tools", async () => {
     const tools = await listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "get_channel",
       "get_message",
       "get_messages",
       "get_pinned_messages",
+      "get_similar_channels",
       "get_thread",
       "get_unread_summary",
       "list_dialogs",
       "list_folders",
       "mark_read",
       "resolve_telegram_url",
+      "search_channels",
       "search_messages",
     ]);
   });

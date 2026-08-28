@@ -47,15 +47,17 @@ describe("registerTools", () => {
     "get_message",
     "get_messages",
     "get_pinned_messages",
+    "get_similar_channels",
     "get_thread",
     "get_unread_summary",
     "list_dialogs",
     "list_folders",
     "resolve_telegram_url",
+    "search_channels",
     "search_messages",
   ];
 
-  it("registers all eleven tools", () => {
+  it("registers all thirteen tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(
@@ -92,8 +94,10 @@ describe("registerTools", () => {
       "get_message",
       "get_messages",
       "get_pinned_messages",
+      "get_similar_channels",
       "get_thread",
       "resolve_telegram_url",
+      "search_channels",
       "search_messages",
     ];
     const contract =
@@ -103,6 +107,28 @@ describe("registerTools", () => {
       const tool = server.tools.find((candidate) => candidate.name === name)!;
       expect(String(tool.config.description), name).toContain(contract);
     }
+  });
+
+  it("tells callers that search_channels matches names, not topics", () => {
+    // Measured 2026-08-28: q="AI" returns nothing while q="artificial
+    // intelligence" returns nine channels. A model that reads this tool as
+    // a topical search engine reports that no such channels exist.
+    const server = fakeServer();
+    registerTools(server as never);
+    const tool = server.tools.find((t) => t.name === "search_channels")!;
+    const description = String(tool.config.description);
+    expect(description).toContain("by name");
+    expect(description).toContain("not by topic");
+    expect(description).toContain("get_similar_channels");
+  });
+
+  it("says that similar channels are capped and not rankable by the server", () => {
+    const server = fakeServer();
+    registerTools(server as never);
+    const tool = server.tools.find((t) => t.name === "get_similar_channels")!;
+    const description = String(tool.config.description);
+    expect(description).toContain("Premium");
+    expect(description).toContain("never re-ranked");
   });
 });
 
