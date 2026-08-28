@@ -1029,14 +1029,14 @@ Use Superpowers to refine the design before implementation, but the likely deliv
 - `search_channels`;
 - `get_similar_channels`.
 
-### Slice 5 — State changes (six tools)
+### Slice 5 — State changes (five deployed in 1.3.0; six planned for full Slice 5)
 
 - `mark_read`;
 - `mark_unread`;
 - `join_channel`;
 - `leave_channel`;
 - `manage_folder`;
-- `save_message`.
+- `save_message` (planned for sub-project 5b).
 
 ### Slice 6 — Source metadata
 

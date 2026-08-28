@@ -104,10 +104,18 @@ describe("tools/list over a real MCP server", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version?: unknown };
+    const packageLock = JSON.parse(
+      readFileSync(new URL("../package-lock.json", import.meta.url), "utf8"),
+    ) as {
+      version?: unknown;
+      packages?: Record<string, { version?: unknown }>;
+    };
 
     expect(MCP_SERVER_VERSION).toBe("1.3.0");
     expect(packageJson.version).toBe("1.3.0");
     expect(packageJson.version).toBe(MCP_SERVER_VERSION);
+    expect(packageLock.version).toBe("1.3.0");
+    expect(packageLock.packages?.[""]?.version).toBe("1.3.0");
   });
 
   it("advertises all seventeen tools", async () => {
