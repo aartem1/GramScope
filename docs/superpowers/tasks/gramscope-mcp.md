@@ -148,8 +148,8 @@ yet complete without re-running anything above it.
 | 3 `get_unread_summary` reports the manual flag | complete, `f42bd9c`, review clean; 392 tests |
 | 4 `peerKind`, `toInputPeer`, `markUnread` engine | complete, `1432f22`..`7c6b4b0`, clean after 1 fix round; 399 tests |
 | 5 `mark_unread` tool | complete, `067047d`, review clean; 400 tests, fourteen tools |
-| 6 `join_channel` | `f550122` + fix `cc46c43`, 405 tests; review found 1 Important, the fix is committed, **scoped re-review was in flight when this was written** — re-run it or judge `f550122..cc46c43` directly before marking complete |
-| 7 `leave_channel` | not started |
+| 6 `join_channel` | complete, `f550122`..`cc46c43`, clean after 1 fix round; 405 tests, fifteen tools |
+| 7 `leave_channel` | in flight |
 | 8 Folder round-trip rule, create/rename/delete | not started |
 | 9 Folder membership and order | not started |
 | 10 `manage_folder` tool | not started |
