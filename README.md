@@ -358,6 +358,8 @@ type TelegramSource = {
 
 Names are provisional. Optimize naming and schemas during implementation for MCP/LLM ergonomics.
 
+The current MCP exposes seventeen tools, grouped below.
+
 ### A. Dialogs and source inventory
 
 #### `list_dialogs`
@@ -593,15 +595,22 @@ ChatGPT fetches unread messages
 
 Read state must use Telegram's native server-side state.
 
+Use `mark_unread` for Telegram's separate manual “come back to this” flag;
+it is independent of a source's unread message count.
+
 ---
 
 #### `mark_unread`
 
-Mark a dialog/source unread using Telegram's native unread marker.
+Set or clear Telegram's native manual unread marker on one or more sources.
 
 Useful for:
 - "come back to this source later";
 - restoring attention to something ChatGPT inspected but should not consider finished.
+
+This flag is independent of `unread_count`: it can be set when the count is
+zero, does not make read messages unread, and clearing it does not mark
+messages read.
 
 ---
 
@@ -609,22 +618,24 @@ Useful for:
 
 #### `join_channel`
 
-Join/subscribe to a public channel or supported invite.
+Join one public channel or group.
 
 Accept:
-- username;
-- URL;
-- resolved source identifier.
+- `@username`;
+- `t.me` link.
 
-Return resulting source metadata.
+Invite links are not supported. If the account already follows the source,
+return it with `already_member: true` and do not change state.
 
 ---
 
 #### `leave_channel`
 
-Unsubscribe/leave.
+Leave one channel or group.
 
-Return confirmation and source identity.
+Accept a numeric ID, `@username`, or `t.me` link. Return the source as it was
+before leaving and whether the account was a member. Leaving a private channel
+is irreversible without a new invite.
 
 No separate local subscription state.
 
@@ -634,16 +645,19 @@ No separate local subscription state.
 
 #### `manage_folder`
 
-Prefer one composable tool rather than many tiny tools.
+Use one composable tool for folder changes.
 
 Supported actions:
 - create;
 - rename;
 - delete;
 - reorder;
-- add sources;
-- remove sources;
-- inspect/update membership.
+- `add_sources`;
+- `remove_sources`.
+
+`create` may include sources. `reorder` receives the complete list of folder
+IDs in the wanted order. Deleting a folder does not remove its chats, and
+shareable folders cannot be edited.
 
 ChatGPT should be able to organize newly discovered sources itself.
 
@@ -1015,7 +1029,7 @@ Use Superpowers to refine the design before implementation, but the likely deliv
 - `search_channels`;
 - `get_similar_channels`.
 
-### Slice 5 — State changes
+### Slice 5 — State changes (six tools)
 
 - `mark_read`;
 - `mark_unread`;
