@@ -89,46 +89,67 @@ created: 2026-08-26
 
 # Current point
 
-**Sub-projects 1-3 are complete, deployed and accepted.** Sub-project 3
-(Research) closed at `adde93e` after four fix rounds on the final
-whole-implementation review; gates at `f9952d9` were 352 fast tests, typecheck,
-lint and build green, live tier 25/25 with no skips.
+**Sub-projects 1-3 are complete, deployed and accepted.** Sub-project 3 closed
+at `adde93e`; gates at `f9952d9` were 352 fast tests, typecheck, lint and build
+green, live tier 25/25 with no skips.
 
-**Sub-project 4, Discovery: implementation in flight on `main`.**
+**Sub-project 4, Discovery: tasks 1-4 of 7 are done and pushed; task 5 has not
+started.**
 
 - Spec `docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`,
   approved by the owner and amended at `4639fa4` for the `getFullChannel` flood
   ceiling.
 - Plan `docs/superpowers/plans/2026-08-28-gramscope-discovery.md` at `56f2ee5`,
-  with two pre-flight rulings on its live tier committed at `4055790`.
-- Executing through `superpowers:subagent-driven-development`. **Base commit for
+  with two pre-flight rulings on its live tier at `4055790`.
+- Executed through `superpowers:subagent-driven-development`. **Base commit for
   the whole sub-project: `4055790`.** Ledger
-  `.superpowers/sdd/2026-08-28-gramscope-discovery/progress.md` — git-ignored and
-  machine-local, so this card is the record that travels. All seven task briefs
-  are extracted into that directory.
-- **Nothing is pushed.** A push to `main` deploys to Vercel, and the plan pushes
-  once, in Task 7, after the live tier is green. `origin/main` therefore sits at
-  `5d82b02` while local `main` runs ahead.
-
-Task state, updated as each task closes:
+  `.superpowers/sdd/2026-08-28-gramscope-discovery/progress.md` holds every
+  ruling and finding in full — it is git-ignored, so it survives a new session
+  on this machine but not a different clone. All seven task briefs sit beside
+  it.
 
 | Task | State |
 | --- | --- |
 | 1 Candidate schema and mapping | complete, `c26a657`, review clean |
 | 2 Capped, throttled, cached enrichment | complete, `25ad447`, review clean |
 | 3 `search_channels` engine | complete, `ecd0b62`, clean after 1 fix round |
-| 4 `get_similar_channels` engine | in flight |
+| 4 `get_similar_channels` engine | implemented at `2cae8b4`; **its task review was still running when the session ended — its verdict is unknown and must be re-run** |
 | 5 Expose both tools, bump to 1.2.0 | not started |
 | 6 Live tier | not started |
 | 7 Deploy and accept | not started |
 
-**Next:** finish the task loop, then the final whole-implementation review over
-`4055790..HEAD`, then Task 7's push and the owner's connector acceptance.
+Gates at `2cae8b4`: 376 fast tests green, typecheck and lint clean. The live
+tier has not been run against these changes; Task 6 introduces it.
 
-**Do not redo:** anything in sub-projects 1-3, any item the four fix rounds
-closed, or any task the ledger marks `complete`. The live discovery
-measurements under "Changes and findings" cost real FLOOD_WAIT budget — read
-them rather than re-probing.
+**Everything through `2cae8b4` is pushed, and that is safe:** `src/mcp/server.ts`
+still registers eleven tools and neither engine is reachable from the wire, so
+production behaviour is unchanged. Task 5 is the commit that first changes what
+the deployed server does.
+
+**Next, in order.**
+
+1. Re-run the Task 4 task review over `57ab8f0..2cae8b4` — the previous one's
+   verdict was lost. It must judge two deviations the implementer declared: the
+   shared test helper `installSearch` had its fake `getEntity` changed from
+   returning `{}` to being target-aware, and that helper is also used by Task 3's
+   already-approved tests; and a `__resetClientForTests()` was inserted between
+   two `installSearch` calls in one test.
+2. Then Task 5, 6, 7 from the plan, each through the same loop: implementer,
+   task review, fix rounds capped at five.
+3. Then the final whole-implementation review over `4055790..HEAD` on the most
+   capable model. Sub-project 3 proved this step is not optional — its per-task
+   reviews all missed three defects that only exist across module boundaries.
+
+**Do not redo:** tasks 1-3, anything in sub-projects 1-3, or any item the four
+sub-project 3 fix rounds closed. The live discovery measurements under "Changes
+and findings" cost real FLOOD_WAIT budget — read them rather than re-probing.
+
+**Rulings taken on the owner's behalf so far**, all recorded in full in the
+ledger: two pre-flight rewrites of Task 6's live tests (the wall-clock cache
+comparison and the every-candidate-has-a-username assertion, both flake risks);
+and a ruling that the reviewer's concern about de-duplication under-reporting
+`truncated` is not a real gap, because Telegram's `results` list is the one
+capped at ten and its members are distinct.
 
 # Blocked — awaiting owner
 Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
