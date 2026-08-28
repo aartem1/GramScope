@@ -58,9 +58,9 @@ describe("registerTools", () => {
     "search_messages",
   ];
 
-  const WRITERS = ["mark_read", "mark_unread"];
+  const WRITERS = ["mark_read", "mark_unread", "join_channel"];
 
-  it("registers all fourteen tools", () => {
+  it("registers all fifteen tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(

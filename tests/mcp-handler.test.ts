@@ -117,7 +117,7 @@ describe("tools/list over a real MCP server", () => {
     expect(packageLock.packages?.[""]?.version).toBe(MCP_SERVER_VERSION);
   });
 
-  it("advertises all fourteen tools", async () => {
+  it("advertises all fifteen tools", async () => {
     const tools = await listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "get_channel",
@@ -127,6 +127,7 @@ describe("tools/list over a real MCP server", () => {
       "get_similar_channels",
       "get_thread",
       "get_unread_summary",
+      "join_channel",
       "list_dialogs",
       "list_folders",
       "mark_read",
@@ -148,12 +149,14 @@ describe("tools/list over a real MCP server", () => {
     }
   });
 
-  it("marks only mark_read and mark_unread as mutating", async () => {
+  const WRITERS = ["mark_read", "mark_unread", "join_channel"];
+
+  it("marks only the writer tools as mutating", async () => {
     const tools = await listTools();
     for (const tool of tools) {
       const annotations = (tool.annotations ?? {}) as Json;
       expect(annotations.readOnlyHint, String(tool.name)).toBe(
-        tool.name !== "mark_read" && tool.name !== "mark_unread",
+        !WRITERS.includes(String(tool.name)),
       );
     }
   });
