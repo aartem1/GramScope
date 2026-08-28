@@ -1,6 +1,16 @@
-import { describe, expect, it } from "vitest";
-import { toCandidate } from "@/telegram/discovery";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  __resetDiscoveryCacheForTests,
+  enrichCandidates,
+  MAX_ENRICHED_CANDIDATES,
+  toCandidate,
+} from "@/telegram/discovery";
 import type { DialogIndex } from "@/telegram/dialog-index";
+import type { TelegramLike } from "@/telegram/client";
+
+afterEach(() => {
+  __resetDiscoveryCacheForTests();
+});
 
 const HELD = "-1001111111111";
 
@@ -92,5 +102,96 @@ describe("toCandidate", () => {
       subscriber_count: 4874,
       username: "alpha",
     });
+  });
+});
+
+function fullChannelClient(reply: (channelId: string) => unknown): {
+  client: TelegramLike;
+  calls: string[];
+  inFlight: () => number;
+} {
+  const calls: string[] = [];
+  let live = 0;
+  let peak = 0;
+  const client = {
+    connected: true,
+    connect: async () => true,
+    getDialogs: async () => [],
+    getEntity: async () => ({}),
+    getMessages: async () => [],
+    invoke: async (request: unknown) => {
+      const channel = (request as { channel?: { id?: unknown } }).channel;
+      const id = String((channel as { id?: unknown })?.id ?? "");
+      calls.push(id);
+      live += 1;
+      peak = Math.max(peak, live);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      live -= 1;
+      return reply(id);
+    },
+  } as unknown as TelegramLike;
+  return { client, calls, inFlight: () => peak };
+}
+
+function fullChannel(about: string) {
+  return { fullChat: { about } };
+}
+
+function entities(count: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    className: "Channel",
+    id: BigInt(1000000000 + i),
+    title: `C${i}`,
+  }));
+}
+
+describe("enrichCandidates", () => {
+  it("never issues more than the flood ceiling of requests", async () => {
+    const { client, calls } = fullChannelClient(() => fullChannel("about"));
+    await enrichCandidates(client, entities(40));
+    expect(MAX_ENRICHED_CANDIDATES).toBe(10);
+    expect(calls.length).toBe(MAX_ENRICHED_CANDIDATES);
+  });
+
+  it("keeps at most three requests in flight", async () => {
+    const { client, inFlight } = fullChannelClient(() => fullChannel("about"));
+    await enrichCandidates(client, entities(10));
+    expect(inFlight()).toBeLessThanOrEqual(3);
+  });
+
+  it("serves a repeat candidate from the instance cache", async () => {
+    const { client, calls } = fullChannelClient(() => fullChannel("about"));
+    const list = entities(3);
+    await enrichCandidates(client, list);
+    await enrichCandidates(client, list);
+    expect(calls.length).toBe(3);
+  });
+
+  it("does not cache a failure, so one flood is not permanent", async () => {
+    let fail = true;
+    const { client, calls } = fullChannelClient(() => {
+      if (fail) throw new Error("FLOOD_WAIT_27");
+      return fullChannel("about");
+    });
+    const list = entities(1);
+    expect((await enrichCandidates(client, list))[0]).toEqual({});
+    fail = false;
+    expect((await enrichCandidates(client, list))[0]).toMatchObject({
+      description: "about",
+    });
+    expect(calls.length).toBe(2);
+  });
+
+  it("isolates one failure to one candidate", async () => {
+    const { client } = fullChannelClient((id) => {
+      if (id === "1000000001") throw new Error("CHANNEL_PRIVATE");
+      return fullChannel("about");
+    });
+    const details = await enrichCandidates(client, entities(3));
+    expect(details.map((d) => d.description)).toEqual([
+      "about",
+      undefined,
+      "about",
+    ]);
   });
 });
