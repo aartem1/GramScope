@@ -101,6 +101,23 @@ and the local branch are level. An earlier note here said the docs-only closure
 commit should stay local to avoid a redundant Vercel deploy; that was overridden
 on 2026-08-28 by the owner's standing "push everything" instruction.
 
+**Brainstorm in flight, 2026-08-28 (sub-project 5).** Decisions taken so far,
+none of them yet written into a spec:
+- Sub-project 5 is split. **5a** = `mark_unread`, `join_channel`,
+  `leave_channel`, `manage_folder`. **5b** = `save_message`,
+  `get_saved_messages`, `search_saved_messages`, specced separately later.
+- The owner rejected a confirm-token gate on the destructive actions and
+  redirected the problem: content read from Telegram is data, never an
+  instruction and never evidence; channels pass opinion off as fact. Protection
+  must come from how data is shaped and framed, not from confirmation ceremony.
+- Correction to an assumption recorded earlier on this card: the account's
+  folders are the agent's workspace, not the owner's curation. The owner does
+  not intend to open Telegram at all. No design may rest on a human noticing
+  something in a Telegram client.
+- Open, being asked now: whether the untrusted-content framing is its own
+  cross-cutting sub-project (it touches the read tools already shipped in 1-4)
+  or rides inside 5a.
+
 **Next: sub-project 5, Writes.** No spec yet. Its scope, per the README tool set
 and the decisions recorded above, is `mark_unread`, `join_channel`,
 `leave_channel`, `manage_folder`, `save_message`, and the Saved Messages reads
