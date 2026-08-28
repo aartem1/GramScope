@@ -58,11 +58,13 @@ describe("registerTools", () => {
     "search_messages",
   ];
 
-  it("registers all thirteen tools", () => {
+  const WRITERS = ["mark_read", "mark_unread"];
+
+  it("registers all fourteen tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(
-      [...READ_ONLY, "mark_read"].sort(),
+      [...READ_ONLY, ...WRITERS].sort(),
     );
   });
 
@@ -73,7 +75,7 @@ describe("registerTools", () => {
     registerTools(server as never);
     for (const tool of server.tools) {
       expect(tool.config.annotations).toMatchObject({
-        readOnlyHint: tool.name !== "mark_read",
+        readOnlyHint: !WRITERS.includes(tool.name),
       });
     }
   });
@@ -85,6 +87,18 @@ describe("registerTools", () => {
     expect(String(markRead.config.description).toLowerCase()).toContain(
       "changes account state",
     );
+  });
+
+  it("says plainly that mark_unread changes account state and is not a count", () => {
+    const server = fakeServer();
+    registerTools(server as never);
+    const tool = server.tools.find((t) => t.name === "mark_unread")!;
+    const description = String(tool.config.description).toLowerCase();
+    expect(description).toContain("changes account state");
+    // The trap this description exists to close: unreadMark and unreadCount
+    // are independent, so a caller who reads this as "mark unread" in the
+    // message-count sense will expect messages to become readable again.
+    expect(description).toContain("separate from the unread count");
   });
 
   it("says the source addressing rule once, in the server instructions", () => {

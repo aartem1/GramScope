@@ -9,6 +9,7 @@ import { registerGetUnreadSummary } from "./tools/get-unread-summary";
 import { registerListDialogs } from "./tools/list-dialogs";
 import { registerListFolders } from "./tools/list-folders";
 import { registerMarkRead } from "./tools/mark-read";
+import { registerMarkUnread } from "./tools/mark-unread";
 import { registerResolveTelegramUrl } from "./tools/resolve-telegram-url";
 import { registerSearchMessages } from "./tools/search-messages";
 import { registerSearchChannels } from "./tools/search-channels";
@@ -22,6 +23,7 @@ export function registerTools(server: McpServer): void {
   registerGetThread(server);
   registerGetUnreadSummary(server);
   registerMarkRead(server);
+  registerMarkUnread(server);
   registerSearchMessages(server);
   registerResolveTelegramUrl(server);
   registerGetPinnedMessages(server);
