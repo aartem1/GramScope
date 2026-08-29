@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   assertNoteInputBounded,
   MAX_ABOUT_CHARS,
+  MAX_CADENCE_CHARS,
+  MAX_DERIVED_FROM_CHARS,
+  MAX_LANG_CHARS,
   MAX_TOPICS,
   sourceNoteSchema,
   type SourceNoteInput,
@@ -59,6 +62,48 @@ describe("assertNoteInputBounded", () => {
     expect(() => assertNoteInputBounded({ ...valid, topics: ["  "] })).toThrow(
       GramScopeError,
     );
+  });
+
+  it("rejects an over-long lang and names the limit", () => {
+    const input = { ...valid, lang: "x".repeat(MAX_LANG_CHARS + 1) };
+    try {
+      assertNoteInputBounded(input);
+      throw new Error("expected a rejection");
+    } catch (err) {
+      expect(err).toBeInstanceOf(GramScopeError);
+      expect((err as GramScopeError).code).toBe("INVALID_INPUT");
+      expect((err as GramScopeError).message).toContain(
+        String(MAX_LANG_CHARS),
+      );
+    }
+  });
+
+  it("rejects an over-long cadence and names the limit", () => {
+    const input = { ...valid, cadence: "x".repeat(MAX_CADENCE_CHARS + 1) };
+    try {
+      assertNoteInputBounded(input);
+      throw new Error("expected a rejection");
+    } catch (err) {
+      expect(err).toBeInstanceOf(GramScopeError);
+      expect((err as GramScopeError).code).toBe("INVALID_INPUT");
+      expect((err as GramScopeError).message).toContain(
+        String(MAX_CADENCE_CHARS),
+      );
+    }
+  });
+
+  it("rejects an over-long derived_from and names the limit", () => {
+    const input = { ...valid, derived_from: "x".repeat(MAX_DERIVED_FROM_CHARS + 1) };
+    try {
+      assertNoteInputBounded(input);
+      throw new Error("expected a rejection");
+    } catch (err) {
+      expect(err).toBeInstanceOf(GramScopeError);
+      expect((err as GramScopeError).code).toBe("INVALID_INPUT");
+      expect((err as GramScopeError).message).toContain(
+        String(MAX_DERIVED_FROM_CHARS),
+      );
+    }
   });
 });
 
