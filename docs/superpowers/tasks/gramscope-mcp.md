@@ -230,12 +230,23 @@ a fresh session.
   were re-checked after that deploy. The git-ignored ledger was deleted per
   `superpowers:subagent-driven-development`, so this card is now the whole
   durable record — the rulings and deferred items below were lifted out of it
-  before deletion. **What remains: the owner's two acceptance actions at the end
-  of this section, one unverified check, and one cleanup.**
-  - Unverified: production 1.3.1 has not been asked for its `initialize`
-    version and `tools/list` count. That check needs an owner-issued bearer
-    token (see "How the authenticated check was made" above) and 1.3.0 passed
-    it; the tool count did not change.
+  before deletion. **Acceptance action 1 passed on 2026-08-29; what remains is
+  the owner reading and accepting `docs/chatgpt-project-instructions.md`, plus
+  one cleanup.**
+  - **Owner acceptance, spec §12.5, passed 2026-08-29 in the ChatGPT
+    connector.** The full sequence ran without a single error:
+    `search_channels("космос")` → `join_channel("@examplechannel")`
+    (`already_member: false`) → `manage_folder(create, title "Probe",
+    source_ids ["@examplechannel"])`, which returned folder id 5 with
+    `included_peer_ids: ["-1002222222222"]` → `list_dialogs(folder_id: "5")`,
+    which showed the channel filed there → `leave_channel("@examplechannel")`
+    (`was_member: true`) → `manage_folder(delete, folder_id: "5")`. The
+    connector reported exactly seventeen tools by name. A read-only audit
+    afterwards confirmed the account is back to its baseline: folders 2/17,
+    3/15, 4/14, 58 dialogs, 0 manual unread flags, no membership left behind.
+    This also settles the deployed-version question — seventeen tools counted
+    from inside ChatGPT is the 1.3.1 acceptance check, so no second browser
+    token was needed.
   - Cleanup: delete the throwaway WorkOS client `GramScope acceptance probe`,
     `client_id` `client_01M14EP0KM5CFN1491QE4JZ0M3`.
 
@@ -508,6 +519,16 @@ deferred.
   resolutions.
 - **`remove_sources` is still a silent no-op for a marked id the folder does
   not hold.** The fix wave addressed the wrong-format case only.
+- **Leaving a channel does not remove it from folders**, surfaced by the
+  owner's acceptance run on 2026-08-29: `leave_channel` echoed
+  `folder_ids: ["5"]` for a channel it had just left, because a folder's
+  `includePeers` is independent of membership. The run deleted the folder
+  straight afterwards so nothing was left stale, but an agent that joins a
+  channel, files it, and later leaves it will leave the folder pointing at a
+  peer the account no longer holds — and `list_dialogs(folder_id)` would then
+  report a source that is not in the account's dialogs. Decide in sub-project
+  5b whether `leave_channel` should offer to unfile, or whether the tool
+  descriptions should simply say the two are independent.
 - **The 12-character title cap is measured, undocumented, and counted in
   UTF-16 code units.** If Telegram's rule is bytes, or the cap moves, the
   `MESSAGE_TOO_LONG` mapping is the only backstop.
