@@ -278,7 +278,7 @@ complete without re-running anything above it.
 | --- | --- |
 | 1 Note shape and input caps | complete, `b7d66df`..`4fd23e6`, clean after 1 fix round; 12 tests in the new suite |
 | 2 Wire format | complete, `d7646fe`..`c76f3d1`, clean after 1 fix round; 465 tests |
-| 3 Reading the store | not started |
+| 3 Reading the store | complete, `cdd0983`..`4c01701`, clean after 1 fix round; 476 tests |
 | 4 Writing a note | not started |
 | 5 Deleting a note | not started |
 | 6 `get_source_notes` tool | not started |
@@ -314,6 +314,22 @@ a fresh session.
   behavioural test at all. Spec §5 requires every cap to be enforced at input
   validation with its limit named, so the three tests were added. Cost if
   wrong: three redundant tests.
+- **Task 3:** `findNoteMessages` collected only well-formed notes, so on the
+  `source_ids` path a corrupt note was indistinguishable from no note, and a
+  stale older copy could silently win when the newest copy was the corrupt one.
+  It now returns `{ notes, malformed }`, and a malformed message is attributed
+  to a source **only when its first line equals that source's marker exactly** —
+  the body is corrupt, so the id inside it cannot be trusted, and Telegram's
+  search matches word prefixes. Cost if wrong: the read reports a corrupt
+  message the agent then ignores, which is visible noise rather than a silent
+  hole.
+- **Task 3:** the suite had no structural test for teleproto's `TotalList`
+  leaking into a domain result, so deleting the `Array.from` normalization
+  would have failed nothing. One was added, following the shape already used in
+  `tests/telegram-dialogs.test.ts` and `tests/telegram-messages.test.ts`.
+  Measured caveat worth keeping: the test does **not** fail if `fetchPage`'s
+  `Array.from` is removed, because `collect` rebuilds the array independently.
+  It guards the module's plain-`Array` output contract, not that one line.
 - **Task 2:** the plan's `parseNoteMessage` decided "is this message ours?" with
   `^gs:src:\d+$`, so a first line carrying the `gs:src:` prefix with a corrupt
   suffix — and a message with no body at all — were classified `other` and
