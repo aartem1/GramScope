@@ -1,8 +1,13 @@
 # ChatGPT Project instructions for GramScope
 
-Paste this into the project's custom instructions. It is versioned here so it
-travels with the tools it describes; the server carries only the short form,
-in its MCP `instructions`.
+It is versioned here so it travels with the tools it describes; the server
+carries only the short form, in its MCP `instructions`.
+
+**Paste everything from `## What this connector is` down, and nothing above
+it** — this heading and this paragraph are notes about the file, not
+instructions to the model. That is the boundary the live Project was created
+from on 2026-08-29, so keep the two in step: when a tool's accepted input
+changes, edit this file and re-paste the same region.
 
 ## What this connector is
 

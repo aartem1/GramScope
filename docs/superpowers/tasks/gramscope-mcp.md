@@ -253,6 +253,10 @@ a fresh session.
     now live prompt text, not a draft — every future edit to it changes the
     standing instructions of a Project that already exists, and the repository
     copy is only the source of truth for as long as the two are kept in step.
+    **The Project contains everything from `## What this connector is`
+    downwards and nothing above it**; the H1 and the paragraph under it are
+    notes about the file, not instructions to the model. That boundary is now
+    stated in the file itself, so a re-paste needs no judgement.
     Whenever a tool's accepted input changes, check that file the way the final
     fix wave had to.
   - **The throwaway WorkOS client stays.** `GramScope acceptance probe`,
