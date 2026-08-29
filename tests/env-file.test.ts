@@ -117,6 +117,10 @@ describe("upsertEnvFile durability", () => {
       ["--no-install", "tsx", "scripts/env-file.ts", file, "BIG"],
       { stdio: ["pipe", "ignore", "ignore"] },
     );
+    child.stdin.on("error", () => undefined);
+    const childExited = new Promise<void>((resolve) => {
+      child.once("exit", () => resolve());
+    });
     child.stdin.write("y".repeat(60 * 1024 * 1024));
     child.stdin.end();
 
@@ -133,7 +137,7 @@ describe("upsertEnvFile durability", () => {
     }
 
     child.kill("SIGKILL");
-    await new Promise((resolve) => child.on("exit", resolve));
+    await childExited;
 
     // Non-vacuous: we must have actually caught the write in progress.
     expect(
