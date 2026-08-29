@@ -307,8 +307,13 @@ git commit -m "feat: source note shape and input caps"
 
 - Consumes: `sourceNoteSchema`, `SourceNote` from Task 1.
 - Produces: `noteMarker(sourceId: string): string`, `serializeNote(note: SourceNote): string`, `parseNoteMessage(text: string): ParseOutcome`, where
-  `type ParseOutcome = { ok: true; note: SourceNote } | { ok: false; reason: string } | { ok: false; reason: "not-a-note"; notANote: true }`.
-  Use the simpler shape below — `{ kind: "note" | "other" | "malformed" }` — so callers switch once.
+
+```ts
+type ParseOutcome =
+  | { kind: "note"; note: SourceNote }
+  | { kind: "other" }
+  | { kind: "malformed"; reason: string };
+```
 
 This task is pure string work with no Telegram in it. It is separated because the format is the one thing every later task depends on and the one thing a probe already proved fragile: teleproto's high-level send rewrote `**bold**` into `bold`. The round-trip test below is the regression guard for that finding.
 
@@ -328,7 +333,7 @@ const note: SourceNote = {
   id: "-1002222222222",
   handle: "@examplechannel",
   title: "My **Cosmos**",
-  about: "Covers `launches` and _orbital_ mechanics, with **original** photos.",
+  about: 'Covers `launches`, _orbital_ mechanics and **originals**; calls itself "the" source.',
   topics: ["space", "launches"],
   kind: "reporting",
   lang: "ru",
@@ -1048,6 +1053,27 @@ describe("setSourceNote", () => {
     expect(fake.messages).toHaveLength(1);
   });
 
+  it("writes a note about a source the account has not joined", async () => {
+    const fake = writableFactory([]);
+    // Not in `dialogs`, so resolution goes over the network the way a channel
+    // found by search does. Spec §6.1: membership is not required, resolution
+    // is — a conclusion about a source not worth joining is exactly the one
+    // that should not have to be re-derived.
+    fake.client.getEntity = (async () => ({
+      className: "Channel",
+      id: { value: 777n },
+      title: "Found by search",
+      username: "found",
+    })) as never;
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    const result = await setSourceNote({ ...input, source_id: "@found" });
+
+    expect(result.note.id).toBe("-100777");
+    expect(result.note.handle).toBe("@found");
+    expect(result.replaced).toBe(false);
+  });
+
   it("rejects an over-long about before touching the network", async () => {
     const fake = writableFactory([]);
     __setClientFactoryForTests((async () => fake.client) as never);
@@ -1216,6 +1242,8 @@ git commit -m "feat: write a source note with edit and resend fallback"
 
 - Consumes: `findNoteMessages`, `resolveSource`, `fetchDialogIndex`.
 - Produces: `deleteSourceNote(sourceId: string): Promise<{ deleted: boolean }>`.
+- Test helpers: reuses `writableFactory` and `stored`, already defined in
+  `tests/telegram-source-notes.test.ts` by Tasks 3 and 4. Do not redefine them.
 
 Absence is not an error. Deleting a note that was never written reports `deleted: false`, the same shape `leave_channel` uses for `was_member`.
 
@@ -1553,7 +1581,13 @@ Delete or rewrite every place the README promises work that will not exist:
 - The roadmap lines naming sub-project 5b's three tools and sub-project 6 — 5b is the last sub-project.
 - Any tool count — nineteen.
 
-Document the two new tools in the same shape as the existing entries, including the caps and the `kind` enum.
+Find every one of them before editing, so none is missed:
+
+```bash
+grep -n 'save_message\|get_saved_messages\|search_saved_messages\|get_channel_note\|set_channel_note\|Source Meta\|Saved Messages\|sub-project 5b\|sub-project 6\|seventeen tools' README.md
+```
+
+Document the two new tools in the same shape as the existing entries, including the caps and the `kind` enum. Re-run the grep afterwards: it must return only new, accurate lines.
 
 - [ ] **Step 4: Update the ChatGPT Project instructions**
 
