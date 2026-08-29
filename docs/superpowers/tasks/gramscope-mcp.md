@@ -361,6 +361,28 @@ target.
 
 ### Sub-project 5b — rulings taken on the owner's behalf during execution
 
+- **Final review, write atomicity:** Task 4's plan-mandated fallback order is
+  overturned. After an edit failure, `setSourceNote` sends the replacement
+  first and preserves the old valid note until that send succeeds, then
+  reconciles by exact marker. A transient send failure must not destroy the
+  store's only valid note. Cost if wrong: a successful send followed by a
+  cleanup failure can leave a visible duplicate instead of causing data loss.
+- **Final review, concurrent writes:** every successful set performs a fresh
+  post-write exact-marker reconciliation, keeps the newest valid note, deletes
+  all other valid and exact-marker malformed copies, then re-reads. Two
+  concurrent first writes can both miss the pre-write snapshot; the later
+  post-write lookup must restore the one-note invariant. Cost if wrong: two
+  extra marker searches and a cleanup attempt per set.
+- **Final review, stored invariants:** stored-note parsing stays permissive
+  about historical field lengths, but requires nonempty/nonblank topics and a
+  valid ISO date. Those are durable semantic invariants, not mutable compactness
+  caps. Cost if wrong: an old semantically corrupt marked payload becomes
+  visible in `malformed` instead of entering the routing table.
+- **Final review, trust wording:** tool and owner-facing prose distinguishes
+  GramScope assessment fields (`about`, `topics`, `kind`, optional cadence,
+  language and provenance) from Telegram-derived `id`, `handle` and `title`,
+  which remain third-party metadata. Cost if wrong: longer descriptions and
+  Project instructions.
 - **Task 5:** `deleteSourceNote` deletes both well-formed note messages and
   malformed messages attributed by `findNoteMessages` to the source's exact
   marker, and reports `deleted: true` if either existed. The plan's bare-array
