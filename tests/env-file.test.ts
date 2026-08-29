@@ -104,7 +104,8 @@ describe("upsertEnvFile durability", () => {
     // shrunken state, because an interrupt at that instant destroys
     // TELEGRAM_SESSION, which costs an interactive Telegram login to redo.
     // Truncate-then-write is observable; write-temp-then-rename is not.
-    const { writeFile, stat, readdir } = await import("node:fs/promises");
+    const { writeFile, stat } = await import("node:fs/promises");
+    const { watch } = await import("node:fs");
     const { spawn } = await import("node:child_process");
     const { dir, file } = await tmpFile();
 
@@ -112,12 +113,22 @@ describe("upsertEnvFile durability", () => {
     await writeFile(file, original, { mode: 0o600 });
     const originalSize = (await stat(file)).size;
 
+    let stdinError: NodeJS.ErrnoException | undefined;
+    let sawTemp = false;
+    const watcher = watch(dir, (_eventType, filename) => {
+      const name = filename?.toString();
+      if (name && name !== ".env.local") sawTemp = true;
+    });
     const child = spawn(
       "npx",
       ["--no-install", "tsx", "scripts/env-file.ts", file, "BIG"],
       { stdio: ["pipe", "ignore", "ignore"] },
     );
-    child.stdin.on("error", () => undefined);
+    child.stdin.on("error", (error) => {
+      if ((error as NodeJS.ErrnoException).code !== "EPIPE") {
+        stdinError = error as NodeJS.ErrnoException;
+      }
+    });
     const childExited = new Promise<void>((resolve) => {
       child.once("exit", () => resolve());
     });
@@ -125,19 +136,17 @@ describe("upsertEnvFile durability", () => {
     child.stdin.end();
 
     let sawShrink = false;
-    let sawTemp = false;
     const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline && child.exitCode === null) {
+    while (Date.now() < deadline && !sawShrink && !sawTemp) {
       const size = (await stat(file).catch(() => ({ size: -1 }))).size;
       if (size >= 0 && size < originalSize) sawShrink = true;
-      const entries = await readdir(dir).catch(() => []);
-      if (entries.some((e) => e !== ".env.local")) sawTemp = true;
-      if (sawShrink || sawTemp) break;
       await new Promise((resolve) => setImmediate(resolve));
     }
 
+    watcher.close();
     child.kill("SIGKILL");
     await childExited;
+    expect(stdinError).toBeUndefined();
 
     // Non-vacuous: we must have actually caught the write in progress.
     expect(
