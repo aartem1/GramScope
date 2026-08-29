@@ -280,7 +280,7 @@ complete without re-running anything above it.
 | 2 Wire format | complete, `d7646fe`..`c76f3d1`, clean after 1 fix round; 465 tests |
 | 3 Reading the store | complete, `cdd0983`..`4c01701`, clean after 1 fix round; 476 tests |
 | 4 Writing a note | complete, `81609e0`; gate repair `c02b176`; review clean; 484 fast tests |
-| 5 Deleting a note | not started |
+| 5 Deleting a note | complete, `81e4034`; review clean; 488 fast tests after gate repair |
 | 6 `get_source_notes` tool | not started |
 | 7 `set_source_note` tool | not started |
 | 8 Version 1.4.0, README, Project instructions, deploy | not started |
@@ -371,10 +371,13 @@ in `findNoteMessages` has no comment explaining it.
   test passed (470/470 after Task 4). The changed source-note surface is not
   involved, but the plan requires an exit-0 full gate before each task closes.
   The process-wait race in that test is repaired in a separate commit and
-  separately reviewed before Task 4 review. The repair landed as `c02b176`,
-  its review approved it with one deferred minor, and the full gate then passed
-  484/484 with typecheck and lint green. Cost if wrong: one out-of-scope,
-  test-only commit in the 5b history.
+  separately reviewed before Task 4 review. The first repair landed as
+  `c02b176`; Task 5's full gate then exposed a second timing race in the same
+  test's observation loop. Fix round 1 landed as `5f436cf`, replaced polling
+  with a watcher registered before the child starts, narrowed stdin suppression
+  to expected `EPIPE`, and passed scoped re-review. The full gate then passed
+  488/488 with typecheck and lint green. Cost if wrong: two out-of-scope,
+  test-only commits in the 5b history.
 - **Task 1:** the plan's own test snippet covered cap violations for `about` and
   `topics` only, leaving `MAX_LANG_CHARS`, `MAX_CADENCE_CHARS` and
   `MAX_DERIVED_FROM_CHARS` — three of the six exported caps — with no
