@@ -282,7 +282,7 @@ complete without re-running anything above it.
 | 4 Writing a note | complete, `81609e0`; gate repair `c02b176`; review clean; 484 fast tests |
 | 5 Deleting a note | complete, `81e4034`; review clean; 488 fast tests after gate repair |
 | 6 `get_source_notes` tool | complete, `37166db`; review clean; 489 fast tests after gate repair fix round 2; eighteen tools |
-| 7 `set_source_note` tool | not started |
+| 7 `set_source_note` tool | complete, `157c70f`; review clean; 490 fast tests; nineteen tools, six writers |
 | 8 Version 1.4.0, README, Project instructions, deploy | not started |
 | 9 Live tier | not started |
 
