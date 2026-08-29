@@ -211,10 +211,23 @@ sub-project:
   still be routed to the right channels. The owner's constraint on it: "не
   превращать сохраненные сообщения в свалку, там должно быть компактно и
   удобно." They are open to widening the idea, not to loosening that constraint.
-- **This collides with sub-project 6** (`get_channel_note` / `set_channel_note`
-  in a private `Source Meta` channel), which was specified for the same purpose
-  in a different place. Resolving that overlap is the next open question; the
-  two must not ship as two parallel memories of the same thing.
+- **Sub-project 6 is absorbed into 5b, owner decision 2026-08-29.** The
+  `Source Meta` private channel described in the README and in earlier cards
+  will not be created, and `get_channel_note` / `set_channel_note` will not ship
+  as separate tools against it. Saved Messages is the single store for source
+  memory. The owner picked it over the private channel knowing the trade: a
+  channel guarantees unrestricted in-place editing of one's own posts, while
+  Saved Messages avoids creating and bootstrapping a channel, storing its id in
+  config, and handling the "channel does not exist yet" path, and search inside
+  the account's own chats was already measured working in sub-project 3. **Any
+  design that needs to update a note in place must first confirm by live probe
+  that `messages.editMessage` works on the account's own Saved Messages without
+  a time limit**; if it does not, the update path becomes delete-and-resend and
+  the spec must say so.
+- Consequence for the README: its §H `save_message` description ("prefer native
+  forwarding/saving semantics so the original source remains traceable") and its
+  `Source Meta` sections describe work that will not be built. They are stale as
+  of this decision and are rewritten when 5b ships.
 
 ## How to resume sub-project 5a
 
