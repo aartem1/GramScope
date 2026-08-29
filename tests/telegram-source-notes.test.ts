@@ -69,4 +69,18 @@ describe("serializeNote / parseNoteMessage", () => {
     if (outcome.kind !== "malformed") return;
     expect(outcome.reason).toContain("marker");
   });
+
+  it("reports a marked line with non-digit suffix as malformed", () => {
+    const outcome = parseNoteMessage("gs:src:12x\n{}");
+    expect(outcome.kind).toBe("malformed");
+    if (outcome.kind !== "malformed") return;
+    expect(outcome.reason).toContain("digits");
+  });
+
+  it("reports a bare marked line with no body as malformed", () => {
+    const outcome = parseNoteMessage("gs:src:123");
+    expect(outcome.kind).toBe("malformed");
+    if (outcome.kind !== "malformed") return;
+    expect(outcome.reason).toContain("body");
+  });
 });

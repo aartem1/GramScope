@@ -30,12 +30,28 @@ export function serializeNote(note: SourceNote): string {
  * and it is silently skipped. `malformed` is a message that claims to be a
  * note and is not, which is reported to the caller rather than skipped: a
  * corrupt note is a hole in the memory the agent should know about.
+ *
+ * A message is considered to claim ours if its first line starts with the
+ * `gs:src:` prefix. If it does, any parsing errors are treated as corruption
+ * (malformed) rather than a foreign message. This ensures that notes in older
+ * wire format versions remain visible to the agent when the format changes.
  */
 export function parseNoteMessage(text: string): ParseOutcome {
   const newline = text.indexOf("\n");
-  if (newline === -1) return { kind: "other" };
-  const marker = text.slice(0, newline);
-  if (!/^gs:src:\d+$/.test(marker)) return { kind: "other" };
+  const marker = newline === -1 ? text : text.slice(0, newline);
+
+  if (!marker.startsWith("gs:src:")) {
+    return { kind: "other" };
+  }
+
+  // The message claims to be ours. Any parsing failures are malformed notes.
+  if (newline === -1) {
+    return { kind: "malformed", reason: "marked line has no body" };
+  }
+
+  if (!/^\d+$/.test(marker.slice("gs:src:".length))) {
+    return { kind: "malformed", reason: "marker suffix is not purely digits" };
+  }
 
   let payload: unknown;
   try {
