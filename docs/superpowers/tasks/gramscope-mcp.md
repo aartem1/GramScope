@@ -198,6 +198,24 @@ Rulings made during execution, each of which the owner may overrule:
   the Task 11 diff. README now distinguishes five state-change tools deployed
   in 1.3.0 from the six planned for full Slice 5; `save_message` remains 5b.
 
+**Brainstorm in flight, 2026-08-29 (sub-project 5b).** Nothing is specced yet.
+The first owner decision already overrides the README's description of the
+sub-project:
+
+- **Saved Messages are not a forwarding archive.** The owner rejected the
+  README's "prefer native forwarding semantics" framing outright: posts are not
+  to be forwarded into Saved Messages at all. Saved Messages are to hold a
+  compact, agent-written **classifier and memory about sources** — which
+  channels write about what, a short summary of what a channel covers — so that
+  a specific question whose answer does not fall out of the folder taxonomy can
+  still be routed to the right channels. The owner's constraint on it: "не
+  превращать сохраненные сообщения в свалку, там должно быть компактно и
+  удобно." They are open to widening the idea, not to loosening that constraint.
+- **This collides with sub-project 6** (`get_channel_note` / `set_channel_note`
+  in a private `Source Meta` channel), which was specified for the same purpose
+  in a different place. Resolving that overlap is the next open question; the
+  two must not ship as two parallel memories of the same thing.
+
 ## How to resume sub-project 5a
 
 Read this before dispatching anything, whether you are Codex on this machine or
