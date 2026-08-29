@@ -283,7 +283,7 @@ complete without re-running anything above it.
 | 5 Deleting a note | complete, `81e4034`; review clean; 488 fast tests after gate repair |
 | 6 `get_source_notes` tool | complete, `37166db`; review clean; 489 fast tests after gate repair fix round 2; eighteen tools |
 | 7 `set_source_note` tool | complete, `157c70f`; review clean; 490 fast tests; nineteen tools, six writers |
-| 8 Version 1.4.0, README, Project instructions, deploy | not started |
+| 8 Version 1.4.0, README, Project instructions, deploy | complete, `4da02fa`..`ee708c0`, clean after 1 fix round; 490 tests + build; production Ready; owner re-paste/reconnect and authenticated 1.4.0/19-tool check pending |
 | 9 Live tier | not started |
 
 ## How to resume sub-project 5b
