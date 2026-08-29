@@ -263,9 +263,28 @@ sub-project:
 - The design was approved section by section in chat on 2026-08-29 and written
   up as `docs/superpowers/specs/2026-08-29-gramscope-source-notes-design.md`
   (`11bf2c1`). **The owner approved the written spec on 2026-08-29 with no
-  changes requested.** Nothing is implemented yet; the implementation plan is
-  being written with `superpowers:writing-plans`. Base commit for sub-project
-  5b: `e613575` — every commit after it is 5b work.
+  changes requested.** The implementation plan is written:
+  `docs/superpowers/plans/2026-08-29-gramscope-source-notes.md` (`619f608`,
+  self-review fixes in `f2a6532`, formatting in `9924e32`), nine tasks.
+  **Base commit for sub-project 5b: `e613575`** — every commit after it is 5b
+  work. Nothing is implemented yet; awaiting the owner's choice of execution
+  mode (subagent-driven or inline).
+
+Outcomes are filled in as each task closes, so another agent — Codex on this
+machine, or a fresh session — can resume from the first row that is not yet
+complete without re-running anything above it.
+
+| Task | State |
+| --- | --- |
+| 1 Note shape and input caps | not started |
+| 2 Wire format | not started |
+| 3 Reading the store | not started |
+| 4 Writing a note | not started |
+| 5 Deleting a note | not started |
+| 6 `get_source_notes` tool | not started |
+| 7 `set_source_note` tool | not started |
+| 8 Version 1.4.0, README, Project instructions, deploy | not started |
+| 9 Live tier | not started |
 
 ## How to resume sub-project 5a
 
@@ -661,6 +680,7 @@ From Task 12 (`tools/list` handler test):
 - spec (sub-project 1, Foundation): docs/superpowers/specs/2026-08-26-gramscope-foundation-design.md
 - plan (sub-project 1, Foundation): docs/superpowers/plans/2026-08-26-gramscope-foundation.md
 - spec (sub-project 5b, Source Notes): docs/superpowers/specs/2026-08-29-gramscope-source-notes-design.md
+- plan (sub-project 5b, Source Notes): docs/superpowers/plans/2026-08-29-gramscope-source-notes.md
 - spec (sub-project 2, Reading): docs/superpowers/specs/2026-08-27-gramscope-reading-design.md
 - spec (sub-project 3, Research): docs/superpowers/specs/2026-08-27-gramscope-research-design.md
 - plan (sub-project 2, Reading): docs/superpowers/plans/2026-08-27-gramscope-reading.md
