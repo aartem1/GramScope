@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   listSourceNotes,
+  deleteSourceNote,
   noteMarker,
   parseNoteMessage,
   serializeNote,
@@ -469,5 +470,59 @@ describe("setSourceNote", () => {
       setSourceNote({ ...input, about: "x".repeat(301) }),
     ).rejects.toThrow(/300/);
     expect(fake.sent).toHaveLength(0);
+  });
+});
+
+describe("deleteSourceNote", () => {
+  it("deletes every well-formed message carrying the source's marker", async () => {
+    const fake = writableFactory([
+      { id: 5, message: stored("-100111") },
+      { id: 6, message: stored("-100111") },
+      { id: 7, message: stored("-100222") },
+    ]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    const result = await deleteSourceNote("-100111");
+
+    expect(result.deleted).toBe(true);
+    expect(fake.messages.map((m) => m.id)).toEqual([7]);
+  });
+
+  it("reports deleted false when there was no note", async () => {
+    const fake = writableFactory([{ id: 7, message: stored("-100222") }]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    const result = await deleteSourceNote("-100111");
+
+    expect(result.deleted).toBe(false);
+    expect(fake.messages).toHaveLength(1);
+  });
+
+  it("deletes malformed messages attributed to the exact source marker", async () => {
+    const fake = writableFactory([
+      { id: 5, message: "gs:src:100111\nbroken" },
+      { id: 6, message: "gs:src:100111\n{\\\"id\\\":\\\"-100111\\\"}" },
+      { id: 7, message: "gs:src:1001119\nbroken" },
+    ]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    const result = await deleteSourceNote("-100111");
+
+    expect(result.deleted).toBe(true);
+    expect(fake.messages.map((m) => m.id)).toEqual([7]);
+  });
+
+  it("deletes both well-formed and malformed messages in a mixed set", async () => {
+    const fake = writableFactory([
+      { id: 5, message: stored("-100111") },
+      { id: 6, message: "gs:src:100111\nbroken" },
+      { id: 7, message: stored("-100222") },
+    ]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    const result = await deleteSourceNote("-100111");
+
+    expect(result.deleted).toBe(true);
+    expect(fake.messages.map((m) => m.id)).toEqual([7]);
   });
 });

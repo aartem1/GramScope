@@ -393,3 +393,19 @@ export async function setSourceNote(
     return { note: stored.notes[0]!.note, replaced: found.notes.length > 0 };
   });
 }
+
+export async function deleteSourceNote(
+  sourceId: string,
+): Promise<{ deleted: boolean }> {
+  const index = await fetchDialogIndex();
+  return withTelegram(async (client) => {
+    const source = await resolveSource(client, index, sourceId);
+    const found = await findNoteMessages(client, source.source_id);
+    const ids = [
+      ...found.notes.map((entry) => entry.id),
+      ...found.malformed.map((entry) => entry.message_id),
+    ];
+    await deleteMessages(client, ids);
+    return { deleted: ids.length > 0 };
+  });
+}
