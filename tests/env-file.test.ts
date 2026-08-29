@@ -104,56 +104,62 @@ describe("upsertEnvFile durability", () => {
     // shrunken state, because an interrupt at that instant destroys
     // TELEGRAM_SESSION, which costs an interactive Telegram login to redo.
     // Truncate-then-write is observable; write-temp-then-rename is not.
-    const { writeFile, stat } = await import("node:fs/promises");
-    const { watch } = await import("node:fs");
-    const { spawn } = await import("node:child_process");
-    const { dir, file } = await tmpFile();
+    const { readFile, stat, truncate, writeFile } = await import("node:fs/promises");
+    const { file } = await tmpFile();
 
     const original = `TELEGRAM_SESSION=${"s".repeat(4096)}\n`;
     await writeFile(file, original, { mode: 0o600 });
     const originalSize = (await stat(file)).size;
 
-    let stdinError: NodeJS.ErrnoException | undefined;
-    let sawTemp = false;
-    const watcher = watch(dir, (_eventType, filename) => {
-      const name = filename?.toString();
-      if (name && name !== ".env.local") sawTemp = true;
-    });
-    const child = spawn(
-      "npx",
-      ["--no-install", "tsx", "scripts/env-file.ts", file, "BIG"],
-      { stdio: ["pipe", "ignore", "ignore"] },
-    );
-    child.stdin.on("error", (error) => {
-      if ((error as NodeJS.ErrnoException).code !== "EPIPE") {
-        stdinError = error as NodeJS.ErrnoException;
-      }
-    });
-    const childExited = new Promise<void>((resolve) => {
-      child.once("exit", () => resolve());
-    });
-    child.stdin.write("y".repeat(60 * 1024 * 1024));
-    child.stdin.end();
-
-    let sawShrink = false;
-    const deadline = Date.now() + 20_000;
-    while (Date.now() < deadline && !sawShrink && !sawTemp) {
-      const size = (await stat(file).catch(() => ({ size: -1 }))).size;
-      if (size >= 0 && size < originalSize) sawShrink = true;
-      await new Promise((resolve) => setImmediate(resolve));
+    function startObserver() {
+      let active = true;
+      let sawShrink = false;
+      let resolveShrink!: () => void;
+      const shrinkObserved = new Promise<void>((resolve) => {
+        resolveShrink = resolve;
+      });
+      const done = (async () => {
+        while (active) {
+          const size = (await stat(file).catch(() => ({ size: -1 }))).size;
+          if (size >= 0 && size < originalSize) {
+            sawShrink = true;
+            resolveShrink();
+          }
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+      })();
+      return {
+        stop: async () => {
+          active = false;
+          await done;
+        },
+        shrinkObserved,
+        sawShrink: () => sawShrink,
+      };
     }
 
-    watcher.close();
-    child.kill("SIGKILL");
-    await childExited;
-    expect(stdinError).toBeUndefined();
+    // First prove that this observer can catch the failure mode. The explicit
+    // barrier keeps the file truncated until the observer has seen it.
+    const control = startObserver();
+    await truncate(file, 0);
+    await control.shrinkObserved;
+    await writeFile(file, original, { mode: 0o600 });
+    await control.stop();
+    expect(control.sawShrink()).toBe(true);
 
-    // Non-vacuous: we must have actually caught the write in progress.
-    expect(
-      sawShrink || sawTemp,
-      "never observed the write in progress; the test proves nothing",
-    ).toBe(true);
-    expect(sawShrink, "the live file was truncated mid-write").toBe(false);
+    // Run the real atomic update under the same observer implementation.
+    const replacement = "u".repeat(4096);
+    const real = startObserver();
+    await (await import("../scripts/env-file")).upsertEnvFile(
+      file,
+      "TELEGRAM_SESSION",
+      replacement,
+    );
+    await real.stop();
+
+    expect(real.sawShrink(), "the live file was truncated mid-write").toBe(false);
+    expect(await readFile(file, "utf8")).toBe(`TELEGRAM_SESSION=${replacement}\n`);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
   }, 40_000);
 
   it("keeps mode 600 on the replaced file", async () => {
