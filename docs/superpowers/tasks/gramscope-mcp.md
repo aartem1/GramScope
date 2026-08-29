@@ -281,7 +281,7 @@ complete without re-running anything above it.
 | 3 Reading the store | complete, `cdd0983`..`4c01701`, clean after 1 fix round; 476 tests |
 | 4 Writing a note | complete, `81609e0`; gate repair `c02b176`; review clean; 484 fast tests |
 | 5 Deleting a note | complete, `81e4034`; review clean; 488 fast tests after gate repair |
-| 6 `get_source_notes` tool | not started |
+| 6 `get_source_notes` tool | complete, `37166db`; review clean; 489 fast tests after gate repair fix round 2; eighteen tools |
 | 7 `set_source_note` tool | not started |
 | 8 Version 1.4.0, README, Project instructions, deploy | not started |
 | 9 Live tier | not started |
@@ -373,11 +373,13 @@ in `findNoteMessages` has no comment explaining it.
   The process-wait race in that test is repaired in a separate commit and
   separately reviewed before Task 4 review. The first repair landed as
   `c02b176`; Task 5's full gate then exposed a second timing race in the same
-  test's observation loop. Fix round 1 landed as `5f436cf`, replaced polling
-  with a watcher registered before the child starts, narrowed stdin suppression
-  to expected `EPIPE`, and passed scoped re-review. The full gate then passed
-  488/488 with typecheck and lint green. Cost if wrong: two out-of-scope,
-  test-only commits in the 5b history.
+  test's observation loop. Fix round 1 landed as `5f436cf`, but Task 6's gate
+  proved its watcher was still resource-dependent (`EMFILE`). Fix round 2
+  landed as `080f4f2`: it removed the external child and watcher, calibrated a
+  shared in-process observer against an explicitly synchronized
+  truncate-then-write control, then applied it to the real atomic upsert. The
+  scoped re-review passed, as did the full 489/489 gate, typecheck and lint.
+  Cost if wrong: three out-of-scope, test-only commits in the 5b history.
 - **Task 1:** the plan's own test snippet covered cap violations for `about` and
   `topics` only, leaving `MAX_LANG_CHARS`, `MAX_CADENCE_CHARS` and
   `MAX_DERIVED_FROM_CHARS` — three of the six exported caps — with no
