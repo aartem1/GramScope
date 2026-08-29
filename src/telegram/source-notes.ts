@@ -1,5 +1,19 @@
-import { sourceNoteSchema, type SourceNote } from "../schemas/source-note";
-import { withTelegram, type TelegramLike } from "./client";
+import { randomBytes } from "node:crypto";
+import {
+  assertNoteInputBounded,
+  sourceNoteSchema,
+  type SourceNote,
+  type SourceNoteInput,
+} from "../schemas/source-note";
+import { GramScopeError } from "../errors/taxonomy";
+import {
+  getApi,
+  resolveEntity,
+  withTelegram,
+  type TelegramLike,
+} from "./client";
+import { fetchDialogIndex } from "./dialog-index";
+import { resolveSource } from "./peer-resolve";
 import {
   assertSameScope,
   decodeSourceNotesCursor,
@@ -267,5 +281,115 @@ export async function listSourceNotes(
           }
         : {}),
     };
+  });
+}
+
+export type SetSourceNoteInput = SourceNoteInput & { source_id: string };
+export type SetSourceNoteResult = { note: SourceNote; replaced: boolean };
+
+/** Telegram wants a 64-bit client-side id to deduplicate a retried send. */
+function randomId(): bigint {
+  return BigInt.asIntN(64, BigInt(`0x${randomBytes(8).toString("hex")}`));
+}
+
+async function sendNote(
+  client: TelegramLike,
+  peer: unknown,
+  text: string,
+): Promise<void> {
+  const Api = await getApi();
+  // Raw, not client.sendMessage: the high-level call applies markdown parsing
+  // and a probe on 2026-08-29 watched it turn `**bold**` into `bold`. A note
+  // store that rewrites its own payload is worse than none.
+  await client.invoke(
+    new Api.messages.SendMessage({
+      peer: peer as never,
+      message: text,
+      randomId: randomId() as never,
+      noWebpage: true,
+    }),
+  );
+}
+
+async function deleteMessages(
+  client: TelegramLike,
+  ids: number[],
+): Promise<void> {
+  if (ids.length === 0) return;
+  const Api = await getApi();
+  await client.invoke(
+    new Api.messages.DeleteMessages({ id: ids, revoke: true }),
+  );
+}
+
+export async function setSourceNote(
+  input: SetSourceNoteInput,
+): Promise<SetSourceNoteResult> {
+  assertNoteInputBounded(input);
+
+  const index = await fetchDialogIndex();
+  return withTelegram(async (client) => {
+    const Api = await getApi();
+    const source = await resolveSource(client, index, input.source_id);
+    const peer = await resolveEntity(client, SAVED_PEER);
+
+    const note: SourceNote = {
+      id: source.source_id,
+      ...(source.username ? { handle: `@${source.username}` } : {}),
+      title: source.title,
+      about: input.about,
+      topics: input.topics,
+      kind: input.kind,
+      ...(input.lang ? { lang: input.lang } : {}),
+      ...(input.cadence ? { cadence: input.cadence } : {}),
+      ...(input.derived_from ? { derived_from: input.derived_from } : {}),
+      updated: new Date().toISOString().slice(0, 10),
+    };
+    const text = serializeNote(note);
+
+    const found = await findNoteMessages(client, note.id);
+    const newest = found.notes[0];
+
+    if (newest) {
+      let edited = false;
+      try {
+        await client.invoke(
+          new Api.messages.EditMessage({
+            peer: peer as never,
+            id: newest.id,
+            message: text,
+            noWebpage: true,
+          }),
+        );
+        edited = true;
+      } catch {
+        // The probe could only edit a seconds-old message, so Telegram's edit
+        // window may well apply here. Delete-and-resend is then the update
+        // path, not an error case.
+        await deleteMessages(client, [newest.id]);
+      }
+      if (!edited) await sendNote(client, peer, text);
+    } else {
+      await sendNote(client, peer, text);
+    }
+
+    // A successful rewrite owns all entries attributed to this exact marker:
+    // interrupted writes leave valid duplicates, while partial/corrupt writes
+    // leave malformed ones. Reads report both, but never delete them.
+    await deleteMessages(client, [
+      ...found.notes.slice(1).map((entry) => entry.id),
+      ...found.malformed.map((entry) => entry.message_id),
+    ]);
+
+    // Re-read rather than echo the input: what is worth confirming is what the
+    // store now holds, not what the caller meant.
+    const stored = await findNoteMessages(client, note.id);
+    if (stored.notes.length === 0) {
+      throw new GramScopeError(
+        "INTERNAL_ERROR",
+        "The note was written but could not be read back",
+      );
+    }
+    return { note: stored.notes[0]!.note, replaced: found.notes.length > 0 };
   });
 }

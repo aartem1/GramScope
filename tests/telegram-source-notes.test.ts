@@ -4,11 +4,13 @@ import {
   noteMarker,
   parseNoteMessage,
   serializeNote,
+  setSourceNote,
 } from "@/telegram/source-notes";
 import {
   __resetClientForTests,
   __setClientFactoryForTests,
 } from "@/telegram/client";
+import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
 import type { SourceNote } from "@/schemas/source-note";
 
 const note: SourceNote = {
@@ -119,6 +121,7 @@ function factory(messages: Array<{ id: number; message?: string }>) {
 afterEach(() => {
   __setClientFactoryForTests(undefined);
   __resetClientForTests();
+  __resetPeerCacheForTests();
 });
 
 describe("listSourceNotes", () => {
@@ -248,7 +251,8 @@ describe("listSourceNotes", () => {
   // property — and filter/map/sort preserve the subclass through
   // Symbol.species. The other fakes in this file build their result from a
   // plain array, which would hide a leak; this one mirrors teleproto's own
-  // class (Helpers.js:448) so a dropped Array.from in fetchPage fails here.
+  // class (Helpers.js:448) so this guards the module's plain-Array output
+  // contract.
   it("returns plain arrays, not the TL library's Array subclass", async () => {
     class TotalList<T> extends Array<T> {
       total: number;
@@ -277,5 +281,193 @@ describe("listSourceNotes", () => {
 
     const result = await listSourceNotes({});
     expect(result.notes.constructor).toBe(Array);
+  });
+});
+
+const dialogs = [
+  {
+    id: { value: -100111n },
+    title: "Alpha",
+    username: "alpha",
+    unreadCount: 0,
+    entity: { className: "Channel", id: { value: 111n }, username: "alpha" },
+    dialog: {},
+    message: { id: 100, date: 1735689600 },
+  },
+];
+
+/** Records every TL request it is handed and applies sends, edits and deletes
+ *  to its own message list, so a write followed by a read behaves like the
+ *  real peer does. */
+function writableFactory(initial: Array<{ id: number; message?: string }>) {
+  const messages = [...initial];
+  const sent: Array<Record<string, unknown>> = [];
+  let nextId = Math.max(0, ...messages.map((m) => m.id)) + 1;
+  const client = {
+    connected: true,
+    connect: async () => true,
+    sent,
+    editShouldFail: false,
+    invoke: async (request: Record<string, unknown>) => {
+      sent.push(request);
+      const name = request.className as string;
+      if (name?.endsWith("SendMessage")) {
+        messages.push({ id: nextId++, message: request.message as string });
+        return { className: "Updates" };
+      }
+      if (name?.endsWith("EditMessage")) {
+        if (client.editShouldFail) {
+          throw Object.assign(new Error("expired"), {
+            errorMessage: "MESSAGE_EDIT_TIME_EXPIRED",
+          });
+        }
+        const target = messages.find((m) => m.id === request.id);
+        if (target) target.message = request.message as string;
+        return { className: "Updates" };
+      }
+      if (name?.endsWith("DeleteMessages")) {
+        for (const id of request.id as number[]) {
+          const at = messages.findIndex((m) => m.id === id);
+          if (at >= 0) messages.splice(at, 1);
+        }
+        return { className: "AffectedMessages" };
+      }
+      return true;
+    },
+    getDialogs: async () => dialogs,
+    getEntity: async () => ({ className: "User", id: { value: 1n } }),
+    getMessages: async (_peer: string, params: Record<string, unknown>) => {
+      const search = params.search as string | undefined;
+      return messages
+        .filter((m) => (search ? (m.message ?? "").includes(search) : true))
+        .sort((a, b) => b.id - a.id)
+        .slice(0, (params.limit as number) ?? 100);
+    },
+  };
+  return { client, messages, sent };
+}
+
+const input = {
+  source_id: "-100111",
+  about: "Covers **launches** and `orbital` mechanics.",
+  topics: ["space", "launches"],
+  kind: "reporting" as const,
+  lang: "ru",
+};
+
+describe("setSourceNote", () => {
+  it("writes a first note, fills the server fields and reports replaced false", async () => {
+    const fake = writableFactory([]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    const result = await setSourceNote(input);
+
+    expect(result.replaced).toBe(false);
+    expect(result.note.id).toBe("-100111");
+    expect(result.note.title).toBe("Alpha");
+    expect(result.note.handle).toBe("@alpha");
+    expect(result.note.about).toBe(input.about);
+    expect(result.note.updated).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("sends through the raw TL call so the text is not re-parsed", async () => {
+    const fake = writableFactory([]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    await setSourceNote(input);
+
+    const send = fake.sent.find((r) =>
+      String(r.className).endsWith("SendMessage"),
+    );
+    expect(send).toBeDefined();
+    expect(String(send!.message)).toContain("**launches**");
+    expect(send!.entities).toBeUndefined();
+  });
+
+  it("edits in place when a note already exists", async () => {
+    const fake = writableFactory([]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    await setSourceNote(input);
+    const second = await setSourceNote({ ...input, about: "Rewritten." });
+
+    expect(second.replaced).toBe(true);
+    expect(second.note.about).toBe("Rewritten.");
+    expect(fake.messages).toHaveLength(1);
+    expect(
+      fake.sent.some((r) => String(r.className).endsWith("EditMessage")),
+    ).toBe(true);
+  });
+
+  it("falls back to delete-and-resend when the edit window has closed", async () => {
+    const fake = writableFactory([]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    await setSourceNote(input);
+    fake.client.editShouldFail = true;
+    const second = await setSourceNote({ ...input, about: "Rewritten." });
+
+    expect(second.note.about).toBe("Rewritten.");
+    expect(fake.messages).toHaveLength(1);
+    expect(
+      fake.sent.filter((r) => String(r.className).endsWith("SendMessage")),
+    ).toHaveLength(2);
+  });
+
+  it("collapses duplicates left by an interrupted write", async () => {
+    const fake = writableFactory([
+      { id: 5, message: stored("-100111", { about: "old one" }) },
+      { id: 6, message: stored("-100111", { about: "old two" }) },
+    ]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    const result = await setSourceNote(input);
+
+    expect(result.replaced).toBe(true);
+    expect(fake.messages).toHaveLength(1);
+  });
+
+  it("removes malformed messages attributed to the rewritten source", async () => {
+    const fake = writableFactory([
+      { id: 5, message: stored("-100111", { about: "old" }) },
+      { id: 6, message: "gs:src:100111\nbroken" },
+    ]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    await setSourceNote(input);
+
+    expect(fake.messages).toHaveLength(1);
+    expect(fake.messages[0]!.message).toContain(input.about);
+  });
+
+  it("writes a note about a source the account has not joined", async () => {
+    const fake = writableFactory([]);
+    // Not in `dialogs`, so resolution goes over the network the way a channel
+    // found by search does. Spec §6.1: membership is not required, resolution
+    // is — a conclusion about a source not worth joining is exactly the one
+    // that should not have to be re-derived.
+    fake.client.getEntity = (async () => ({
+      className: "Channel",
+      id: { value: 777n },
+      title: "Found by search",
+      username: "found",
+    })) as never;
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    const result = await setSourceNote({ ...input, source_id: "@found" });
+
+    expect(result.note.id).toBe("-100777");
+    expect(result.note.handle).toBe("@found");
+    expect(result.replaced).toBe(false);
+  });
+
+  it("rejects an over-long about before touching the network", async () => {
+    const fake = writableFactory([]);
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    await expect(
+      setSourceNote({ ...input, about: "x".repeat(301) }),
+    ).rejects.toThrow(/300/);
+    expect(fake.sent).toHaveLength(0);
   });
 });
