@@ -230,9 +230,10 @@ a fresh session.
   were re-checked after that deploy. The git-ignored ledger was deleted per
   `superpowers:subagent-driven-development`, so this card is now the whole
   durable record — the rulings and deferred items below were lifted out of it
-  before deletion. **Acceptance action 1 passed on 2026-08-29; what remains is
-  the owner reading and accepting `docs/chatgpt-project-instructions.md`, plus
-  one cleanup.**
+  before deletion. **Sub-project 5a is complete, owner acceptance included.** Both
+  acceptance actions passed on 2026-08-29 and nothing is outstanding; the next
+  work is sub-project 5b (`save_message` and the Saved Messages reads) or 6
+  (source notes in the private metadata channel).
   - **Owner acceptance, spec §12.5, passed 2026-08-29 in the ChatGPT
     connector.** The full sequence ran without a single error:
     `search_channels("космос")` → `join_channel("@examplechannel")`
@@ -254,8 +255,15 @@ a fresh session.
     copy is only the source of truth for as long as the two are kept in step.
     Whenever a tool's accepted input changes, check that file the way the final
     fix wave had to.
-  - Cleanup: delete the throwaway WorkOS client `GramScope acceptance probe`,
-    `client_id` `client_01M14EP0KM5CFN1491QE4JZ0M3`.
+  - **The throwaway WorkOS client stays.** `GramScope acceptance probe`,
+    `client_id` `client_01M14EP0KM5CFN1491QE4JZ0M3`, was registered so a
+    loopback `authorization_code` + PKCE flow could hold an owner token outside
+    ChatGPT — AuthKit offers no `client_credentials` grant and refuses the
+    device grant to DCR clients. The owner decided on 2026-08-29 to keep it
+    rather than delete it, since it is the only way to query the deployed MCP
+    directly. It is a public client with no secret, redirecting only to
+    `http://127.0.0.1:8765/callback`, and any token it mints still has to pass
+    `verifyOwnerToken`'s audience and `sub == OWNER_USER_ID` checks.
 
 - **Final fix wave (2026-08-29), one wave only, no second round.** Fixed, all
   within the existing taxonomy: (1) `manage_folder(create)` now rejects an
