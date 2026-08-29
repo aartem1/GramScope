@@ -262,9 +262,10 @@ sub-project:
   and sub-project 6 between them promised. Nineteen tools, version 1.4.0.
 - The design was approved section by section in chat on 2026-08-29 and written
   up as `docs/superpowers/specs/2026-08-29-gramscope-source-notes-design.md`
-  (`11bf2c1`). **Awaiting the owner's review of the written spec.** Nothing is
-  planned or implemented yet; the next step after approval is
-  `superpowers:writing-plans`.
+  (`11bf2c1`). **The owner approved the written spec on 2026-08-29 with no
+  changes requested.** Nothing is implemented yet; the implementation plan is
+  being written with `superpowers:writing-plans`. Base commit for sub-project
+  5b: `e613575` — every commit after it is 5b work.
 
 ## How to resume sub-project 5a
 
