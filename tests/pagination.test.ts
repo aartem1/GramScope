@@ -6,6 +6,7 @@ import {
   decodePinnedCursor,
   decodeSearchGlobalCursor,
   decodeSearchSourcesCursor,
+  decodeSourceNotesCursor,
   decodeThreadCursor,
   encodeCursor,
   encodeMessageCursor,
@@ -273,6 +274,11 @@ describe("the search cursors", () => {
     expect(() => decodePinnedCursor(thread)).toThrow(GramScopeError);
     expect(() => decodeSearchGlobalCursor(thread)).toThrow(GramScopeError);
     expect(() => decodeSearchSourcesCursor(thread)).toThrow(GramScopeError);
+  });
+
+  it("refuses a pinned cursor where a source-notes cursor is expected", () => {
+    const foreign = encodePinnedCursor({ offsetId: 5, fingerprint: "f" });
+    expect(() => decodeSourceNotesCursor(foreign)).toThrow(/another tool/);
   });
 });
 

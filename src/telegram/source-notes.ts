@@ -1,4 +1,15 @@
 import { sourceNoteSchema, type SourceNote } from "../schemas/source-note";
+import { withTelegram, type TelegramLike } from "./client";
+import {
+  assertSameScope,
+  decodeSourceNotesCursor,
+  encodeSourceNotesCursor,
+  scopeFingerprint,
+} from "../pagination";
+import {
+  assertSourceIdsBounded,
+  MAX_SOURCES_PER_CALL,
+} from "./source-selection";
 
 const MARKER_PREFIX = "gs:src:";
 
@@ -71,4 +82,168 @@ export function parseNoteMessage(text: string): ParseOutcome {
     };
   }
   return { kind: "note", note: parsed.data };
+}
+
+export const SAVED_PEER = "me";
+export const DEFAULT_NOTES_LIMIT = 100;
+
+export type GetSourceNotesInput = {
+  source_ids?: string[];
+  query?: string;
+  limit?: number;
+  cursor?: string;
+};
+
+export type GetSourceNotesResult = {
+  notes: SourceNote[];
+  duplicates: Array<{ source_id: string; message_ids: number[] }>;
+  malformed: Array<{ message_id: number; reason: string }>;
+  next_cursor?: string;
+};
+
+type RawMessage = { id: number; message?: unknown };
+
+function textOf(message: RawMessage): string | undefined {
+  return typeof message.message === "string" ? message.message : undefined;
+}
+
+async function fetchPage(
+  client: TelegramLike,
+  params: { limit: number; offsetId?: number; search?: string },
+): Promise<RawMessage[]> {
+  const page = (await client.getMessages(SAVED_PEER, {
+    limit: params.limit,
+    ...(params.offsetId ? { offsetId: params.offsetId } : {}),
+    ...(params.search ? { search: params.search } : {}),
+  })) as RawMessage[];
+  // teleproto returns a TotalList, an Array subclass that survives map and
+  // filter. Normalize before the value goes anywhere near a domain result.
+  return Array.from(page);
+}
+
+/**
+ * Collapses a page of raw messages into notes, duplicates and malformed
+ * entries. Newest wins a duplicate: an interrupted delete-and-resend leaves
+ * the older copy behind, and the newer one is what the last write intended.
+ */
+function collect(messages: RawMessage[]): {
+  notes: SourceNote[];
+  duplicates: GetSourceNotesResult["duplicates"];
+  malformed: GetSourceNotesResult["malformed"];
+} {
+  const byId = new Map<string, { note: SourceNote; ids: number[] }>();
+  const malformed: GetSourceNotesResult["malformed"] = [];
+
+  for (const message of [...messages].sort((a, b) => b.id - a.id)) {
+    const text = textOf(message);
+    if (text === undefined) continue;
+    const outcome = parseNoteMessage(text);
+    if (outcome.kind === "other") continue;
+    if (outcome.kind === "malformed") {
+      malformed.push({ message_id: message.id, reason: outcome.reason });
+      continue;
+    }
+    const seen = byId.get(outcome.note.id);
+    if (seen) seen.ids.push(message.id);
+    else byId.set(outcome.note.id, { note: outcome.note, ids: [message.id] });
+  }
+
+  const duplicates: GetSourceNotesResult["duplicates"] = [];
+  for (const [sourceId, entry] of byId) {
+    if (entry.ids.length > 1) {
+      duplicates.push({ source_id: sourceId, message_ids: entry.ids });
+    }
+  }
+
+  return {
+    notes: [...byId.values()].map((entry) => entry.note),
+    duplicates,
+    malformed,
+  };
+}
+
+/** Every message carrying one source's marker, newest first. The marker
+ *  narrows; the parse decides, because Telegram matches word prefixes and a
+ *  longer id starts with a shorter one. */
+export async function findNoteMessages(
+  client: TelegramLike,
+  sourceId: string,
+): Promise<Array<{ id: number; note: SourceNote }>> {
+  const page = await fetchPage(client, {
+    limit: 20,
+    search: noteMarker(sourceId),
+  });
+  const found: Array<{ id: number; note: SourceNote }> = [];
+  for (const message of page) {
+    const text = textOf(message);
+    if (text === undefined) continue;
+    const outcome = parseNoteMessage(text);
+    if (outcome.kind === "note" && outcome.note.id === sourceId) {
+      found.push({ id: message.id, note: outcome.note });
+    }
+  }
+  return found.sort((a, b) => b.id - a.id);
+}
+
+export async function listSourceNotes(
+  input: GetSourceNotesInput,
+): Promise<GetSourceNotesResult> {
+  if (input.source_ids) {
+    assertSourceIdsBounded(
+      input.source_ids,
+      "get_source_notes",
+      MAX_SOURCES_PER_CALL,
+    );
+  }
+
+  return withTelegram(async (client) => {
+    if (input.source_ids) {
+      const notes: SourceNote[] = [];
+      const duplicates: GetSourceNotesResult["duplicates"] = [];
+      for (const sourceId of input.source_ids) {
+        const found = await findNoteMessages(client, sourceId);
+        if (found.length === 0) continue;
+        notes.push(found[0]!.note);
+        if (found.length > 1) {
+          duplicates.push({
+            source_id: sourceId,
+            message_ids: found.map((entry) => entry.id),
+          });
+        }
+      }
+      return { notes, duplicates, malformed: [] };
+    }
+
+    const fingerprint = scopeFingerprint({ query: input.query });
+    let offsetId = 0;
+    if (input.cursor) {
+      const cursor = decodeSourceNotesCursor(input.cursor);
+      assertSameScope(cursor.fingerprint, fingerprint);
+      offsetId = cursor.offsetId;
+    }
+
+    const limit = input.limit ?? DEFAULT_NOTES_LIMIT;
+    const page = await fetchPage(client, {
+      limit,
+      ...(offsetId ? { offsetId } : {}),
+      ...(input.query ? { search: input.query } : {}),
+    });
+    const collected = collect(page);
+    const oldest = page.reduce(
+      (min, message) => (min === 0 || message.id < min ? message.id : min),
+      0,
+    );
+
+    return {
+      ...collected,
+      ...(page.length === limit && oldest > 0
+        ? {
+            next_cursor: encodeSourceNotesCursor({
+              offsetId: oldest,
+              fingerprint,
+            }),
+          }
+        : {}),
+    };
+  });
 }

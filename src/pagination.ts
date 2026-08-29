@@ -316,3 +316,13 @@ export function encodePinnedCursor(cursor: OffsetCursor): string {
 export function decodePinnedCursor(raw: string): OffsetCursor {
   return decodeOffsetCursor(raw, PINNED_CURSOR_KIND);
 }
+
+export const SOURCE_NOTES_CURSOR_KIND = "source_notes";
+
+export function encodeSourceNotesCursor(cursor: OffsetCursor): string {
+  return encodeOffsetCursor(SOURCE_NOTES_CURSOR_KIND, cursor);
+}
+
+export function decodeSourceNotesCursor(raw: string): OffsetCursor {
+  return decodeOffsetCursor(raw, SOURCE_NOTES_CURSOR_KIND);
+}

@@ -1,9 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
+  listSourceNotes,
   noteMarker,
   parseNoteMessage,
   serializeNote,
 } from "@/telegram/source-notes";
+import {
+  __resetClientForTests,
+  __setClientFactoryForTests,
+} from "@/telegram/client";
 import type { SourceNote } from "@/schemas/source-note";
 
 const note: SourceNote = {
@@ -82,5 +87,135 @@ describe("serializeNote / parseNoteMessage", () => {
     expect(outcome.kind).toBe("malformed");
     if (outcome.kind !== "malformed") return;
     expect(outcome.reason).toContain("body");
+  });
+});
+
+function stored(id: string, extra: Partial<SourceNote> = {}): string {
+  return serializeNote({ ...note, id, handle: undefined, ...extra });
+}
+
+/** A fake peer whose getMessages honours `search`, `limit` and `offsetId` the
+ *  way Telegram does: newest first, strictly below offsetId when it is set. */
+function factory(messages: Array<{ id: number; message?: string }>) {
+  return async () => ({
+    connected: true,
+    connect: async () => true,
+    invoke: async () => true,
+    getDialogs: async () => [],
+    getEntity: async () => ({ className: "User", id: { value: 1n } }),
+    getMessages: async (_peer: string, params: Record<string, unknown>) => {
+      const search = params.search as string | undefined;
+      const offsetId = (params.offsetId as number) ?? 0;
+      const limit = (params.limit as number) ?? 100;
+      return messages
+        .filter((m) => (offsetId ? m.id < offsetId : true))
+        .filter((m) => (search ? (m.message ?? "").includes(search) : true))
+        .sort((a, b) => b.id - a.id)
+        .slice(0, limit);
+    },
+  });
+}
+
+afterEach(() => {
+  __setClientFactoryForTests(undefined);
+  __resetClientForTests();
+});
+
+describe("listSourceNotes", () => {
+  it("returns every note in the peer when asked for nothing in particular", async () => {
+    __setClientFactoryForTests(
+      factory([
+        { id: 10, message: stored("-100111") },
+        { id: 11, message: stored("-100222") },
+      ]) as never,
+    );
+    const result = await listSourceNotes({});
+    expect(result.notes.map((n) => n.id)).toEqual(["-100222", "-100111"]);
+    expect(result.duplicates).toEqual([]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it("skips a service message and any other non-note", async () => {
+    __setClientFactoryForTests(
+      factory([
+        { id: 10, message: stored("-100111") },
+        { id: 9 },
+        { id: 8, message: "an ordinary message" },
+      ]) as never,
+    );
+    const result = await listSourceNotes({});
+    expect(result.notes).toHaveLength(1);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it("reports a malformed note without losing the rest", async () => {
+    __setClientFactoryForTests(
+      factory([
+        { id: 10, message: stored("-100111") },
+        { id: 9, message: "gs:src:100222\nbroken" },
+      ]) as never,
+    );
+    const result = await listSourceNotes({});
+    expect(result.notes).toHaveLength(1);
+    expect(result.malformed).toEqual([
+      { message_id: 9, reason: "body is not valid JSON" },
+    ]);
+  });
+
+  it("reports duplicates and keeps the newest", async () => {
+    __setClientFactoryForTests(
+      factory([
+        { id: 10, message: stored("-100111", { about: "older" }) },
+        { id: 12, message: stored("-100111", { about: "newer" }) },
+      ]) as never,
+    );
+    const result = await listSourceNotes({});
+    expect(result.notes).toHaveLength(1);
+    expect(result.notes[0]!.about).toBe("newer");
+    expect(result.duplicates).toEqual([
+      { source_id: "-100111", message_ids: [12, 10] },
+    ]);
+  });
+
+  it("fetches named sources by marker and ignores a prefix collision", async () => {
+    __setClientFactoryForTests(
+      factory([
+        { id: 10, message: stored("-100111") },
+        { id: 11, message: stored("-1001119") },
+      ]) as never,
+    );
+    const result = await listSourceNotes({ source_ids: ["-100111"] });
+    expect(result.notes.map((n) => n.id)).toEqual(["-100111"]);
+    expect(result.next_cursor).toBeUndefined();
+  });
+
+  it("rejects more source_ids than one call may name", async () => {
+    __setClientFactoryForTests(factory([]) as never);
+    const ids = Array.from({ length: 26 }, (_, i) => `-1001${i}`);
+    await expect(listSourceNotes({ source_ids: ids })).rejects.toThrow(
+      /at most 25/,
+    );
+  });
+
+  it("pages with a cursor and refuses one from another query", async () => {
+    __setClientFactoryForTests(
+      factory([
+        { id: 10, message: stored("-100111") },
+        { id: 11, message: stored("-100222") },
+      ]) as never,
+    );
+    const first = await listSourceNotes({ limit: 1 });
+    expect(first.notes.map((n) => n.id)).toEqual(["-100222"]);
+    expect(first.next_cursor).toBeDefined();
+
+    const second = await listSourceNotes({
+      limit: 1,
+      cursor: first.next_cursor,
+    });
+    expect(second.notes.map((n) => n.id)).toEqual(["-100111"]);
+
+    await expect(
+      listSourceNotes({ limit: 1, query: "other", cursor: first.next_cursor }),
+    ).rejects.toThrow(/scope/i);
   });
 });
