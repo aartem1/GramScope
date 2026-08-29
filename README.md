@@ -235,8 +235,10 @@ ChatGPT should be able to inspect and manage whatever folders exist.
 Telegram Saved Messages are the store for compact notes authored by GramScope
 about sources it has read. They are a routing table for future research, not a
 bookmark collection or forwarded-post archive. Each note has a stable source
-identifier and records what the source publishes, useful topics, and the
-server's assessment of its kind.
+identifier and records what the source publishes, useful topics, and its kind.
+The `about`, `topics`, `kind`, `lang`, `cadence`, and `derived_from` fields are
+GramScope assessments; `id`, `handle`, and `title` are third-party Telegram
+metadata copied from the resolved source.
 
 ---
 
@@ -647,7 +649,10 @@ arguments, return the whole set. Use `source_ids` for a named-source lookup
 (at most 25 IDs); when `source_ids` is present, omit `query`, `limit`, and
 `cursor`, because named-source lookup takes precedence and never pages.
 Otherwise, `query` searches note text and `limit` (1–200) plus `cursor` provide
-pagination. These are the server's own assessments, not Telegram content.
+pagination. Within each returned note, `about`, `topics`, `kind`, and optional
+`lang`, `cadence`, and `derived_from` are GramScope assessments based on posts
+read. `id`, `handle`, and `title` remain third-party Telegram metadata, not
+server-authored evidence.
 
 ---
 

@@ -25,6 +25,9 @@ suite("source notes against the real account", () => {
   // from the same baseline this one did.
   afterAll(async () => {
     if (target) await deleteSourceNote(target);
+    const cleanup = await listSourceNotes({});
+    expect(cleanup.notes).toEqual([]);
+    expect(cleanup.malformed).toEqual([]);
   });
 
   it("writes, reads, searches, overwrites and deletes one note", async () => {
@@ -46,6 +49,7 @@ suite("source notes against the real account", () => {
 
     const byId = await listSourceNotes({ source_ids: [target] });
     expect(byId.notes).toHaveLength(1);
+    expect(byId.notes[0]!.id).toBe(target);
 
     const found = await listSourceNotes({ query: "gramscope-live-probe" });
     expect(found.notes.map((n) => n.id)).toContain(target);

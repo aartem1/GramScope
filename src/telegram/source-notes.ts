@@ -26,6 +26,10 @@ import {
 } from "./source-selection";
 
 const MARKER_PREFIX = "gs:src:";
+// Marker lookup only needs the small set of newest interrupted-write copies;
+// bounding it prevents cleanup from turning into an unbounded Saved Messages
+// scan if old unrelated history accumulates in the peer.
+const FIND_NOTE_MESSAGES_LIMIT = 20;
 
 /**
  * The lookup key for one source's note.
@@ -196,7 +200,10 @@ export async function findNoteMessages(
   sourceId: string,
 ): Promise<FoundNotes> {
   const marker = noteMarker(sourceId);
-  const page = await fetchPage(client, { limit: 20, search: marker });
+  const page = await fetchPage(client, {
+    limit: FIND_NOTE_MESSAGES_LIMIT,
+    search: marker,
+  });
   const notes: FoundNotes["notes"] = [];
   const malformed: FoundNotes["malformed"] = [];
   for (const message of page) {
@@ -351,7 +358,6 @@ export async function setSourceNote(
     const newest = found.notes[0];
 
     if (newest) {
-      let edited = false;
       try {
         await client.invoke(
           new Api.messages.EditMessage({
@@ -361,24 +367,24 @@ export async function setSourceNote(
             noWebpage: true,
           }),
         );
-        edited = true;
       } catch {
         // The probe could only edit a seconds-old message, so Telegram's edit
-        // window may well apply here. Delete-and-resend is then the update
-        // path, not an error case.
-        await deleteMessages(client, [newest.id]);
+        // window may well apply here. Send the replacement before cleanup so a
+        // failed send leaves the old valid note intact.
+        await sendNote(client, peer, text);
       }
-      if (!edited) await sendNote(client, peer, text);
     } else {
       await sendNote(client, peer, text);
     }
 
-    // A successful rewrite owns all entries attributed to this exact marker:
-    // interrupted writes leave valid duplicates, while partial/corrupt writes
-    // leave malformed ones. Reads report both, but never delete them.
+    // Reconcile a fresh post-write view, not the pre-write snapshot. Concurrent
+    // first writers can both observe an empty store; newest wins once either
+    // writer sees both successful sends. Exact-marker malformed copies belong
+    // to the same write surface and are removed with the older valid copies.
+    const postWrite = await findNoteMessages(client, note.id);
     await deleteMessages(client, [
-      ...found.notes.slice(1).map((entry) => entry.id),
-      ...found.malformed.map((entry) => entry.message_id),
+      ...postWrite.notes.slice(1).map((entry) => entry.id),
+      ...postWrite.malformed.map((entry) => entry.message_id),
     ]);
 
     // Re-read rather than echo the input: what is worth confirming is what the

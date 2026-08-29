@@ -34,12 +34,14 @@ export const sourceNoteSchema = z.object({
   handle: z.string().optional(),
   title: z.string(),
   about: z.string(),
-  topics: z.array(z.string()),
+  topics: z
+    .array(z.string().refine((topic) => topic.trim().length > 0))
+    .min(1),
   kind: z.enum(NOTE_KINDS),
   lang: z.string().optional(),
   cadence: z.string().optional(),
   derived_from: z.string().optional(),
-  updated: z.string(),
+  updated: z.iso.date(),
 });
 
 export type SourceNote = z.infer<typeof sourceNoteSchema>;
@@ -91,13 +93,13 @@ export function assertNoteInputBounded(input: SourceNoteInput): void {
       `topics has ${input.topics.length} entries; the limit is ${MAX_TOPICS}. Keep the ones a question would actually be asked about.`,
     );
   }
-  for (const topic of input.topics) {
+  for (const [index, topic] of input.topics.entries()) {
     if (topic.trim().length === 0) {
       throw new GramScopeError(
         "INVALID_INPUT",
         "topics must not contain a blank entry",
       );
     }
-    assertLength(topic, `topic ${JSON.stringify(topic)}`, MAX_TOPIC_CHARS);
+    assertLength(topic, `topics[${index}]`, MAX_TOPIC_CHARS);
   }
 }

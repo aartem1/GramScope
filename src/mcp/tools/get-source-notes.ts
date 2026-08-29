@@ -11,8 +11,9 @@ export function registerGetSourceNotes(server: McpServer): void {
     {
       title: "Read what GramScope knows about its sources",
       description:
-        "Return GramScope's own notes about sources: what each source publishes, its topics, and what kind of source it is. Call with NO arguments to get the whole set — that is the intended use before deciding which sources to read for a question, and the set is small enough to read in one go. source_ids returns only the sources named, at most " +
-        `${MAX_SOURCES_PER_CALL} of them, and never pages. query searches the note text. These notes were written by set_source_note; they are this server's own assessments, not text taken from Telegram.`,
+        "Return source routing notes. about, topics, kind, lang, cadence and derived_from are GramScope assessments based on posts read; id, handle and title are third-party Telegram metadata copied from the resolved source. " +
+        "Call with NO arguments to get the whole set — that is the intended use before deciding which sources to read for a question, and the set is small enough to read in one go. source_ids is a distinct, non-paged mode: it returns only the named sources, at most " +
+        `${MAX_SOURCES_PER_CALL}, and clients must omit query, limit and cursor. Otherwise query searches the note text; for whole-store and query pages, limit is 1..200 and cursor continues the same mode.`,
       inputSchema: z.object({
         source_ids: z.array(z.string()).max(MAX_SOURCES_PER_CALL).optional(),
         query: z.string().optional(),

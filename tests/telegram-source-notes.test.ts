@@ -309,10 +309,14 @@ function writableFactory(initial: Array<{ id: number; message?: string }>) {
     connect: async () => true,
     sent,
     editShouldFail: false,
+    sendShouldFail: false,
     invoke: async (request: Record<string, unknown>) => {
       sent.push(request);
       const name = request.className as string;
       if (name?.endsWith("SendMessage")) {
+        if (client.sendShouldFail) {
+          throw new Error("replacement send failed");
+        }
         messages.push({ id: nextId++, message: request.message as string });
         return { className: "Updates" };
       }
@@ -413,6 +417,61 @@ describe("setSourceNote", () => {
     expect(
       fake.sent.filter((r) => String(r.className).endsWith("SendMessage")),
     ).toHaveLength(2);
+  });
+
+  it("preserves the original note when edit and replacement send both fail", async () => {
+    const original = stored("-100111", { about: "Original note." });
+    const fake = writableFactory([{ id: 5, message: original }]);
+    fake.client.editShouldFail = true;
+    fake.client.sendShouldFail = true;
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    await expect(
+      setSourceNote({ ...input, about: "Replacement note." }),
+    ).rejects.toMatchObject({ code: "INTERNAL_ERROR" });
+
+    expect(fake.messages).toEqual([{ id: 5, message: original }]);
+  });
+
+  it("reconciles concurrent first writes to the newest valid note", async () => {
+    const fake = writableFactory([]);
+    const readMessages = fake.client.getMessages;
+    let initialLookups = 0;
+    let releaseInitialLookups = () => {};
+    const bothInitialLookups = new Promise<void>((resolve) => {
+      releaseInitialLookups = resolve;
+    });
+    fake.client.getMessages = async (peer, params) => {
+      if (
+        params.search === noteMarker("-100111") &&
+        initialLookups < 2
+      ) {
+        initialLookups += 1;
+        if (initialLookups === 2) releaseInitialLookups();
+        await bothInitialLookups;
+        return [];
+      }
+      return readMessages(peer, params);
+    };
+    __setClientFactoryForTests((async () => fake.client) as never);
+
+    await Promise.all([
+      setSourceNote({ ...input, about: "First concurrent write." }),
+      setSourceNote({ ...input, about: "Second concurrent write." }),
+    ]);
+
+    expect(initialLookups).toBe(2);
+    expect(fake.messages).toHaveLength(1);
+    const sends = fake.sent.filter((request) =>
+      String(request.className).endsWith("SendMessage"),
+    );
+    expect(sends).toHaveLength(2);
+    expect(fake.messages[0]!.message).toBe(sends[1]!.message);
+
+    const listed = await listSourceNotes({ source_ids: ["-100111"] });
+    expect(listed.notes).toHaveLength(1);
+    expect(listed.duplicates).toEqual([]);
+    expect(listed.malformed).toEqual([]);
   });
 
   it("collapses duplicates left by an interrupted write", async () => {

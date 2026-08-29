@@ -10,7 +10,7 @@ created: 2026-08-26
 - [x] 2026-08-26 → resolved: Telegram library is `teleproto` (maintained TypeScript fork of GramJS), not GramJS. GramJS `telegram` last published 2025-02-12; teleproto v1.229.0 published 2026-08-25 and is pure JS with no native build step.
 - [x] 2026-08-26 → resolved: MCP auth is OAuth via WorkOS AuthKit with **static client credentials** pasted into ChatGPT. ChatGPT offers only OAuth / No Authentication / Mixed — no API-key option — but accepts static credentials, so neither DCR nor CIMD is required.
 - [x] 2026-08-26 → resolved in the Foundation plan: `list_dialogs(folder_id)` honors a folder's included minus excluded peers only, and ignores its exclude-muted / exclude-read / chat-type flags, because those depend on live state and would make output non-reproducible. The tool description says so explicitly.
-- [ ] 2026-08-26 → design: source-note serialization in the private `Source Meta` channel — human-readable post vs compact structured block; must keep stable lookup by numeric Telegram source ID.
+- [x] 2026-08-26 → resolved 2026-08-29: the private `Source Meta` channel was superseded by Saved Messages. Each note is one raw text message whose first line is the stable `gs:src:<absolute marked id>` lookup marker and whose body is compact JSON; the signed Telegram source ID remains inside the payload.
 - [x] 2026-08-26 → resolved 2026-08-27 by live probe, not by owner: the limits of Telegram search are measured and recorded under "Changes and findings". In short — search inside the account's own chats is free and pages cleanly; full-text search of public channels the account has not joined is Premium-only.
 - [x] 2026-08-26 → resolved 2026-08-27 by live probe, not by owner: comments are reachable through the channel peer without joining anything; the discussion group itself is not addressable. Details under "Changes and findings".
 - [x] 2026-08-26 → resolved 2026-08-27: the dedicated Telegram account exists and its credentials, plus GitHub and Vercel access, are in place. `.env.local` and the Vercel environment hold them; nothing was written to the repository.
@@ -118,18 +118,17 @@ created: 2026-08-26
 
 # Current point
 
-**Sub-projects 1-3 are complete, deployed and accepted.** Sub-project 3 closed
-at `adde93e`; gates at `f9952d9` were 352 fast tests, typecheck, lint and build
-green, live tier 25/25 with no skips.
+**Sub-projects 1-5a are complete, deployed, and owner-accepted. Sub-project 5b
+is implemented as version 1.4.0 with nineteen tools; all nine implementation
+tasks and the single broad-review fix wave are complete.** The task table below
+and the current acceptance paragraph are authoritative. The only remaining
+5b acceptance is owner-only work in the live ChatGPT Project: re-paste the
+updated Project instructions, reconnect so ChatGPT refreshes `tools/list`, and
+run the authenticated connector workflow from spec §12.4. Do not infer or
+claim that acceptance from repository, live-tier, or unauthenticated production
+checks.
 
-**Sub-project 4, Discovery is closed, deployed, accepted, and review-clean.**
-Everything through the closure commit `6b3d4bb` is pushed to `main`; the remote
-and the local branch are level. An earlier note here said the docs-only closure
-commit should stay local to avoid a redundant Vercel deploy; that was overridden
-on 2026-08-28 by the owner's standing "push everything" instruction.
-
-**Brainstorm in flight, 2026-08-28 (sub-project 5).** Decisions taken so far,
-none of them yet written into a spec:
+Historical sub-project 5 decisions retained below:
 - Sub-project 5 is split. **5a** = `mark_unread`, `join_channel`,
   `leave_channel`, `manage_folder`. **5b** = `save_message`,
   `get_saved_messages`, `search_saved_messages`, specced separately later.
@@ -267,8 +266,8 @@ sub-project:
   `docs/superpowers/plans/2026-08-29-gramscope-source-notes.md` (`619f608`,
   self-review fixes in `f2a6532`, formatting in `9924e32`), nine tasks.
   **Base commit for sub-project 5b: `e613575`** — every commit after it is 5b
-  work. Nothing is implemented yet; awaiting the owner's choice of execution
-  mode (subagent-driven or inline).
+  work. Implementation is complete; the outcomes and remaining owner-only
+  acceptance are recorded in the task table and current-point paragraph.
 
 Outcomes are filled in as each task closes, so another agent — Codex on this
 machine, or a fresh session — can resume from the first row that is not yet
@@ -285,11 +284,13 @@ complete without re-running anything above it.
 | 7 `set_source_note` tool | complete, `157c70f`; review clean; 490 fast tests; nineteen tools, six writers |
 | 8 Version 1.4.0, README, Project instructions, deploy | complete, `4da02fa`..`ee708c0`, clean after 1 fix round; 490 tests + build; production Ready; owner re-paste/reconnect and authenticated 1.4.0/19-tool check pending |
 | 9 Live tier | complete, `50d8522`; review approved; live 38 passed/1 skipped twice; Saved Messages zero-note baseline confirmed twice |
+| Final broad-review fix wave | complete in the single authorized wave; failure-atomic resend, concurrent-write reconciliation, stored semantic invariants, trust/tool-contract wording, and four minors resolved; 80 focused and 499 fast tests; full live tier 38 passed/1 skipped twice with zero-note cleanup; owner connector acceptance still pending |
 
-## How to resume sub-project 5b
+## Historical sub-project 5b execution record — superseded
 
-Read this before dispatching anything, whether you are Codex on this machine or
-a fresh session.
+This section preserves execution history only. **Do not use it to resume or
+dispatch work.** The task table and `# Current point` above are the authority;
+the final-fix brief and report hold the last review-wave evidence.
 
 - Spec: `docs/superpowers/specs/2026-08-29-gramscope-source-notes-design.md`.
   Plan: `docs/superpowers/plans/2026-08-29-gramscope-source-notes.md`, nine
@@ -306,7 +307,7 @@ a fresh session.
   recorded below. The plan text on disk was NOT rewritten for them, so the
   rulings override the plan where they conflict.
 
-### Sub-project 5b — paused 2026-08-29, hand-off point
+### Historical pause on 2026-08-29 — superseded, do not resume here
 
 **Work stopped here because the owner's weekly usage limit ran down, not
 because anything failed.** Tasks 1, 2 and 3 are complete, reviewed and pushed.
@@ -314,7 +315,8 @@ because anything failed.** Tasks 1, 2 and 3 are complete, reviewed and pushed.
 476 green. Task 4 was dispatched once and stopped before it wrote a single
 line; nothing of it exists on disk, so it starts from scratch.
 
-Resume by dispatching Task 4 from the plan. The briefs under
+The instruction at that time was to resume by dispatching Task 4 from the plan;
+it is now obsolete and must not be followed. The briefs under
 `.superpowers/sdd/2026-08-29-gramscope-source-notes/` are regenerable at any
 time with the plugin's `scripts/task-brief <plan> <N>`; the ledger there is
 git-ignored and does not travel, which is why everything below is here instead.
@@ -352,12 +354,12 @@ test actually guards, the module's plain-`Array` output contract. Fold it into
 Task 4, which edits that file anyway; do not delete the test and do not change
 `fetchPage`.
 
-**Deferred minors so far**, for the final whole-branch review to triage: no
-passing-boundary test at exactly a cap in `tests/schemas-source-note.test.ts`;
-an over-long topic is echoed whole into its error message; the fixed `limit: 20`
-in `findNoteMessages` has no comment explaining it; the Task 9 exact-id live
-lookup asserts one result but not explicitly that its returned `id` equals the
-target.
+**Final-review minors — resolved in the single 2026-08-29 fix wave:** exact-cap
+passing coverage now exercises every bounded field, topic count, and individual
+topic; over-long-topic errors name the index, measured length, and limit without
+echoing the value; the marker-search ceiling documents why cleanup scans only
+the newest 20 interrupted-write copies; and the live by-ID lookup asserts the
+returned note ID equals the target.
 
 ### Sub-project 5b — rulings taken on the owner's behalf during execution
 

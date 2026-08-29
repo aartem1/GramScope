@@ -68,7 +68,7 @@ describe("registerTools", () => {
     );
   });
 
-  it("registers set_source_note as a writer that names the fields it derives", () => {
+  it("registers set_source_note as a writer and advertises every input cap", () => {
     const server = fakeServer();
     registerTools(server as never);
     const tool = server.tools.find((t) => t.name === "set_source_note");
@@ -76,10 +76,17 @@ describe("registerTools", () => {
     expect(
       (tool!.config.annotations as { readOnlyHint: boolean }).readOnlyHint,
     ).toBe(false);
-    expect(String(tool!.config.description)).toContain("CHANGES ACCOUNT STATE");
+    const description = String(tool!.config.description);
+    expect(description).toContain("CHANGES ACCOUNT STATE");
+    expect(description).toContain("about is at most 300 characters");
+    expect(description).toContain("topics at most 12 entries");
+    expect(description).toContain("each topic at most 32 characters");
+    expect(description).toContain("lang at most 16 characters");
+    expect(description).toContain("cadence at most 32 characters");
+    expect(description).toContain("derived_from at most 60 characters");
   });
 
-  it("registers get_source_notes as a read", () => {
+  it("registers get_source_notes with distinct lookup modes and trust origins", () => {
     const server = fakeServer();
     registerTools(server as never);
     const tool = server.tools.find((t) => t.name === "get_source_notes");
@@ -87,7 +94,16 @@ describe("registerTools", () => {
     expect(
       (tool!.config.annotations as { readOnlyHint: boolean }).readOnlyHint,
     ).toBe(true);
-    expect(String(tool!.config.description)).not.toContain("third-party data");
+    const description = String(tool!.config.description);
+    expect(description).toContain("source_ids is a distinct, non-paged mode");
+    expect(description).toContain("omit query, limit and cursor");
+    expect(description).toContain("limit is 1..200");
+    expect(description).toContain(
+      "about, topics, kind, lang, cadence and derived_from are GramScope assessments",
+    );
+    expect(description).toContain(
+      "id, handle and title are third-party Telegram metadata",
+    );
   });
 
   it("names every manage_folder action in its schema", () => {
