@@ -279,7 +279,7 @@ complete without re-running anything above it.
 | 1 Note shape and input caps | complete, `b7d66df`..`4fd23e6`, clean after 1 fix round; 12 tests in the new suite |
 | 2 Wire format | complete, `d7646fe`..`c76f3d1`, clean after 1 fix round; 465 tests |
 | 3 Reading the store | complete, `cdd0983`..`4c01701`, clean after 1 fix round; 476 tests |
-| 4 Writing a note | not started |
+| 4 Writing a note | not started — dispatched once, stopped for usage limits before it wrote anything; tree clean |
 | 5 Deleting a note | not started |
 | 6 `get_source_notes` tool | not started |
 | 7 `set_source_note` tool | not started |
@@ -305,6 +305,57 @@ a fresh session.
 - The pre-flight conflict scan ran before Task 1 and produced five rulings,
   recorded below. The plan text on disk was NOT rewritten for them, so the
   rulings override the plan where they conflict.
+
+### Sub-project 5b — paused 2026-08-29, hand-off point
+
+**Work stopped here because the owner's weekly usage limit ran down, not
+because anything failed.** Tasks 1, 2 and 3 are complete, reviewed and pushed.
+`main` is at `3da6605`, the working tree is clean, and the fast suite stood at
+476 green. Task 4 was dispatched once and stopped before it wrote a single
+line; nothing of it exists on disk, so it starts from scratch.
+
+Resume by dispatching Task 4 from the plan. The briefs under
+`.superpowers/sdd/2026-08-29-gramscope-source-notes/` are regenerable at any
+time with the plugin's `scripts/task-brief <plan> <N>`; the ledger there is
+git-ignored and does not travel, which is why everything below is here instead.
+
+**Four things Task 4's implementer must be told, because the plan text is stale
+on each of them:**
+
+1. `findNoteMessages` no longer returns a bare array. It returns
+   `{ notes, malformed }` — `notes` newest-first and filtered to exact id
+   matches, `malformed` carrying `message_id` and `reason` for messages whose
+   first line equals that source's marker exactly. Everywhere the plan writes
+   `existing[0]`, `existing.length` or `existing.slice(1)`, it means
+   `found.notes`.
+2. **`setSourceNote` must delete the malformed messages too when it collapses
+   duplicates.** A malformed message under this source's exact marker is a
+   corrupt copy of the note being overwritten; leaving it means
+   `get_source_notes` reports it forever for a source whose note was just
+   rewritten correctly. The write path may do this because it is already
+   overwriting that source's note — the read path must still never delete
+   anything. This requirement is nowhere in the plan.
+3. Imports from one module go in a single statement. The plan shows each task
+   appending its own `import ... from "./client"` line to a file that already
+   imports from that module; those are additive instructions, not literal
+   statements, and a duplicate fails lint.
+4. Tests must call `__resetPeerCacheForTests()` from
+   `src/telegram/peer-resolve.ts` in the same `afterEach` that resets the
+   client. `resolveSource` keeps a module-scope cache and the plan's test code
+   omits the reset.
+
+**One correction carried over from Task 3, still outstanding.** The comment on
+the `TotalList` structural test in `tests/telegram-source-notes.test.ts` claims
+it catches a dropped `Array.from` in `fetchPage`. That was measured false —
+`collect` rebuilds the array independently. The comment should say what the
+test actually guards, the module's plain-`Array` output contract. Fold it into
+Task 4, which edits that file anyway; do not delete the test and do not change
+`fetchPage`.
+
+**Deferred minors so far**, for the final whole-branch review to triage: no
+passing-boundary test at exactly a cap in `tests/schemas-source-note.test.ts`;
+an over-long topic is echoed whole into its error message; the fixed `limit: 20`
+in `findNoteMessages` has no comment explaining it.
 
 ### Sub-project 5b — rulings taken on the owner's behalf during execution
 
