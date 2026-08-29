@@ -247,6 +247,13 @@ a fresh session.
     This also settles the deployed-version question — seventeen tools counted
     from inside ChatGPT is the 1.3.1 acceptance check, so no second browser
     token was needed.
+  - **Owner acceptance, spec §12.6, passed 2026-08-29:** the owner created the
+    ChatGPT Project from `docs/chatgpt-project-instructions.md`. That file is
+    now live prompt text, not a draft — every future edit to it changes the
+    standing instructions of a Project that already exists, and the repository
+    copy is only the source of truth for as long as the two are kept in step.
+    Whenever a tool's accepted input changes, check that file the way the final
+    fix wave had to.
   - Cleanup: delete the throwaway WorkOS client `GramScope acceptance probe`,
     `client_id` `client_01M14EP0KM5CFN1491QE4JZ0M3`.
 
