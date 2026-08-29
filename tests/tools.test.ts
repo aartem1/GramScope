@@ -60,12 +60,23 @@ describe("registerTools", () => {
     "search_messages",
   ];
 
-  it("registers all eighteen tools", () => {
+  it("registers all nineteen tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(
       [...READ_ONLY, ...WRITERS].sort(),
     );
+  });
+
+  it("registers set_source_note as a writer that names the fields it derives", () => {
+    const server = fakeServer();
+    registerTools(server as never);
+    const tool = server.tools.find((t) => t.name === "set_source_note");
+    expect(tool).toBeDefined();
+    expect(
+      (tool!.config.annotations as { readOnlyHint: boolean }).readOnlyHint,
+    ).toBe(false);
+    expect(String(tool!.config.description)).toContain("CHANGES ACCOUNT STATE");
   });
 
   it("registers get_source_notes as a read", () => {

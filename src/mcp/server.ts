@@ -17,6 +17,7 @@ import { registerMarkUnread } from "./tools/mark-unread";
 import { registerResolveTelegramUrl } from "./tools/resolve-telegram-url";
 import { registerSearchMessages } from "./tools/search-messages";
 import { registerSearchChannels } from "./tools/search-channels";
+import { registerSetSourceNote } from "./tools/set-source-note";
 
 export function registerTools(server: McpServer): void {
   registerListDialogs(server);
@@ -37,4 +38,5 @@ export function registerTools(server: McpServer): void {
   registerSearchChannels(server);
   registerGetSimilarChannels(server);
   registerGetSourceNotes(server);
+  registerSetSourceNote(server);
 }

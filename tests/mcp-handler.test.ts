@@ -119,7 +119,7 @@ describe("tools/list over a real MCP server", () => {
     expect(packageLock.packages?.[""]?.version).toBe("1.3.1");
   });
 
-  it("advertises all eighteen tools", async () => {
+  it("advertises all nineteen tools", async () => {
     const tools = await listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "get_channel",
@@ -140,6 +140,7 @@ describe("tools/list over a real MCP server", () => {
       "resolve_telegram_url",
       "search_channels",
       "search_messages",
+      "set_source_note",
     ]);
   });
 
