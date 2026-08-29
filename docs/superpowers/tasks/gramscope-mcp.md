@@ -91,6 +91,31 @@ created: 2026-08-26
 - 2026-08-28 — **sub-project 4 connector acceptance passed after reconnecting the ChatGPT connector.** `tools/list` exposed exactly 13 expected tools. The initial seed `@exampleaiseed` returned zero similar channels, so the owner selected the already-followed public channel `@exampleaichannel` as the fallback seed; it returned 10 candidates with `total_similar: 74` and `truncated: true`. All 10 candidates had usernames and 9 had descriptions. Four `get_messages` calls by candidate `@username` succeeded with no failures, and three recommendations were based on the posts read. The scenario made no joins and no Telegram account-state changes.
 - 2026-08-28 — **sub-project 4 is closed, deployed, accepted, and review-clean.** The final whole-implementation review over `4055790..3c38cf9` found 0 Critical, 2 Important, and 4 Minor findings. The Important findings were missing concurrent/empty details-cache flood protection and a misleading global `get_similar_channels` description. Commit `3c7383b2292387e523915ba07005a14f094b1427` fixed both and three opportunistic Minor findings; scoped re-review was CLEAN, addressed 2/2, residual 0/0/0, and Ready to close was Yes. Fresh final gates at that commit passed: 28 test files / 382 tests, typecheck, lint, and Next build; build-induced `tsconfig.json` churn was restored. `origin/main` was independently verified at the same full SHA.
 
+- 2026-08-29 — Saved Messages measured live during the 5b brainstorm, with a
+  throwaway probe that was deleted afterwards; the account was returned to its
+  baseline. Five facts, each of which constrains the design:
+  **(1)** teleproto's high-level `client.sendMessage` applies markdown parsing
+  by default — `**bold**` came back as `bold`, the asterisks consumed into an
+  entity. Raw `Api.messages.SendMessage` with no `entities` round-trips the text
+  byte-exact. A note store that mangles its own payload is worthless, so notes
+  must be written through the raw call, never through `sendMessage`.
+  **(2)** Search inside the `me` peer finds a note by `gs:src:1002222222222`, by
+  the bare digits, by the `-100…` marked form, and by a Russian word in the
+  body. Lookup by source id through search is therefore viable, and so is
+  topic search.
+  **(3)** `editMessage` on the account's own Saved Messages works. The probe
+  could only edit a message seconds old, so whether Telegram's 48-hour edit
+  window applies here is still unmeasured; the design must fall back to
+  delete-and-resend rather than assume.
+  **(4)** The `me` peer holds service messages — this account has an
+  undeletable `MessageActionHistoryClear` at id 86, which survived a
+  `DeleteMessages` with `revoke`. Every read path must filter to real text
+  messages instead of assuming each message is a note.
+  **(5)** A message id is not a stable handle for a note: after the probe's
+  message was deleted, reading that same id returned a different object rather
+  than nothing. Notes must be addressed by a content marker, not by a stored
+  message id.
+
 # Current point
 
 **Sub-projects 1-3 are complete, deployed and accepted.** Sub-project 3 closed
