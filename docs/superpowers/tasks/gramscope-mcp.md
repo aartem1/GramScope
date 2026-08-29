@@ -286,6 +286,47 @@ complete without re-running anything above it.
 | 8 Version 1.4.0, README, Project instructions, deploy | not started |
 | 9 Live tier | not started |
 
+## How to resume sub-project 5b
+
+Read this before dispatching anything, whether you are Codex on this machine or
+a fresh session.
+
+- Spec: `docs/superpowers/specs/2026-08-29-gramscope-source-notes-design.md`.
+  Plan: `docs/superpowers/plans/2026-08-29-gramscope-source-notes.md`, nine
+  tasks, executed with `superpowers:subagent-driven-development` — one
+  implementer subagent per task, a spec-plus-quality review after each, a
+  scoped re-review after each fix round, one broad whole-branch review at the
+  end.
+- **Base commit: `e613575`.** Everything after it is 5b work.
+- The working ledger is `.superpowers/sdd/2026-08-29-gramscope-source-notes/`,
+  git-ignored and machine-local, so it does not survive a clone. **Resume from
+  the task table above**, at the first row that is not `complete`; everything
+  above that row is committed and reviewed and must not be redone.
+- The pre-flight conflict scan ran before Task 1 and produced five rulings,
+  recorded below. The plan text on disk was NOT rewritten for them, so the
+  rulings override the plan where they conflict.
+
+### Sub-project 5b — pre-flight rulings
+
+- **The plan never names `tests/mcp-handler.test.ts` in a task's Files block**,
+  yet that file holds both the hardcoded exact tool list
+  (`advertises all seventeen tools`) and the five assertions pinning version
+  1.3.1. Task 6 and Task 7 each update the tool list and its title; Task 8
+  updates the version assertions and title. Without this those tasks land red
+  on a test the plan does not mention.
+- `tests/tools.test.ts` builds its exact set from a local `READ_ONLY` array
+  plus `WRITERS`. Task 6 adds `get_source_notes` to `READ_ONLY`; Task 7 adds
+  `set_source_note` to `WRITERS` in `tests/tool-names.ts`.
+- The plan shows Tasks 3, 4 and 5 each appending their own
+  `import ... from "./client"` to `src/telegram/source-notes.ts`. Those are
+  additive instructions, not literal statements: imports from one module are
+  merged into a single statement.
+- Tasks 4 and 5 call `__resetPeerCacheForTests()` in the same `afterEach` that
+  resets the client. `resolveSource` keeps a module-scope cache and the plan's
+  test code omits the reset.
+- Task 3's test block opens a second `import { afterEach } from "vitest"` in a
+  file that already imports from vitest; merge it into the existing import.
+
 ## How to resume sub-project 5a
 
 Read this before dispatching anything, whether you are Codex on this machine or
