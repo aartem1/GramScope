@@ -375,7 +375,7 @@ Input:
 - username;
 - Telegram URL.
 
-Include source note if available.
+Source notes are returned separately by `get_source_notes`.
 
 ---
 
@@ -628,10 +628,11 @@ ChatGPT should be able to organize newly discovered sources itself.
 
 Create, replace, or delete the single compact note GramScope keeps about a
 source in Telegram Saved Messages. This is a mutating tool. For `action: set`,
-`about` is capped at 300 characters, `topics` at 12 entries, and `kind` must
-be one of `reporting`, `aggregator`, `opinion`, `promo`, or `mixed`. Notes must
-be based on posts actually read; a source's self-description is not an
-observation.
+`about` is capped at 300 characters, `topics` at 12 entries with each topic at
+most 32 characters, `lang` at 16 characters, `cadence` at 32 characters, and
+`derived_from` at 60 characters. `kind` must be one of `reporting`,
+`aggregator`, `opinion`, `promo`, or `mixed`. Notes must be based on posts
+actually read; a source's self-description is not an observation.
 
 Required inputs for setting: `source_id`, `about`, `topics`, and `kind`.
 Optional inputs: `lang`, `cadence`, and `derived_from`. Use `action: delete`
@@ -642,9 +643,11 @@ with `source_id` to remove a note.
 #### `get_source_notes`
 
 Read GramScope's compact source-routing notes from Saved Messages. With no
-arguments, return the whole set; `source_ids` selects specific sources and
-`query` searches note text. Results support `limit` and `cursor` pagination.
-These are the server's own assessments, not Telegram content.
+arguments, return the whole set. Use `source_ids` for a named-source lookup
+(at most 25 IDs); when `source_ids` is present, omit `query`, `limit`, and
+`cursor`, because named-source lookup takes precedence and never pages.
+Otherwise, `query` searches note text and `limit` (1–200) plus `cursor` provide
+pagination. These are the server's own assessments, not Telegram content.
 
 ---
 
@@ -1052,9 +1055,9 @@ These should be resolved during Superpowers design/refinement rather than assume
    - Target: WorkOS AuthKit + single-user allowlist.
    - Verify the current ChatGPT Developer Mode / MCP authorization requirements at implementation time.
 
-3. **Metadata note serialization**
-   - Human-readable Telegram post vs a compact structured block.
-   - Preserve stable lookup by numeric Telegram source ID either way.
+3. **Source-note storage**
+   - Settled: Telegram Saved Messages hold one compact GramScope-authored note per source.
+   - Preserve stable lookup by numeric Telegram source ID.
 
 4. **Global Telegram search behavior**
    - Confirm practical API limits, pagination behavior, and any paid/global-search constraints with the actual dedicated account.
