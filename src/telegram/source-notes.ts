@@ -162,27 +162,47 @@ function collect(messages: RawMessage[]): {
   };
 }
 
+export type FoundNotes = {
+  notes: Array<{ id: number; note: SourceNote }>;
+  malformed: Array<{ message_id: number; reason: string }>;
+};
+
 /** Every message carrying one source's marker, newest first. The marker
  *  narrows; the parse decides, because Telegram matches word prefixes and a
- *  longer id starts with a shorter one. */
+ *  longer id starts with a shorter one.
+ *
+ * A malformed hit is attributed to this source only when its first line is
+ * `noteMarker(sourceId)` exactly: the body is corrupt, so the id inside it
+ * cannot be trusted, and the marker search matches word prefixes, so a
+ * malformed message belonging to a different, longer source id must not be
+ * blamed on this one. A malformed hit under a different marker is left for
+ * the general scan to report. */
 export async function findNoteMessages(
   client: TelegramLike,
   sourceId: string,
-): Promise<Array<{ id: number; note: SourceNote }>> {
-  const page = await fetchPage(client, {
-    limit: 20,
-    search: noteMarker(sourceId),
-  });
-  const found: Array<{ id: number; note: SourceNote }> = [];
+): Promise<FoundNotes> {
+  const marker = noteMarker(sourceId);
+  const page = await fetchPage(client, { limit: 20, search: marker });
+  const notes: FoundNotes["notes"] = [];
+  const malformed: FoundNotes["malformed"] = [];
   for (const message of page) {
     const text = textOf(message);
     if (text === undefined) continue;
     const outcome = parseNoteMessage(text);
     if (outcome.kind === "note" && outcome.note.id === sourceId) {
-      found.push({ id: message.id, note: outcome.note });
+      notes.push({ id: message.id, note: outcome.note });
+    } else if (outcome.kind === "malformed") {
+      const newline = text.indexOf("\n");
+      const firstLine = newline === -1 ? text : text.slice(0, newline);
+      if (firstLine === marker) {
+        malformed.push({ message_id: message.id, reason: outcome.reason });
+      }
     }
   }
-  return found.sort((a, b) => b.id - a.id);
+  return {
+    notes: notes.sort((a, b) => b.id - a.id),
+    malformed,
+  };
 }
 
 export async function listSourceNotes(
@@ -200,18 +220,20 @@ export async function listSourceNotes(
     if (input.source_ids) {
       const notes: SourceNote[] = [];
       const duplicates: GetSourceNotesResult["duplicates"] = [];
+      const malformed: GetSourceNotesResult["malformed"] = [];
       for (const sourceId of input.source_ids) {
         const found = await findNoteMessages(client, sourceId);
-        if (found.length === 0) continue;
-        notes.push(found[0]!.note);
-        if (found.length > 1) {
+        malformed.push(...found.malformed);
+        if (found.notes.length === 0) continue;
+        notes.push(found.notes[0]!.note);
+        if (found.notes.length > 1) {
           duplicates.push({
             source_id: sourceId,
-            message_ids: found.map((entry) => entry.id),
+            message_ids: found.notes.map((entry) => entry.id),
           });
         }
       }
-      return { notes, duplicates, malformed: [] };
+      return { notes, duplicates, malformed };
     }
 
     const fingerprint = scopeFingerprint({ query: input.query });

@@ -189,6 +189,31 @@ describe("listSourceNotes", () => {
     expect(result.next_cursor).toBeUndefined();
   });
 
+  it("reports a malformed note for a named source and contributes no note", async () => {
+    __setClientFactoryForTests(
+      factory([{ id: 9, message: "gs:src:100111\nbroken" }]) as never,
+    );
+    const result = await listSourceNotes({ source_ids: ["-100111"] });
+    expect(result.notes).toEqual([]);
+    expect(result.malformed).toEqual([
+      { message_id: 9, reason: "body is not valid JSON" },
+    ]);
+  });
+
+  it("returns the note and reports a malformed copy found under the same marker", async () => {
+    __setClientFactoryForTests(
+      factory([
+        { id: 10, message: stored("-100111") },
+        { id: 9, message: "gs:src:100111\nbroken" },
+      ]) as never,
+    );
+    const result = await listSourceNotes({ source_ids: ["-100111"] });
+    expect(result.notes.map((n) => n.id)).toEqual(["-100111"]);
+    expect(result.malformed).toEqual([
+      { message_id: 9, reason: "body is not valid JSON" },
+    ]);
+  });
+
   it("rejects more source_ids than one call may name", async () => {
     __setClientFactoryForTests(factory([]) as never);
     const ids = Array.from({ length: 26 }, (_, i) => `-1001${i}`);
@@ -217,5 +242,40 @@ describe("listSourceNotes", () => {
     await expect(
       listSourceNotes({ limit: 1, query: "other", cursor: first.next_cursor }),
     ).rejects.toThrow(/scope/i);
+  });
+
+  // teleproto returns a TotalList — an Array subclass carrying a `total`
+  // property — and filter/map/sort preserve the subclass through
+  // Symbol.species. The other fakes in this file build their result from a
+  // plain array, which would hide a leak; this one mirrors teleproto's own
+  // class (Helpers.js:448) so a dropped Array.from in fetchPage fails here.
+  it("returns plain arrays, not the TL library's Array subclass", async () => {
+    class TotalList<T> extends Array<T> {
+      total: number;
+      constructor() {
+        super();
+        this.total = 0;
+      }
+    }
+    const totalList = (items: unknown[]) => {
+      const list = new TotalList<unknown>();
+      list.push(...items);
+      return list;
+    };
+
+    __setClientFactoryForTests(
+      (async () => ({
+        connected: true,
+        connect: async () => true,
+        invoke: async () => true,
+        getDialogs: async () => [],
+        getEntity: async () => ({ className: "User", id: { value: 1n } }),
+        getMessages: async () =>
+          totalList([{ id: 10, message: stored("-100111") }]),
+      })) as never,
+    );
+
+    const result = await listSourceNotes({});
+    expect(result.notes.constructor).toBe(Array);
   });
 });
