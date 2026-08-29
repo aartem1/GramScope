@@ -253,6 +253,18 @@ sub-project:
   forwarding/saving semantics so the original source remains traceable") and its
   `Source Meta` sections describe work that will not be built. They are stale as
   of this decision and are rewritten when 5b ships.
+- **The owner delegated the shape of a note** ("подумай как лучше всего
+  организовать, я не знаю"), keeping one binding constraint: the store stays
+  compact and never becomes a dump. The model chosen is one note per source,
+  overwritten in place, with per-field caps — bounded by the account's
+  inventory rather than by the number of questions asked. Two tools,
+  `set_source_note` and `get_source_notes`, replace the five that the README
+  and sub-project 6 between them promised. Nineteen tools, version 1.4.0.
+- The design was approved section by section in chat on 2026-08-29 and written
+  up as `docs/superpowers/specs/2026-08-29-gramscope-source-notes-design.md`
+  (`11bf2c1`). **Awaiting the owner's review of the written spec.** Nothing is
+  planned or implemented yet; the next step after approval is
+  `superpowers:writing-plans`.
 
 ## How to resume sub-project 5a
 
@@ -647,6 +659,7 @@ From Task 12 (`tools/list` handler test):
 - brief: README.md
 - spec (sub-project 1, Foundation): docs/superpowers/specs/2026-08-26-gramscope-foundation-design.md
 - plan (sub-project 1, Foundation): docs/superpowers/plans/2026-08-26-gramscope-foundation.md
+- spec (sub-project 5b, Source Notes): docs/superpowers/specs/2026-08-29-gramscope-source-notes-design.md
 - spec (sub-project 2, Reading): docs/superpowers/specs/2026-08-27-gramscope-reading-design.md
 - spec (sub-project 3, Research): docs/superpowers/specs/2026-08-27-gramscope-research-design.md
 - plan (sub-project 2, Reading): docs/superpowers/plans/2026-08-27-gramscope-reading.md
