@@ -277,7 +277,7 @@ complete without re-running anything above it.
 | Task | State |
 | --- | --- |
 | 1 Note shape and input caps | complete, `b7d66df`..`4fd23e6`, clean after 1 fix round; 12 tests in the new suite |
-| 2 Wire format | not started |
+| 2 Wire format | complete, `d7646fe`..`c76f3d1`, clean after 1 fix round; 465 tests |
 | 3 Reading the store | not started |
 | 4 Writing a note | not started |
 | 5 Deleting a note | not started |
@@ -305,6 +305,28 @@ a fresh session.
 - The pre-flight conflict scan ran before Task 1 and produced five rulings,
   recorded below. The plan text on disk was NOT rewritten for them, so the
   rulings override the plan where they conflict.
+
+### Sub-project 5b — rulings taken on the owner's behalf during execution
+
+- **Task 1:** the plan's own test snippet covered cap violations for `about` and
+  `topics` only, leaving `MAX_LANG_CHARS`, `MAX_CADENCE_CHARS` and
+  `MAX_DERIVED_FROM_CHARS` — three of the six exported caps — with no
+  behavioural test at all. Spec §5 requires every cap to be enforced at input
+  validation with its limit named, so the three tests were added. Cost if
+  wrong: three redundant tests.
+- **Task 2:** the plan's `parseNoteMessage` decided "is this message ours?" with
+  `^gs:src:\d+$`, so a first line carrying the `gs:src:` prefix with a corrupt
+  suffix — and a message with no body at all — were classified `other` and
+  skipped silently by every caller. **The prefix, not the digits, now decides.**
+  `gs:src:` is this server's own namespace, so such a message is a corrupt note
+  of ours, and the `malformed` outcome exists precisely to keep a corrupt note
+  visible. The argument that settles it is spec §14: it provides for the marker
+  gaining a version segment if the wire format ever changes, and under a
+  digit-only regex every note in the older format would have become silently
+  invisible at exactly the moment the agent most needs to see it. Cost if
+  wrong: a foreign message that happens to start with this namespace is
+  reported as malformed noise — visible rather than silent, and effectively
+  impossible.
 
 ### Sub-project 5b — pre-flight rulings
 
