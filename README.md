@@ -230,41 +230,13 @@ The MCP must not hard-code these categories.
 
 ChatGPT should be able to inspect and manage whatever folders exist.
 
-### Saved Messages = saved items
+### Saved Messages = GramScope source notes
 
-Use Telegram Saved Messages for posts intentionally saved for later.
-
-No separate bookmarks database in the MVP.
-
-### Source notes = private Telegram metadata channel
-
-Create one private Telegram channel owned by the dedicated account, for example:
-
-`Source Meta`
-
-Use it to store structured notes about subscribed or discovered sources.
-
-Each source should have a stable machine-readable identifier in its note.
-
-Suggested human-readable format:
-
-```text
-Source: @example_channel
-Telegram ID: 123456789
-Topics: AI, research
-Type: primary / aggregator / commentary
-Notes: Strong for model releases and research papers.
-Tags: #source_123456789 #ai #research
-```
-
-Exact serialization may change during implementation.
-
-Important properties:
-- editable;
-- searchable;
-- understandable by a human;
-- stable lookup by Telegram source ID;
-- no external database required.
+Telegram Saved Messages are the store for compact notes authored by GramScope
+about sources it has read. They are a routing table for future research, not a
+bookmark collection or forwarded-post archive. Each note has a stable source
+identifier and records what the source publishes, useful topics, and the
+server's assessment of its kind.
 
 ---
 
@@ -358,7 +330,7 @@ type TelegramSource = {
 
 Names are provisional. Optimize naming and schemas during implementation for MCP/LLM ergonomics.
 
-The current MCP exposes seventeen tools, grouped below.
+The current MCP exposes nineteen tools, grouped below.
 
 ### A. Dialogs and source inventory
 
@@ -514,24 +486,6 @@ Do not impose artificial recent-history limits.
 
 ---
 
-#### `search_saved_messages`
-
-Search Saved Messages.
-
-Parameters:
-- query;
-- dates;
-- limit;
-- cursor.
-
----
-
-#### `get_saved_messages`
-
-Retrieve Saved Messages by date range.
-
----
-
 #### `resolve_telegram_url`
 
 Accept a Telegram URL such as a channel or post URL and resolve it into structured Telegram entities.
@@ -668,40 +622,29 @@ ChatGPT should be able to organize newly discovered sources itself.
 
 ---
 
-### H. Saved content and notes
+### H. Source notes
 
-#### `save_message`
+#### `set_source_note`
 
-Save/bookmark a message into Telegram Saved Messages.
+Create, replace, or delete the single compact note GramScope keeps about a
+source in Telegram Saved Messages. This is a mutating tool. For `action: set`,
+`about` is capped at 300 characters, `topics` at 12 entries, and `kind` must
+be one of `reporting`, `aggregator`, `opinion`, `promo`, or `mixed`. Notes must
+be based on posts actually read; a source's self-description is not an
+observation.
 
-Prefer native forwarding/saving semantics where possible so the original source remains traceable.
+Required inputs for setting: `source_id`, `about`, `topics`, and `kind`.
+Optional inputs: `lang`, `cadence`, and `derived_from`. Use `action: delete`
+with `source_id` to remove a note.
 
 ---
 
-#### `get_channel_note`
+#### `get_source_notes`
 
-Get our metadata note for a source from the private `Source Meta` channel.
-
-If no note exists, return a clean `not_found` result.
-
----
-
-#### `set_channel_note`
-
-Create or update the metadata note for a source.
-
-Should use a stable source identifier to avoid duplicate notes when usernames change.
-
-Possible fields:
-- topics;
-- source type;
-- quality/usefulness note;
-- strengths;
-- weaknesses;
-- tags;
-- free-text notes.
-
-ChatGPT may decide the content.
+Read GramScope's compact source-routing notes from Saved Messages. With no
+arguments, return the whole set; `source_ids` selects specific sources and
+`query` searches note text. Results support `limit` and `cursor` pagination.
+These are the server's own assessments, not Telegram content.
 
 ---
 
@@ -735,10 +678,8 @@ Reason:
 
 Reconsider later if a concrete workflow requires it.
 
-Writing to:
-- Saved Messages;
-- the private metadata channel;
-- Telegram folders/subscriptions/read state
+Writing to Saved Messages (for GramScope-authored source notes), Telegram
+folders/subscriptions, and read state
 
 is in scope.
 
@@ -985,8 +926,7 @@ At minimum test:
 - resolve URL;
 - join/leave test channel where practical;
 - folder operations;
-- Saved Messages;
-- metadata notes.
+- Saved Messages source notes.
 
 ### MCP
 - tools have valid schemas;
@@ -1027,27 +967,22 @@ Use Superpowers to refine the design before implementation, but the likely deliv
 - `resolve_telegram_url`;
 - `get_thread`;
 - pinned messages;
-- Saved Messages reading/search.
+- Saved Messages source-note reading.
 
 ### Slice 4 — Source discovery
 
 - `search_channels`;
 - `get_similar_channels`.
 
-### Slice 5 — State changes (five deployed in 1.3.1; six planned for full Slice 5)
+### Slice 5 — State changes (last sub-project; nineteen tools in 1.4.0)
 
 - `mark_read`;
 - `mark_unread`;
 - `join_channel`;
 - `leave_channel`;
 - `manage_folder`;
-- `save_message` (planned for sub-project 5b).
-
-### Slice 6 — Source metadata
-
-- private `Source Meta` channel;
-- `get_channel_note`;
-- `set_channel_note`.
+- `set_source_note`;
+- `get_source_notes`.
 
 Then connect the MCP to ChatGPT and validate real workflows before adding infrastructure.
 
@@ -1079,7 +1014,7 @@ The MVP should be considered useful when ChatGPT can successfully complete all o
 
 ### Saved research
 
-> Find the Telegram posts I previously saved about coding agents.
+> Read GramScope's source notes and find the channels worth checking for coding-agent research.
 
 ---
 
@@ -1143,8 +1078,7 @@ Treat these as accepted unless new evidence gives a concrete reason to revisit t
 - Telegram is the source of truth.
 - Telegram folders provide source classification.
 - Telegram read state provides processed/unprocessed state.
-- Saved Messages provide bookmarks.
-- A private Telegram channel stores source notes.
+- Saved Messages store GramScope's compact source-routing notes.
 - No separate database initially.
 - No semantic/vector index initially.
 - No background worker initially.
