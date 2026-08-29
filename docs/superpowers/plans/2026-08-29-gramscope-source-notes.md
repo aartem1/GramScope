@@ -333,7 +333,8 @@ const note: SourceNote = {
   id: "-1002222222222",
   handle: "@examplechannel",
   title: "My **Cosmos**",
-  about: 'Covers `launches`, _orbital_ mechanics and **originals**; calls itself "the" source.',
+  about:
+    'Covers `launches`, _orbital_ mechanics and **originals**; calls itself "the" source.',
   topics: ["space", "launches"],
   kind: "reporting",
   lang: "ru",
