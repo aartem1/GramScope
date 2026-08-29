@@ -276,7 +276,7 @@ complete without re-running anything above it.
 
 | Task | State |
 | --- | --- |
-| 1 Note shape and input caps | not started |
+| 1 Note shape and input caps | complete, `b7d66df`..`4fd23e6`, clean after 1 fix round; 12 tests in the new suite |
 | 2 Wire format | not started |
 | 3 Reading the store | not started |
 | 4 Writing a note | not started |
