@@ -359,6 +359,13 @@ in `findNoteMessages` has no comment explaining it.
 
 ### Sub-project 5b — rulings taken on the owner's behalf during execution
 
+- **Task 5:** `deleteSourceNote` deletes both well-formed note messages and
+  malformed messages attributed by `findNoteMessages` to the source's exact
+  marker, and reports `deleted: true` if either existed. The plan's bare-array
+  code predates Task 3's corruption-visibility contract, while Task 5 itself
+  requires deleting every message carrying that source's marker. Cost if
+  wrong: an explicit delete removes a corrupt claimed note instead of leaving
+  it visible for diagnosis.
 - **Task 4 gate repair:** the full fast suite reproducibly timed out in the
   pre-existing `tests/env-file.test.ts` durability test after every other fast
   test passed (470/470 after Task 4). The changed source-note surface is not
