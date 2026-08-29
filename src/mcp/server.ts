@@ -4,6 +4,7 @@ import { registerGetMessage } from "./tools/get-message";
 import { registerGetMessages } from "./tools/get-messages";
 import { registerGetPinnedMessages } from "./tools/get-pinned-messages";
 import { registerGetSimilarChannels } from "./tools/get-similar-channels";
+import { registerGetSourceNotes } from "./tools/get-source-notes";
 import { registerGetThread } from "./tools/get-thread";
 import { registerGetUnreadSummary } from "./tools/get-unread-summary";
 import { registerJoinChannel } from "./tools/join-channel";
@@ -35,4 +36,5 @@ export function registerTools(server: McpServer): void {
   registerGetPinnedMessages(server);
   registerSearchChannels(server);
   registerGetSimilarChannels(server);
+  registerGetSourceNotes(server);
 }

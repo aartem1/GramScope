@@ -50,6 +50,7 @@ describe("registerTools", () => {
     "get_messages",
     "get_pinned_messages",
     "get_similar_channels",
+    "get_source_notes",
     "get_thread",
     "get_unread_summary",
     "list_dialogs",
@@ -59,12 +60,23 @@ describe("registerTools", () => {
     "search_messages",
   ];
 
-  it("registers all seventeen tools", () => {
+  it("registers all eighteen tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(
       [...READ_ONLY, ...WRITERS].sort(),
     );
+  });
+
+  it("registers get_source_notes as a read", () => {
+    const server = fakeServer();
+    registerTools(server as never);
+    const tool = server.tools.find((t) => t.name === "get_source_notes");
+    expect(tool).toBeDefined();
+    expect(
+      (tool!.config.annotations as { readOnlyHint: boolean }).readOnlyHint,
+    ).toBe(true);
+    expect(String(tool!.config.description)).not.toContain("third-party data");
   });
 
   it("names every manage_folder action in its schema", () => {

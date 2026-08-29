@@ -119,7 +119,7 @@ describe("tools/list over a real MCP server", () => {
     expect(packageLock.packages?.[""]?.version).toBe("1.3.1");
   });
 
-  it("advertises all seventeen tools", async () => {
+  it("advertises all eighteen tools", async () => {
     const tools = await listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "get_channel",
@@ -127,6 +127,7 @@ describe("tools/list over a real MCP server", () => {
       "get_messages",
       "get_pinned_messages",
       "get_similar_channels",
+      "get_source_notes",
       "get_thread",
       "get_unread_summary",
       "join_channel",
