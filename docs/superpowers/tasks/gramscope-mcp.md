@@ -284,7 +284,7 @@ complete without re-running anything above it.
 | 6 `get_source_notes` tool | complete, `37166db`; review clean; 489 fast tests after gate repair fix round 2; eighteen tools |
 | 7 `set_source_note` tool | complete, `157c70f`; review clean; 490 fast tests; nineteen tools, six writers |
 | 8 Version 1.4.0, README, Project instructions, deploy | complete, `4da02fa`..`ee708c0`, clean after 1 fix round; 490 tests + build; production Ready; owner re-paste/reconnect and authenticated 1.4.0/19-tool check pending |
-| 9 Live tier | not started |
+| 9 Live tier | complete, `50d8522`; review approved; live 38 passed/1 skipped twice; Saved Messages zero-note baseline confirmed twice |
 
 ## How to resume sub-project 5b
 
@@ -355,7 +355,9 @@ Task 4, which edits that file anyway; do not delete the test and do not change
 **Deferred minors so far**, for the final whole-branch review to triage: no
 passing-boundary test at exactly a cap in `tests/schemas-source-note.test.ts`;
 an over-long topic is echoed whole into its error message; the fixed `limit: 20`
-in `findNoteMessages` has no comment explaining it.
+in `findNoteMessages` has no comment explaining it; the Task 9 exact-id live
+lookup asserts one result but not explicitly that its returned `id` equals the
+target.
 
 ### Sub-project 5b — rulings taken on the owner's behalf during execution
 
