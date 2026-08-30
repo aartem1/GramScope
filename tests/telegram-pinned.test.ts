@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getPinnedMessages } from "@/telegram/pinned";
 import {
   __resetClientForTests,
@@ -9,6 +9,7 @@ import { decodePinnedCursor } from "@/pagination";
 import { MAX_RESPONSE_BYTES } from "@/schemas/size";
 
 const A = "-1001111111111";
+let lastIterDownload: ReturnType<typeof vi.fn> | undefined;
 
 function largeMessage(id: number, textBytes: number) {
   return {
@@ -21,6 +22,10 @@ function largeMessage(id: number, textBytes: number) {
 
 function install(reply: unknown) {
   const sent: Array<Record<string, unknown>> = [];
+  const iterDownload = vi.fn(async function* () {
+    throw new Error("a metadata-only tool attempted a media download");
+  });
+  lastIterDownload = iterDownload;
   __setClientFactoryForTests(async () => ({
     connected: true,
     connect: async () => true,
@@ -47,6 +52,7 @@ function install(reply: unknown) {
       sent.push({ ...(request as Record<string, unknown>) });
       return reply;
     },
+    iterDownload,
   }));
   return sent;
 }
@@ -83,6 +89,7 @@ describe("getPinnedMessages", () => {
     expect(page.messages.map((m) => m.id)).toEqual([800]);
     expect(page.messages[0]!.is_read).toBe(false);
     expect(page.next_cursor).toBeUndefined();
+    expect(lastIterDownload).not.toHaveBeenCalled();
   });
 
   it("returns an empty list when nothing is pinned", async () => {

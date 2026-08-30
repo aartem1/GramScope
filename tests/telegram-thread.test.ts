@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getThread } from "@/telegram/thread";
 import {
   __resetClientForTests,
@@ -11,6 +11,7 @@ import { MAX_RESPONSE_BYTES } from "@/schemas/size";
 
 const CHANNEL = "-1001111111111";
 const GROUP = "-1002222222222";
+let lastIterDownload: ReturnType<typeof vi.fn> | undefined;
 
 function post(overrides: Record<string, unknown> = {}) {
   return {
@@ -58,6 +59,10 @@ function install(options: {
   replies?: unknown;
 }) {
   const invoked: Invoked[] = [];
+  const iterDownload = vi.fn(async function* () {
+    throw new Error("a metadata-only tool attempted a media download");
+  });
+  lastIterDownload = iterDownload;
   __setClientFactoryForTests(async () => ({
     connected: true,
     connect: async () => true,
@@ -70,6 +75,7 @@ function install(options: {
       if (r.className === "messages.GetReplies") return options.replies;
       return {};
     },
+    iterDownload,
   }));
   return invoked;
 }
@@ -134,6 +140,7 @@ describe("getThread", () => {
     // so they carry that chat_id and no read state.
     expect(result.comments[0]!.chat_id).toBe(GROUP);
     expect(result.comments[0]!.is_read).toBeUndefined();
+    expect(lastIterDownload).not.toHaveBeenCalled();
   });
 
   it("issues a cursor that resumes below the oldest comment served", async () => {

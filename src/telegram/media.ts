@@ -3,7 +3,16 @@ import { mediaError } from "../errors/taxonomy";
 import { fetchDialogIndex } from "./dialog-index";
 import type { TelegramLike } from "./client";
 import { resolveSource, type ResolvedSource } from "./peer-resolve";
-import type { MediaAsset } from "../media/service";
+
+export type MediaAsset = {
+  sourceId: string;
+  messageId: number;
+  sourceHandle: string;
+  descriptor: MediaDescriptor;
+  rawMessage: Record<string, unknown>;
+  rawMedia: Record<string, unknown>;
+  thumbnailLocation?: unknown;
+};
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null

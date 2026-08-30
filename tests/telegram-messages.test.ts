@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getMessage,
   getMessages,
@@ -489,6 +489,7 @@ describe("renderPage", () => {
 });
 
 describe("getMessages", () => {
+  let lastIterDownload: ReturnType<typeof vi.fn> | undefined;
   const dialogs = [
     {
       id: { value: -100111n },
@@ -513,7 +514,12 @@ describe("getMessages", () => {
     fail?: string,
     reads: string[] = [],
   ) {
-    return async () => ({
+    return async () => {
+      const iterDownload = vi.fn(async function* () {
+        throw new Error("a metadata-only tool attempted a media download");
+      });
+      lastIterDownload = iterDownload;
+      return {
       connected: true,
       connect: async () => true,
       invoke: async () => ({
@@ -537,7 +543,9 @@ describe("getMessages", () => {
         const limit = typeof params.limit === "number" ? params.limit : 0;
         return (byPeer[entity] ?? []).slice(0, limit);
       },
-    });
+        iterDownload,
+      };
+    };
   }
 
   const post = (id: number, date = 1735689600) => ({
@@ -563,6 +571,7 @@ describe("getMessages", () => {
     expect(page.sources[0]!.title).toBe("Alpha");
     expect(page.sources[0]!.messages!.map((m) => m.id)).toEqual([10, 9]);
     expect(page.sources[0]!.messages![0]!.url).toBe("https://t.me/alpha/10");
+    expect(lastIterDownload).not.toHaveBeenCalled();
   });
 
   it("excludes a folder member named by its t.me alias", async () => {

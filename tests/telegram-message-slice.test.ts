@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { fetchSlice, type SliceRequest } from "@/telegram/message-slice";
+import { describe, expect, it, vi } from "vitest";
+import { MEDIA_TYPES, fetchSlice, type SliceRequest } from "@/telegram/message-slice";
 import type { TelegramLike } from "@/telegram/client";
 
 const SOURCE_ID = "-1001234567890";
@@ -17,7 +17,10 @@ function history(count: number, startId = 1000) {
 function client(
   messages: unknown[],
   seen?: (params: Record<string, unknown>) => void,
-): TelegramLike {
+): TelegramLike & { iterDownload: ReturnType<typeof vi.fn> } {
+  const iterDownload = vi.fn(async function* () {
+    throw new Error("a metadata-only tool attempted a media download");
+  });
   return {
     connected: true,
     connect: async () => true,
@@ -29,19 +32,27 @@ function client(
       const limit = typeof params.limit === "number" ? params.limit : 0;
       return messages.slice(0, limit);
     },
-    iterDownload: async function* () {},
+    iterDownload,
   };
 }
 
 const base: SliceRequest = { sourceId: SOURCE_ID, limit: 5, offsetId: 0 };
 
 describe("fetchSlice", () => {
+  it("keeps search filters limited to exact Telegram media filters", () => {
+    expect(MEDIA_TYPES).toEqual([
+      "photo", "video", "document", "audio", "voice", "url", "gif",
+    ]);
+  });
+
   it("returns mapped messages newest first", async () => {
-    const slice = await fetchSlice(client(history(5)), base);
+    const fake = client(history(5));
+    const slice = await fetchSlice(fake, base);
     expect(slice.messages.map((m) => m.id)).toEqual([
       1000, 999, 998, 997, 996,
     ]);
     expect(slice.messages[0]!.chat_id).toBe(SOURCE_ID);
+    expect(fake.iterDownload).not.toHaveBeenCalled();
   });
 
   it("reports exhaustion when Telegram returns fewer than the limit", async () => {

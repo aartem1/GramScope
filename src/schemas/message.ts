@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { inputPeerMarkedId, readBigId } from "../telegram/peer-id";
+import { mediaDescriptorSchema, mediaId, type MediaDescriptor } from "./media";
 
 /**
  * Three fields from the design's §6 sketch are deliberately absent.
@@ -9,6 +10,10 @@ import { inputPeerMarkedId, readBigId } from "../telegram/peer-id";
  * `users.getUsers` per distinct author or origin. All three are omissions in
  * service of the 256KB page budget, which is what §6 exists to protect.
  */
+export const messageMediaSchema = mediaDescriptorSchema.partial({
+  media_id: true,
+});
+
 export const telegramMessageSchema = z.object({
   id: z.number().int(),
   chat_id: z.string(),
@@ -33,14 +38,7 @@ export const telegramMessageSchema = z.object({
       date: z.string().optional(),
     })
     .optional(),
-  media: z
-    .object({
-      type: z.string(),
-      file_name: z.string().optional(),
-      mime_type: z.string().optional(),
-      size: z.number().int().optional(),
-    })
-    .optional(),
+  media: messageMediaSchema.optional(),
   is_read: z.boolean().optional(),
 });
 
@@ -71,50 +69,83 @@ function attributesOf(document: Record<string, unknown>) {
  * DocumentAttributeAnimated, and a sticker carries one too. Checking video
  * first would label every gif and sticker a video.
  */
-function documentType(document: Record<string, unknown>): string {
-  const attributes = attributesOf(document);
-  const names = new Set(attributes.map((a) => String(a.className ?? "")));
-  if (names.has("DocumentAttributeAnimated")) return "gif";
-  if (names.has("DocumentAttributeSticker")) return "sticker";
-  if (names.has("DocumentAttributeVideo")) return "video";
-  const audio = attributes.find(
-    (a) => a.className === "DocumentAttributeAudio",
-  );
-  if (audio) return audio.voice === true ? "voice" : "audio";
-  return "document";
+type MediaIdentity = { sourceId: string; messageId: number };
+
+function withIdentity(
+  descriptor: Omit<MediaDescriptor, "media_id">,
+  rawId: string | undefined,
+  identity: MediaIdentity | undefined,
+): TelegramMessage["media"] {
+  return {
+    ...descriptor,
+    ...(rawId !== undefined && identity !== undefined
+      ? { media_id: mediaId(identity.sourceId, identity.messageId, descriptor.type, rawId) }
+      : {}),
+  };
 }
 
-export function mediaOf(media: unknown): TelegramMessage["media"] | undefined {
+function finitePositive(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined;
+}
+
+export function mediaOf(
+  media: unknown,
+  identity?: MediaIdentity,
+): TelegramMessage["media"] | undefined {
   if (typeof media !== "object" || media === null) return undefined;
-  const m = media as Record<string, unknown>;
-  const name = typeof m.className === "string" ? m.className : "";
+  const raw = media as Record<string, unknown>;
+  if (raw.className === "MessageMediaWebPage") return { type: "url" };
 
-  if (name === "MessageMediaPhoto") return { type: "photo" };
-  if (name === "MessageMediaWebPage") return { type: "url" };
-
-  if (name === "MessageMediaDocument") {
-    const document = (m.document ?? {}) as Record<string, unknown>;
-    const named = attributesOf(document).find(
-      (a) => a.className === "DocumentAttributeFilename",
-    );
-    const rawSize = readBigId(document.size);
-    const size = rawSize === undefined ? Number.NaN : Number(rawSize);
-    return {
-      type: documentType(document),
-      ...(typeof named?.fileName === "string"
-        ? { file_name: named.fileName }
-        : {}),
-      ...(typeof document.mimeType === "string"
-        ? { mime_type: document.mimeType }
-        : {}),
-      ...(Number.isSafeInteger(size) ? { size } : {}),
-    };
+  if (raw.className === "MessageMediaPhoto") {
+    const photo = (raw.photo ?? {}) as Record<string, unknown>;
+    const sizes = Array.isArray(photo.sizes)
+      ? photo.sizes as Record<string, unknown>[]
+      : [];
+    const largest = sizes
+      .filter((size) => finitePositive(size.w) && finitePositive(size.h))
+      .sort((a, b) => Number(b.w) * Number(b.h) - Number(a.w) * Number(a.h))[0];
+    return withIdentity({
+      type: "photo",
+      ...(largest ? { width: Number(largest.w), height: Number(largest.h) } : {}),
+      has_thumbnail: sizes.length > 0,
+    }, readBigId(photo.id), identity);
   }
 
-  if (name.startsWith("MessageMedia")) {
-    return { type: name.slice("MessageMedia".length).toLowerCase() };
+  if (raw.className !== "MessageMediaDocument") {
+    const name = String(raw.className ?? "");
+    return name.startsWith("MessageMedia")
+      ? { type: name.slice("MessageMedia".length).toLowerCase() }
+      : undefined;
   }
-  return undefined;
+
+  const document = (raw.document ?? {}) as Record<string, unknown>;
+  const attrs = attributesOf(document);
+  const animated = attrs.some((attr) => attr.className === "DocumentAttributeAnimated");
+  const sticker = attrs.some((attr) => attr.className === "DocumentAttributeSticker");
+  const video = attrs.find((attr) => attr.className === "DocumentAttributeVideo");
+  const audio = attrs.find((attr) => attr.className === "DocumentAttributeAudio");
+  const filename = attrs.find((attr) => attr.className === "DocumentAttributeFilename")?.fileName;
+  const type = animated ? "gif"
+    : sticker ? "sticker"
+    : video ? (video.roundMessage === true ? "video_note" : "video")
+    : audio ? (audio.voice === true ? "voice" : "audio")
+    : "document";
+  const rawSize = readBigId(document.size);
+  const size = rawSize === undefined ? undefined : Number(rawSize);
+  return withIdentity({
+    type,
+    ...(typeof filename === "string" ? { file_name: filename } : {}),
+    ...(typeof document.mimeType === "string" ? { mime_type: document.mimeType } : {}),
+    ...(size !== undefined && Number.isSafeInteger(size) && size >= 0 ? { size } : {}),
+    ...(video && finitePositive(video.w) ? { width: Number(video.w) } : {}),
+    ...(video && finitePositive(video.h) ? { height: Number(video.h) } : {}),
+    ...((video ?? audio) && finitePositive((video ?? audio)!.duration)
+      ? { duration_seconds: Number((video ?? audio)!.duration) }
+      : {}),
+    has_thumbnail: Array.isArray(document.thumbs) && document.thumbs.length > 0,
+  }, readBigId(document.id), identity);
 }
 
 export function reactionsOf(
@@ -176,7 +207,7 @@ export function mapMessage(
   const replies = (m.replies ?? {}) as Record<string, unknown>;
   const reactions = reactionsOf(m.reactions);
   const forwardedFrom = forwardedFromOf(m.fwdFrom);
-  const media = mediaOf(m.media);
+  const media = mediaOf(m.media, { sourceId: ctx.chatId, messageId: id });
 
   return {
     id,

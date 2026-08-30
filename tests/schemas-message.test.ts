@@ -39,6 +39,7 @@ const richMessage = {
     className: "MessageMediaDocument",
     document: {
       className: "Document",
+      id: 900n,
       mimeType: "application/pdf",
       size: { value: 204800n },
       attributes: [
@@ -61,9 +62,59 @@ describe("isoFromUnix", () => {
 });
 
 describe("mediaOf", () => {
+  const identity = { sourceId: CHAT_ID, messageId: 42 };
+
+  function documentMedia(document: Record<string, unknown>) {
+    return {
+      className: "MessageMediaDocument",
+      document: {
+        className: "Document",
+        mimeType: "application/octet-stream",
+        size: 0n,
+        attributes: [],
+        ...document,
+      },
+    };
+  }
+
+  it("classifies a round video as video_note and exposes dimensions/duration", () => {
+    expect(mediaOf(documentMedia({
+      id: 99n,
+      mimeType: "video/mp4",
+      size: 5000n,
+      attributes: [{
+        className: "DocumentAttributeVideo",
+        roundMessage: true,
+        w: 480,
+        h: 480,
+        duration: 12.5,
+      }],
+    }), { sourceId: CHAT_ID, messageId: 42 })).toMatchObject({
+      media_id: expect.stringMatching(/^med_/),
+      type: "video_note",
+      width: 480,
+      height: 480,
+      duration_seconds: 12.5,
+      size: 5000,
+    });
+  });
+
+  it("changes media_id when attached media changes, not when file_reference changes", () => {
+    const a = mediaOf(documentMedia({ id: 99n, fileReference: Buffer.from("a") }), identity);
+    const b = mediaOf(documentMedia({ id: 99n, fileReference: Buffer.from("b") }), identity);
+    const c = mediaOf(documentMedia({ id: 100n, fileReference: Buffer.from("a") }), identity);
+    expect(a?.media_id).toBe(b?.media_id);
+    expect(c?.media_id).not.toBe(a?.media_id);
+  });
+
+  it("leaves URL metadata download-free and without media_id", () => {
+    expect(mediaOf({ className: "MessageMediaWebPage" }, identity)).toEqual({ type: "url" });
+  });
+
   it("names a photo", () => {
     expect(mediaOf({ className: "MessageMediaPhoto" })).toEqual({
       type: "photo",
+      has_thumbnail: false,
     });
   });
 
@@ -79,6 +130,7 @@ describe("mediaOf", () => {
       file_name: "paper.pdf",
       mime_type: "application/pdf",
       size: 204800,
+      has_thumbnail: false,
     });
   });
 
@@ -160,7 +212,11 @@ describe("mapMessage", () => {
       views: 12000,
       forwards: 34,
       replies: 7,
-      media: { type: "document", file_name: "paper.pdf" },
+      media: {
+        media_id: expect.stringMatching(/^med_/),
+        type: "document",
+        file_name: "paper.pdf",
+      },
       forwarded_from: {
         chat_id: "-100555",
         title: "Upstream Channel",

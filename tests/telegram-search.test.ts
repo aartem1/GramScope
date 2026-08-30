@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { isFanout, prepareSearch, searchMessages } from "@/telegram/search";
 import {
   __resetClientForTests,
@@ -15,6 +15,7 @@ import { MAX_NETWORK_RESOLUTIONS_PER_CALL } from "@/telegram/source-selection";
 
 const A = "-1001111111111";
 const B = "-1002222222222";
+let lastIterDownload: ReturnType<typeof vi.fn> | undefined;
 
 function hit(id: number, date: number, channelId: bigint) {
   return {
@@ -44,6 +45,10 @@ type Sent = { className: string; params: Record<string, unknown> };
 
 function install(reply: unknown) {
   const sent: Sent[] = [];
+  const iterDownload = vi.fn(async function* () {
+    throw new Error("a metadata-only tool attempted a media download");
+  });
+  lastIterDownload = iterDownload;
   __setClientFactoryForTests(async () => ({
     connected: true,
     connect: async () => true,
@@ -59,6 +64,7 @@ function install(reply: unknown) {
       sent.push({ className: r.className, params: { ...r } });
       return reply;
     },
+    iterDownload,
   }));
   return sent;
 }
@@ -153,6 +159,7 @@ describe("global search", () => {
     expect(page.sources).toEqual([
       { source_id: A, title: "Alpha", hit_count: 2 },
     ]);
+    expect(lastIterDownload).not.toHaveBeenCalled();
   });
 
   it("passes the date window to Telegram rather than filtering here", async () => {

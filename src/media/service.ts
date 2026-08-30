@@ -1,12 +1,17 @@
 import type {
   GetMediaInput,
   GetMediaResult,
-  MediaDescriptor,
   MediaResultCode,
 } from "../schemas/media";
 import { INLINE_MEDIA_MAX_BYTES } from "../schemas/media";
 import { withTelegram, type TelegramLike } from "../telegram/client";
-import { readAssetBytes, resolveMediaAsset } from "../telegram/media";
+import {
+  readAssetBytes,
+  resolveMediaAsset,
+  type MediaAsset,
+} from "../telegram/media";
+
+export type { MediaAsset } from "../telegram/media";
 
 export type MediaArtifact = {
   type: "image" | "audio";
@@ -18,16 +23,6 @@ export type MediaOutcome = {
   result: GetMediaResult;
   artifact?: MediaArtifact;
   link?: { uri: string; name: string; mimeType?: string; size?: number };
-};
-
-export type MediaAsset = {
-  sourceId: string;
-  messageId: number;
-  sourceHandle: string;
-  descriptor: MediaDescriptor;
-  rawMessage: Record<string, unknown>;
-  rawMedia: Record<string, unknown>;
-  thumbnailLocation?: unknown;
 };
 
 export type MediaDependencies = {
