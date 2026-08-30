@@ -16,6 +16,20 @@ created: 2026-08-26
 - [x] 2026-08-26 → resolved 2026-08-27: the dedicated Telegram account exists and its credentials, plus GitHub and Vercel access, are in place. `.env.local` and the Vercel environment hold them; nothing was written to the repository.
 
 # Changes and findings
+- 2026-08-30 — **sub-project 5b connector acceptance passed and the GramScope
+  roadmap is complete.** After re-pasting the Project instructions and
+  reconnecting, ChatGPT exposed exactly 19 tools including
+  `get_source_notes` and `set_source_note`. Against followed source
+  `-1003333333333` (`Example Tech Channel`), the owner-run workflow read posts
+  31020 and 31023–31025, created a note (`replaced=false`), read the whole
+  store with no duplicates or malformed entries, found the same note by topic
+  `ИИ` and exact `source_ids`, then deleted it (`deleted=true`). The final read
+  returned `notes=[]`, `duplicates=[]`, `malformed=[]`; no subscriptions,
+  folders, or read state changed. The connector does not expose its server
+  version to the model, so 1.4.0 was not independently observed in this UI
+  check and must not be represented as such; the deployed code and repository
+  metadata remain pinned to 1.4.0. The owner reported the overall acceptance
+  result as PASS.
 - 2026-08-29 — two undocumented Telegram folder constraints, measured live in Task 12 rather than read from documentation, each reproduced with an isolated raw-teleproto call before being accepted. **A folder title is capped at 12 characters**; anything longer is rejected with `MESSAGE_TOO_LONG`, a code whose name gives no hint that a title length is what failed. **A folder cannot be created with an empty `includePeers`**; Telegram answers `FILTER_INCLUDE_EMPTY`. `createFolder` and `renameFolder` pass the title straight through to `Api.DialogFilter`, so both are wire-level limits and not GramScope bugs — but GramScope currently surfaces both as a generic `INTERNAL_ERROR`, which tells an agent nothing about how to retry. Making those two messages actionable is a candidate follow-up, deliberately left out of sub-project 5a's scope.
 - 2026-08-29 — the live tier now runs its files **sequentially**, via `fileParallelism: process.env.GRAMSCOPE_LIVE !== "1"` in `vitest.config.ts`. Every live test file mutates the same real Telegram account, so concurrent files are a structural hazard, not merely a timing annoyance: a reproduced failure had `writes.live.test.ts` holding a manual unread flag through a FLOOD_WAIT stretch while `reading.live.test.ts` asserted over the same summary. The condition keys off the same environment variable that already gates every live `describe`, so `npm run test` keeps running its 30 files in parallel.
 - 2026-08-26 — intake: brief lives in README.md; no spec, plan, ledger, or feature branch exists yet.
@@ -118,16 +132,16 @@ created: 2026-08-26
 
 # Current point
 
-**Sub-projects 1-5a are complete, deployed, and owner-accepted. Sub-project 5b
-is implemented as version 1.4.0 with nineteen tools; all nine implementation
-tasks and the single broad-review fix wave are complete, and the scoped
-re-review found every item addressed with no new Critical/Important breakage.**
-The task table below and the current acceptance paragraph are authoritative. The only remaining
-5b acceptance is owner-only work in the live ChatGPT Project: re-paste the
-updated Project instructions, reconnect so ChatGPT refreshes `tools/list`, and
-run the authenticated connector workflow from spec §12.4. Do not infer or
-claim that acceptance from repository, live-tier, or unauthenticated production
-checks.
+**Sub-projects 1-5b are complete, deployed, review-clean, and owner-accepted.
+GramScope ships as version 1.4.0 with nineteen tools, and the planned roadmap
+is complete.** All nine 5b implementation tasks and the single broad-review fix
+wave are complete; the scoped re-review found every item addressed with no new
+Critical/Important breakage. The owner-run authenticated connector workflow
+from spec §12.4 passed on 2026-08-30 and returned Saved Messages to an empty
+source-note baseline. The connector exposed all nineteen tools but did not
+expose the server version to the model; record that UI observation as
+unavailable rather than claiming a direct version check. The task table below
+and the acceptance record under Changes and findings are authoritative.
 
 Historical sub-project 5 decisions retained below:
 - Sub-project 5 is split. **5a** = `mark_unread`, `join_channel`,
@@ -267,8 +281,8 @@ sub-project:
   `docs/superpowers/plans/2026-08-29-gramscope-source-notes.md` (`619f608`,
   self-review fixes in `f2a6532`, formatting in `9924e32`), nine tasks.
   **Base commit for sub-project 5b: `e613575`** — every commit after it is 5b
-  work. Implementation is complete; the outcomes and remaining owner-only
-  acceptance are recorded in the task table and current-point paragraph.
+  work. Implementation and owner acceptance are complete; the outcomes are
+  recorded in the task table and current-point paragraph.
 
 Outcomes are filled in as each task closes, so another agent — Codex on this
 machine, or a fresh session — can resume from the first row that is not yet
@@ -283,9 +297,9 @@ complete without re-running anything above it.
 | 5 Deleting a note | complete, `81e4034`; review clean; 488 fast tests after gate repair |
 | 6 `get_source_notes` tool | complete, `37166db`; review clean; 489 fast tests after gate repair fix round 2; eighteen tools |
 | 7 `set_source_note` tool | complete, `157c70f`; review clean; 490 fast tests; nineteen tools, six writers |
-| 8 Version 1.4.0, README, Project instructions, deploy | complete, `4da02fa`..`ee708c0`, clean after 1 fix round; 490 tests + build; production Ready; owner re-paste/reconnect and authenticated 1.4.0/19-tool check pending |
+| 8 Version 1.4.0, README, Project instructions, deploy | complete, `4da02fa`..`ee708c0`, clean after 1 fix round; 490 tests + build; production Ready; owner re-paste/reconnect complete; connector exposed 19 tools, while its version was not model-visible |
 | 9 Live tier | complete, `50d8522`; review approved; live 38 passed/1 skipped twice; Saved Messages zero-note baseline confirmed twice |
-| Final broad-review fix wave | complete, `8631163`, scoped re-review clean; failure-atomic resend, concurrent-write reconciliation, stored semantic invariants, trust/tool-contract wording, and four minors resolved; 80 focused and 499 fast tests; full live tier 38 passed/1 skipped twice with zero-note cleanup; production Ready; owner connector acceptance still pending |
+| Final broad-review fix wave | complete, `8631163`, scoped re-review clean; failure-atomic resend, concurrent-write reconciliation, stored semantic invariants, trust/tool-contract wording, and four minors resolved; 80 focused and 499 fast tests; full live tier 38 passed/1 skipped twice with zero-note cleanup; production Ready; owner connector acceptance PASS on 2026-08-30 |
 
 ## Historical sub-project 5b execution record — superseded
 
