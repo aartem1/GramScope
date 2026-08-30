@@ -47,6 +47,7 @@ describe("registerTools", () => {
   const READ_ONLY = [
     "get_channel",
     "get_message",
+    "get_media",
     "get_messages",
     "get_pinned_messages",
     "get_similar_channels",
@@ -60,7 +61,7 @@ describe("registerTools", () => {
     "search_messages",
   ];
 
-  it("registers all nineteen tools", () => {
+  it("registers all twenty tools", () => {
     const server = fakeServer();
     registerTools(server as never);
     expect(server.tools.map((t) => t.name).sort()).toEqual(

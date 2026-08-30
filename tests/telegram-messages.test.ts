@@ -1256,6 +1256,7 @@ describe("sources outside the dialog index", () => {
         throw unresolved(target);
       },
       getMessages: async () => [],
+      iterDownload: async function* () {},
     } as TelegramLike;
     return { factory: async () => client, handler: () => onError };
   }
@@ -1335,6 +1336,7 @@ describe("sources outside the dialog index", () => {
         throw unresolved(target);
       },
       getMessages: async () => [],
+      iterDownload: async function* () {},
     } as TelegramLike;
     __setClientFactoryForTests(async () => client);
 

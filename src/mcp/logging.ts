@@ -43,6 +43,8 @@ export type ToolCallLog = {
   status: "success" | "error";
   count?: number;
   code?: string;
+  mediaKind?: string;
+  bytes?: number;
 };
 
 /**
@@ -59,6 +61,8 @@ export function formatToolCall(entry: ToolCallLog): string {
   ];
   if (entry.count !== undefined) parts.push(`count=${entry.count}`);
   if (entry.code) parts.push(`code=${entry.code}`);
+  if (entry.mediaKind) parts.push(`media_kind=${entry.mediaKind}`);
+  if (entry.bytes !== undefined) parts.push(`bytes=${entry.bytes}`);
   return parts.join(" ");
 }
 

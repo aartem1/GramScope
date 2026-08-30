@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { registerGetChannel } from "./tools/get-channel";
 import { registerGetMessage } from "./tools/get-message";
+import { registerGetMedia } from "./tools/get-media";
 import { registerGetMessages } from "./tools/get-messages";
 import { registerGetPinnedMessages } from "./tools/get-pinned-messages";
 import { registerGetSimilarChannels } from "./tools/get-similar-channels";
@@ -25,6 +26,7 @@ export function registerTools(server: McpServer): void {
   registerGetChannel(server);
   registerGetMessages(server);
   registerGetMessage(server);
+  registerGetMedia(server);
   registerGetThread(server);
   registerGetUnreadSummary(server);
   registerMarkRead(server);

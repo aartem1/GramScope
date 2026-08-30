@@ -11,6 +11,12 @@ export const ERROR_CODES = [
   "MESSAGE_NOT_FOUND",
   "NO_DISCUSSION_THREAD",
   "INTERNAL_ERROR",
+  "MEDIA_NOT_FOUND",
+  "NO_MEDIA",
+  "UNSUPPORTED_MEDIA",
+  "INLINE_LIMIT_EXCEEDED",
+  "PROCESSING_TIMEOUT",
+  "TELEGRAM_DOWNLOAD_FAILED",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -19,6 +25,7 @@ export type StructuredError = {
   code: ErrorCode;
   message: string;
   retry_after_seconds?: number;
+  retryable?: boolean;
 };
 
 export class GramScopeError extends Error {
@@ -26,6 +33,7 @@ export class GramScopeError extends Error {
     public readonly code: ErrorCode,
     message: string,
     public readonly retryAfterSeconds?: number,
+    public readonly retryable = false,
   ) {
     super(message);
     this.name = "GramScopeError";
@@ -38,6 +46,15 @@ export class GramScopeError extends Error {
       ...(this.retryAfterSeconds !== undefined
         ? { retry_after_seconds: this.retryAfterSeconds }
         : {}),
+      ...(this.retryable ? { retryable: true } : {}),
     };
   }
+}
+
+export function mediaError(
+  code: ErrorCode,
+  message: string,
+  retryable = false,
+): GramScopeError {
+  return new GramScopeError(code, message, undefined, retryable);
 }

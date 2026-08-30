@@ -1,12 +1,9 @@
 import { GramScopeError, type StructuredError } from "../errors/taxonomy";
 import { mapTelegramError } from "../errors/from-telegram";
+import type { CallToolResult } from "@modelcontextprotocol/server";
 import { logToolCall } from "./logging";
 
-export type ToolResult = {
-  content: Array<{ type: "text"; text: string }>;
-  structuredContent: unknown;
-  isError?: true;
-};
+export type ToolResult = CallToolResult & { structuredContent: unknown };
 
 export function okResult<T>(data: T): ToolResult {
   return {

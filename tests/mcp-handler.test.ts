@@ -119,10 +119,11 @@ describe("tools/list over a real MCP server", () => {
     expect(packageLock.packages?.[""]?.version).toBe("1.4.0");
   });
 
-  it("advertises all nineteen tools", async () => {
+  it("advertises all twenty tools", async () => {
     const tools = await listTools();
     expect(tools.map((tool) => tool.name).sort()).toEqual([
       "get_channel",
+      "get_media",
       "get_message",
       "get_messages",
       "get_pinned_messages",

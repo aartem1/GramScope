@@ -29,6 +29,7 @@ function client(
       const limit = typeof params.limit === "number" ? params.limit : 0;
       return messages.slice(0, limit);
     },
+    iterDownload: async function* () {},
   };
 }
 
@@ -143,6 +144,7 @@ describe("fetchSlice", () => {
           const limit = typeof params.limit === "number" ? params.limit : 0;
           return history(5).slice(0, limit);
         },
+        iterDownload: async function* () {},
       },
       { ...base, handle: "outside" },
     );

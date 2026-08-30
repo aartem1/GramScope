@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { formatEvent, logEvent } from "@/mcp/logging";
+import { formatEvent, formatToolCall, logEvent } from "@/mcp/logging";
 import { runTool } from "@/mcp/tool-result";
 import { GramScopeError } from "@/errors/taxonomy";
 
@@ -32,6 +32,27 @@ describe("formatEvent", () => {
 });
 
 describe("runTool logging", () => {
+  it("logs only safe media fields", () => {
+    const line = formatToolCall({
+      name: "get_media",
+      durationMs: 12,
+      status: "success",
+      mediaKind: "photo",
+      bytes: 321,
+      url: "https://media.example/SECRET_URL",
+      token: "SECRET_TOKEN",
+      filename: "secret-name.jpg",
+      caption: "SECRET_CAPTION",
+    } as never);
+
+    expect(line).toContain("media_kind=photo");
+    expect(line).toContain("bytes=321");
+    expect(line).not.toContain("SECRET_URL");
+    expect(line).not.toContain("SECRET_TOKEN");
+    expect(line).not.toContain("secret-name.jpg");
+    expect(line).not.toContain("SECRET_CAPTION");
+  });
+
   it("names the tool and counts the results on success", async () => {
     const sink = vi.fn();
     const result = await runTool(

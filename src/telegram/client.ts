@@ -34,9 +34,19 @@ export type TelegramLike = {
     entity: string,
     params: Record<string, unknown>,
   ): Promise<unknown[]>;
+  iterDownload(
+    file: unknown,
+    params?: { offset?: number; limit?: number; requestSize?: number },
+  ): AsyncGenerator<Buffer, void, unknown>;
 };
 
 type Factory = () => Promise<TelegramLike>;
+// Existing unit suites provide partial client doubles to exercise operations
+// unrelated to downloads. Keep that test-only seam compatible while the
+// production TelegramLike contract remains strict for media consumers.
+type TestFactory = () => Promise<
+  Omit<TelegramLike, "iterDownload"> & Partial<Pick<TelegramLike, "iterDownload">>
+>;
 
 type ApiNamespace = (typeof import("teleproto"))["Api"];
 
@@ -56,7 +66,7 @@ export async function getApi(): Promise<ApiNamespace> {
 // which is the point — a fresh MTProto handshake per tool call is wasteful and
 // invites FLOOD_WAIT.
 let cached: TelegramLike | undefined;
-let testFactory: Factory | undefined;
+let testFactory: TestFactory | undefined;
 
 const defaultFactory: Factory = async () => {
   const config = loadConfig();
@@ -70,7 +80,7 @@ const defaultFactory: Factory = async () => {
   ) as unknown as TelegramLike;
 };
 
-export function __setClientFactoryForTests(factory: Factory | undefined): void {
+export function __setClientFactoryForTests(factory: TestFactory | undefined): void {
   testFactory = factory;
 }
 
@@ -191,7 +201,7 @@ export async function withTelegram<T>(
 
   let client = cached;
   if (!client) {
-    client = await factory();
+    client = await factory() as TelegramLike;
     // Installed once per client, before it is ever used, so every resolution
     // that runs on it can recover what teleproto swallows. Outside a
     // resolveEntity scope this is a no-op, so the background sender and update

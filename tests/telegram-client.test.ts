@@ -18,6 +18,7 @@ function fakeClient(overrides: Partial<TelegramLike> = {}) {
     getDialogs: vi.fn(async () => []),
     getEntity: vi.fn(async () => ({})),
     getMessages: vi.fn(async () => []),
+    iterDownload: vi.fn(async function* () {}),
     ...overrides,
   } as TelegramLike & { connect: ReturnType<typeof vi.fn> };
 }
