@@ -125,7 +125,7 @@ export function registerManageFolder(server: McpServer): void {
           .max(MAX_SOURCES_PER_CALL)
           .optional()
           .describe(
-            "Required by create, add_sources and remove_sources. create and add_sources take numeric ids, @usernames or t.me links; remove_sources takes only the numeric ids list_folders reports in included_peer_ids, because it matches them without resolving anything.",
+            "Required by create, add_sources and remove_sources. create and add_sources take marked ids, @usernames or t.me links; remove_sources takes only the marked ids list_folders reports in included_peer_ids, because it matches them without resolving anything.",
           ),
         folder_ids: z
           .array(z.string())

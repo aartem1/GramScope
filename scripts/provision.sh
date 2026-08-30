@@ -229,10 +229,10 @@ Connect -> Configuration and do three things:
      This is what puts the right 'aud' in the token. Skip it and AuthKit
      issues a default environment audience, and every call fails with 401.
 
-  2. Enable Client ID Metadata Document (CIMD) — how MCP clients identify
-     themselves without pre-registering.
+  2. Create an OAuth client for the ChatGPT connector.
 
-  3. Enable Dynamic Client Registration as a fallback for older clients.
+  3. Copy its client id and secret. You will paste both into ChatGPT; they are
+     connector credentials and do not belong in GramScope's environment.
 
 Then collect the values below. The issuer is the AuthKit domain that serves
 /.well-known/oauth-authorization-server; the JWKS URL is listed in that
@@ -312,9 +312,10 @@ Then in ChatGPT: Settings -> Connectors -> add a custom connector at
 
   $MCP_RESOURCE_URL
 
-choose OAuth, and complete the sign-in. With CIMD enabled you should not need
-a client id or secret; if the form insists, create one under
-Dashboard -> Applications in WorkOS.
+choose OAuth, paste the WorkOS OAuth client id and secret, and complete the
+sign-in.
 
-You should see exactly three tools: list_dialogs, list_folders, get_channel.
+You should see exactly nineteen tools. If the connector was already installed,
+reconnect it: ChatGPT caches tool names, descriptions, and schemas at connection
+time.
 TXT

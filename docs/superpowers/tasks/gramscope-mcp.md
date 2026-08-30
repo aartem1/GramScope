@@ -2,882 +2,142 @@
 slug: gramscope-mcp
 title: GramScope — personal Telegram MCP server for ChatGPT
 source: README.md (development brief, commit f137b11, 2026-08-26)
-branch: `main`. The owner works directly on `main` until the project is fully launched (decided 2026-08-27); per-sub-project branches are not used and leftover ones were deleted.
+branch: `main`; the owner explicitly chose direct work on `main` until launch on 2026-08-27
 created: 2026-08-26
 ---
 
 # Open questions
-- [x] 2026-08-26 → resolved: Telegram library is `teleproto` (maintained TypeScript fork of GramJS), not GramJS. GramJS `telegram` last published 2025-02-12; teleproto v1.229.0 published 2026-08-25 and is pure JS with no native build step.
-- [x] 2026-08-26 → resolved: MCP auth is OAuth via WorkOS AuthKit with **static client credentials** pasted into ChatGPT. ChatGPT offers only OAuth / No Authentication / Mixed — no API-key option — but accepts static credentials, so neither DCR nor CIMD is required.
-- [x] 2026-08-26 → resolved in the Foundation plan: `list_dialogs(folder_id)` honors a folder's included minus excluded peers only, and ignores its exclude-muted / exclude-read / chat-type flags, because those depend on live state and would make output non-reproducible. The tool description says so explicitly.
-- [x] 2026-08-26 → resolved 2026-08-29: the private `Source Meta` channel was superseded by Saved Messages. Each note is one raw text message whose first line is the stable `gs:src:<absolute marked id>` lookup marker and whose body is compact JSON; the signed Telegram source ID remains inside the payload.
-- [x] 2026-08-26 → resolved 2026-08-27 by live probe, not by owner: the limits of Telegram search are measured and recorded under "Changes and findings". In short — search inside the account's own chats is free and pages cleanly; full-text search of public channels the account has not joined is Premium-only.
-- [x] 2026-08-26 → resolved 2026-08-27 by live probe, not by owner: comments are reachable through the channel peer without joining anything; the discussion group itself is not addressable. Details under "Changes and findings".
-- [x] 2026-08-26 → resolved 2026-08-27: the dedicated Telegram account exists and its credentials, plus GitHub and Vercel access, are in place. `.env.local` and the Vercel environment hold them; nothing was written to the repository.
 
-# Changes and findings
-- 2026-08-30 — **sub-project 5b connector acceptance passed and the GramScope
-  roadmap is complete.** After re-pasting the Project instructions and
-  reconnecting, ChatGPT exposed exactly 19 tools including
-  `get_source_notes` and `set_source_note`. Against followed source
-  `-1003333333333` (`Example Tech Channel`), the owner-run workflow read posts
-  31020 and 31023–31025, created a note (`replaced=false`), read the whole
-  store with no duplicates or malformed entries, found the same note by topic
-  `ИИ` and exact `source_ids`, then deleted it (`deleted=true`). The final read
-  returned `notes=[]`, `duplicates=[]`, `malformed=[]`; no subscriptions,
-  folders, or read state changed. The connector does not expose its server
-  version to the model, so 1.4.0 was not independently observed in this UI
-  check and must not be represented as such; the deployed code and repository
-  metadata remain pinned to 1.4.0. The owner reported the overall acceptance
-  result as PASS.
-- 2026-08-29 — two undocumented Telegram folder constraints, measured live in Task 12 rather than read from documentation, each reproduced with an isolated raw-teleproto call before being accepted. **A folder title is capped at 12 characters**; anything longer is rejected with `MESSAGE_TOO_LONG`, a code whose name gives no hint that a title length is what failed. **A folder cannot be created with an empty `includePeers`**; Telegram answers `FILTER_INCLUDE_EMPTY`. `createFolder` and `renameFolder` pass the title straight through to `Api.DialogFilter`, so both are wire-level limits and not GramScope bugs — but GramScope currently surfaces both as a generic `INTERNAL_ERROR`, which tells an agent nothing about how to retry. Making those two messages actionable is a candidate follow-up, deliberately left out of sub-project 5a's scope.
-- 2026-08-29 — the live tier now runs its files **sequentially**, via `fileParallelism: process.env.GRAMSCOPE_LIVE !== "1"` in `vitest.config.ts`. Every live test file mutates the same real Telegram account, so concurrent files are a structural hazard, not merely a timing annoyance: a reproduced failure had `writes.live.test.ts` holding a manual unread flag through a FLOOD_WAIT stretch while `reading.live.test.ts` asserted over the same summary. The condition keys off the same environment variable that already gates every live `describe`, so `npm run test` keeps running its 30 files in parallel.
-- 2026-08-26 — intake: brief lives in README.md; no spec, plan, ledger, or feature branch exists yet.
-- 2026-08-26 — constraint: Telegram folders cap at 10 (20 Premium) with 100 chats each (200 Premium), and are client-side peer groupings — no server-side history-by-folder. Division of labor decided for sub-projects 5 and 6: folders are the few coarse reading lanes (one `getDialogFilters` call resolves all of them, and they are what the human sees as tabs); meta-channel tags carry unbounded cross-cutting metadata (topic, type, language, quality). Neither replaces the other.
-- 2026-08-26 — scope decision (owner delegated it): deliver as six sequential sub-projects, each with its own spec/plan/ledger — 1 Foundation (hosting, OAuth, session bootstrap, shared client/error/pagination/schema conventions, `list_dialogs`, `get_channel`), 2 Reading, 3 Research, 4 Discovery, 5 State writes, 6 Source metadata. Sub-project 1 fixes the conventions the rest inherit and is the only one that must survive real MTProto on serverless.
-
-- 2026-08-26 — owner will provide Telegram credentials (once the account exists), GitHub, and Vercel access, so the live-tier tests and deployment run in-session rather than by hand. Acceptance steps performed inside the ChatGPT connector UI remain owner-run. Secret hygiene agreed: gitignored `.env.local` locally, `vercel env add` for deploys, never in chat, commits, specs, or plans; the StringSession is full account access and is never printed.
-
-- 2026-08-27 — sub-project 1 acceptance is complete. The live suite passes 8/8 against the real account (no skips). In production `/.well-known/oauth-protected-resource` advertises `resource` = `https://gramscope.vercel.app/api/mcp` and the AuthKit issuer, and `/api/mcp` answers 401 with a `WWW-Authenticate` challenge when unauthenticated. The connector is installed in ChatGPT, OAuth completes, and a real `list_dialogs` call returned live sources with unread counts — so acceptance criteria 3 and 4, which had to be run by hand in the connector UI, are met.
-- 2026-08-27 — the cold-instance question is answered in practice: `get_channel` by marked id resolves on a fresh serverless instance, so the missing entity cache does not block reads. It still blocks writes; the "no access-hash story" decision below stands unchanged for sub-projects 5 and 6.
-- 2026-08-27 — operational gotcha worth keeping: ChatGPT's connector URL field was saved as `.../api/mcp,` with a trailing comma. OAuth still completed, because discovery runs off the origin rather than the path, so the connector reported itself connected and enabled while every tool call 404'd and no tools appeared. When a connector shows up healthy but exposes zero tools, check the registered URL character by character before suspecting the server.
-- 2026-08-27 — the account has three Telegram folders (id 2 Новости, id 3 Технологии, id 4 AI), populated by reading each channel's recent posts rather than inferring from its title. ~~One channel, "Example News Channel", returned no messages when sampled and was placed in Новости by name alone; that single assignment is unverified.~~ **Re-checked 2026-08-27 with `get_messages(source_ids: ["-1001111111111"], limit: 5)` now that a message-reading tool exists.** The channel posts military and political news (Peskov statements, drone warnings over Donetsk, a morning news brief); two of the five sampled posts are media-only with empty text. It sits in folder id 2, Новости, which the content confirms. No folder assignment on the account is now unverified.
-- 2026-08-27 — owner decision: `mark_read` moves from sub-project 5 into sub-project 2. Without it the read pointer never advances, so `unread_only` and `get_unread_summary` would ship decorative. The owner accepted the risk on the grounds that the Telegram account is a fresh dedicated one where damaging state is acceptable.
-- 2026-08-27 — the access-hash question is **verified live**, not only read from source. Task 1 of the sub-project 2 plan resolved a channel by its marked id on a deliberately cold client (`__resetClientForTests`) and invoked `channels.ReadHistory` against the real account with `maxId` set to the channel's existing read pointer — a genuine write RPC that moves no state. Telegram accepted it. `mark_read` therefore resolves peers exactly as the read path does, and no dialog-list fallback is needed. The regression guard is `tests/live/access-hash.live.test.ts` (commit 0dc0580). Note that `channels.readHistory` returns a TL `Bool` and legitimately returns `false` for a no-op maxId; a thrown mapped error, not a falsy return, is the failure signal.
-- 2026-08-27 — `npm run typecheck` had been red on `main` since sub-project 1: two `DialogCursor` fixtures in `tests/telegram-dialogs.test.ts` omitted the required `boundaryIds`. Fixed in commit 4a2e78e. Every task in the sub-project 2 plan gates on typecheck, so this had to clear first.
-- 2026-08-27 — the access-hash question is answered from teleproto's source, not assumed. `getInputEntity` falls through the in-memory cache and the session cache to a network path that calls `channels.getChannels` with `access_hash = 0`; Telegram accepts that for channels the account holds and returns the real hash. That is why Foundation's `get_channel` resolves on a cold instance, and the same `InputPeerChannel` is valid for writes. Cost is one extra round trip per cold peer. Task 1 of the sub-project 2 plan verifies it against the real account before any tool depends on it.
-- 2026-08-27 — owner decision: no per-sub-project branches. All work lands directly on `main` until the project is fully launched. The merged branches `gramscope-mcp`, `live-test-env` and `wizard-git-deploy` were deleted, and `gramscope-reading` was fast-forwarded into `main` and deleted.
-- 2026-08-27 — sub-project 2 is mid-implementation, executed with `superpowers:subagent-driven-development` directly on `main`. Tasks 1-6 of the plan are complete and reviewed; Task 7 is implemented at commit ebd222d but its review never returned before the session ended, so it must be re-reviewed rather than assumed good. Eleven commits are unpushed by design: pushing to `main` deploys to Vercel, and Task 14 of the plan is the step that does that deliberately. The per-task record, including every ruling, is in the git-ignored ledger named under Links.
-- 2026-08-27 — **teleproto's `TotalList` leaks past the TL boundary.** `client.getDialogs` and `client.getMessages` return a `TotalList` (`node_modules/teleproto/Helpers.js:448`, `class TotalList extends Array`) whose constructor sets `this.total = 0`. `filter`, `map` and `slice` preserve the subclass through `Symbol.species`, so it rode all the way out to `listDialogs().sources` and `getMessage().context_before/.context_after`. `JSON.stringify` serializes an `Array` subclass as a plain array and drops `total`, so the wire response and the size cap were never wrong — the defect is a library type escaping the mapping boundary, which breaks any structural comparison against values that look identical. Found by the Task 13 live suite, not by the fast tier: every unit fake returned plain arrays. Fixed in `624a401` with `Array.from` at the two entry points, and `TelegramLike` now records the contract so a future `.map` cannot reintroduce it silently.
-- 2026-08-27 — the plan's Task 13 snippet violated the live suite's own stated house rule ("every loop is preceded by an assertion or a visible `ctx.skip()` on the length of what it iterates"): the unread test's only guard, `total_unread >= 0`, is a tautology because the field sums positive counts, so with nothing unread the test passed having asserted nothing. Fixed in `ef7021f`. Worth remembering that a plan's code snippet is not self-validating — check it against the rules the same plan states.
-- 2026-08-27 — sub-project 2 (Reading) is implemented and pushed: `main` moved `8b1c5ec..5243a59`, all 14 plan tasks done, every task reviewed. Fast tier 223/223, typecheck, lint and `npm run build` green; the live suite passes 16/16 with no skips against the real account. The Vercel production deployment for that push reports Ready, `/api/mcp` answers 401 with a `WWW-Authenticate` challenge, and `/.well-known/oauth-protected-resource` advertises the endpoint plus the AuthKit issuer. Spec §14 criteria 4-6 run in the ChatGPT connector UI and remain owner-run.
-- 2026-08-27 — **sub-project 2 (Reading) is accepted and complete.** All 14 plan tasks landed and were reviewed. Spec §14 criteria confirmed in the ChatGPT connector against the real account: 7/7 tools registered; `get_messages` fanned one call over folder AI into 14 channels; a week-windowed read returned `is_read: true` messages without `unread_only`; `mark_read` moved "Два майора" from 39 unread to 0 and the follow-up summary reflected it; and a server-issued `next_cursor` resumed into a disjoint second page of 3 sources and 22 messages.
-- 2026-08-27 — **the connector caches its tool list at install time.** Acceptance first reported 3/7 tools — exactly the sub-project 1 set as it stood when the connector was installed. The server was ruled out by reproducing the production handler construction (`createMcpHandler` + `registerTools`, the mcp-handler path rather than the `McpServer` path the unit test uses) and getting all 7 back. Reconnecting the connector fixed it. **After any change to tool names, descriptions or schemas, reconnect before testing**, or the old list is what gets exercised.
-- 2026-08-27 — **cursors must be echoed verbatim, and a connector will not always do it.** Acceptance hit `INVALID_CURSOR` passing back a cursor the server had just issued. The round trip was verified correct live (166 chars, valid base64url, decodes, second page returns), so the model altered the token. Whitespace mangling already survives because Node's base64 decoder ignores it, now pinned by a regression; lost characters cannot be recovered. The `cursor` parameter therefore carries an explicit opaque-token contract in its description and the rejection message repeats it, so the caller can self-correct. Every later paginated tool should do the same.
-- 2026-08-27 — operational note: `npm run build` rewrites `tsconfig.json` (Next adds `allowJs`, `incremental`, `resolveJsonModule`, `isolatedModules` and reformats the file). It is local churn, not a source change; revert it rather than committing it.
-- 2026-08-27 — **Telegram search, measured live against the real account** (throwaway probes, not committed; sub-project 3 input).
-  - `messages.searchGlobal` searches only chats the account participates in. Walking 12 pages x 50 for a Russian query returned 600 unique hits across 36 peers with **zero duplicates**, every one of them already in the dialog index, at 300-500 ms per page and no FLOOD_WAIT. It pages by `(offsetRate = the previous page's nextRate, offsetPeer = the last hit's peer, offsetId = the last hit's id)`; `count` is a stable total (4820 for the sample query). `broadcastsOnly` and `minDate`/`maxDate` are honored, and a bounded result comes back as `messages.Messages` with no `count` instead of a `MessagesSlice`.
-  - `messages.search` (one peer) is free and pages by `offsetId`, and **works inside a public channel the account has not joined**.
-  - `channels.searchPosts` with `query` — the true full-text search of all public channels — answers **PREMIUM_ACCOUNT_REQUIRED** on this account. `channels.checkSearchPostsFlood` prices it: `queryIsFree: false`, `starsAmount: 10`, `totalDaily: 10`, `remains: 10`. So it is 10 Stars per query, capped at 10 queries a day, and Premium-gated on top.
-  - `channels.searchPosts` with `hashtag` **is free and unrestricted**, reaches all public channels (26.8M hits for `ai`), and pages by `nextRate` with no overlap. Its results are dominated by SEO and spam channels, so it is a weak discovery signal, not a research tool.
-  - `contacts.search` is free and returns public channels the account has never joined, with `participantsCount` — the usable discovery path.
-  - Reading a non-joined public channel by username works: `getMessages(@username)` and `messages.search` in it both succeed. Discovery can therefore hand a lead straight to the reading tools, provided the username travels with it.
-- 2026-08-27 — **linked discussions and comments, measured live.** 34 of the account's 50 channels have a linked discussion group and the account is a member of **none** of them, which is the case that matters.
-  - `messages.getReplies(peer = the CHANNEL, msgId = the post)` returns the comment thread without joining anything: `messages.ChannelMessages`, newest-first, `fromId` present, paging by `offsetId` = the oldest id of the previous page with zero overlap at 20 per page. Its `count` is live and runs slightly ahead of the post's own counter (217 vs 215).
-  - The discussion group itself is **not** addressable: `getMessages` on its marked id fails with `CHANNEL_INVALID`, because the account does not hold that peer. The channel peer is the only door into the comments.
-  - Every sampled post of a linked channel carries a `replies` block with `replies` (comment count), `maxId` and `channelId`, so comment counts are free — no extra RPC to decide whether a thread is worth fetching.
-  - A post with zero comments and a channel with no linked group both fail `getReplies` with the same `MSG_ID_INVALID`. The two are indistinguishable by error, so the post's own `replies.replies` counter is the pre-check, not a try/catch.
-  - `messages.getDiscussionMessage` maps a post to its anchor message in the discussion group and carries `maxId` / `unreadCount`; it is the join point if comment read state is ever wanted.
-- 2026-08-27 — **`channels.getFullChannel` floods fast.** About 20 calls in 5 seconds triggered a 27-second FLOOD_WAIT, which teleproto absorbs by sleeping — so a fan-out over it does not fail, it silently stalls the whole request past any serverless budget. Linked-chat discovery must be cached or done in small batches, never per-source inside a tool call.
-- 2026-08-27 — sub-project 3 (Research) scope decisions, taken with the owner during brainstorming. It ships `search_messages`, `get_thread`, `resolve_telegram_url` and `get_pinned_messages`. **Saved Messages reading and search move out of Slice 3 into sub-project 5**, next to `save_message`: the dedicated account's Saved Messages is empty and nothing writes to it until that tool exists, so they would ship decorative — the same argument that pulled `mark_read` into sub-project 2, applied in the other direction. Sources may be named three ways — marked id, username, or `t.me` URL — and the sub-project 2 reading tools are extended to accept all three, because a resolved link that no tool accepts is a dead end.
-- 2026-08-27 — **the grouped-by-source house format is overturned for search only.** Sub-project 2 carried forward that search should match the grouped shape. A global search page is a slice of a ranked stream across all chats, so its groups would be an artifact of the page and the same source would reappear as a fresh group on every subsequent page. `search_messages` therefore returns a flat, date-ordered list plus a per-source roll-up; `get_messages` keeps its groups, where one group per requested source is stable. The rule that replaces it: the shape follows whether the page's groups are stable, not the tool's arity.
-- 2026-08-27 — the owner reviewed and approved the sub-project 3 (Research) spec as written; no changes were requested. The brainstorming approval gate is closed and planning may proceed.
-- 2026-08-27 — the brand assets live in the repository: `app/icon.svg`, `public/favicon.ico`, `public/avatar-512.png` (master), `public/avatar-512-min.png` (4KB, for the plugin upload), `public/avatar-256.jpg`.
-
-- 2026-08-27 — **sub-project 3 planning is finished; implementation has not started.** The spec is approved by the owner, the plan is written, self-reviewed and committed, and `main` is clean at `d57e1a5`. No source file of sub-project 3 exists yet: nothing under `src/telegram/{peer-resolve,tl-messages,search,thread,resolve,pinned}.ts`, nothing under `src/mcp/tools/{search-messages,get-thread,resolve-telegram-url,get-pinned-messages}.ts`, and `src/mcp/server.ts` still registers seven tools. Anything the next agent finds beyond that was added after this note was written.
-- 2026-08-27 — two decisions taken while writing the sub-project 3 plan that the spec does not contain, recorded here because the plan argues from them.
-  - **A shared `src/telegram/tl-messages.ts`.** Four TL requests — `messages.searchGlobal`, `messages.search`, `messages.getReplies` and the pinned search — return the same union of `messages.Messages` (bounded, no `count`), `messages.MessagesSlice` (`count`, sometimes `nextRate`) and `messages.ChannelMessages` (`count`, no `nextRate`). One reader instead of the same twenty lines in three engines.
-  - **`MessageCursor.sources[].sourceId` is renamed to `handle`.** It no longer holds a marked id: a channel resolved by username must keep travelling by username, because a bare marked id resolves only for peers the account holds and a fresh serverless instance would resume with one Telegram answers `CHANNEL_INVALID`. The wire key stays `i`, so cursors already issued keep decoding.
-- 2026-08-27 — the sub-project 3 spec was **amended during planning** to four cursor kinds rather than two (commit `aaa6fbf`). `get_thread` and `get_pinned_messages` are paginated and §8 named a kind for neither; reusing the sub-project 2 `messages` kind would let a `get_messages` cursor decode cleanly in `get_thread` and page comments from a message id belonging to a different chat.
-- 2026-08-27 — after reconnecting the ChatGPT connector, `tools/list` returned 11 tools: `list_dialogs`, `list_folders`, `get_channel`, `get_messages`, `get_message`, `get_thread`, `get_unread_summary`, `mark_read`, `search_messages`, `resolve_telegram_url`, and `get_pinned_messages`. An account-wide `search_messages` returned 10 results on page 1 and 10 on page 2; its cursor was accepted unchanged and the pages had no duplicates. A search in the AI folder (id 4) returned hits from 6 channels in one call. `get_thread` for `Example News Channel` (`@examplenewschannel`), post id 17510, returned 20 comments with `comment_count` 28. An outside source remained `joined=false` (`source_id=-1004444444444`), and `get_messages` read 5 messages from it. The production deployment `https://gram-scope-jkl456mno-example-projects.vercel.app` reached state `Ready`. `GET https://gramscope.vercel.app/api/mcp` returned `401` with `WWW-Authenticate: Bearer error="invalid_token", error_description="No authorization provided", resource_metadata="https://gramscope.vercel.app/.well-known/oauth-protected-resource"`. `GET https://gramscope.vercel.app/.well-known/oauth-protected-resource` returned `200` with `{"resource":"https://gramscope.vercel.app/api/mcp","authorization_servers":["https://your-app-staging.authkit.app"]}`.
-- 2026-08-27 — **the final whole-implementation review of sub-project 3 found three Important defects that every task review had missed**, because each one only shows across module boundaries. (1) A source can be named three ways, but union-minus-exclusions, de-duplication and the 25-source ceiling all compared raw strings, so an exclusion written `@name` did not remove the folder member listed by its marked id, one peer named twice fanned out and paged twice, and the ceiling counted names rather than peers. (2) Tool descriptions offered marked ids as continuation handles, which a `joined=false` source cannot honour on a cold instance. (3) `ChatInvitePeek` exposed a `source_id` the account cannot resolve. Fixed in `71420c8..ad2bec8`. The lesson worth carrying: a per-task review sees one diff, and a contract that lives in three modules at once is exactly what it cannot see.
-- 2026-08-27 — **the 25-source ceiling now counts canonical sources, so it cannot be applied before resolution.** A looser pre-resolution guard, `MAX_RAW_SOURCE_NAMES_PER_CALL` = 4x the effective one, is what bounds how many entity resolutions one call can buy, and exclusions count toward it. Every later multi-source tool inherits both limits from `src/telegram/source-selection.ts` rather than defining its own.
-- 2026-08-27 — a re-siting hazard worth remembering: when a contract moves to a later layer, the tests that guarded it move too, and their fixtures must move with them. Two fan-out fixtures resolved every unknown name to the same entity, so after canonicalisation a 26-source selection collapsed to one source and the ceiling tests would have passed having asserted nothing. Distinct names must resolve to distinct peers in any fixture that exercises a ceiling.
-- 2026-08-27 — **the final review's fix rounds cost three iterations, and each round's fix introduced the next round's defect.** The chain is worth keeping because every link was invisible to the fast tier. Round 1 (`71420c8..ad2bec8`) canonicalised aliases, and made an exclusion that cannot be resolved fail the whole call — the realistic path being an agent excluding an unjoined channel by the marked id it was handed, which a cold instance cannot resolve. Round 2 (`eb1f0c9..213513a`) degraded that to name-key matching, and halved a pre-resolution name ceiling to 50, which then rejected a 45-member folder with 20 members excluded (65 names counted, effective set 25) and asked for a split `folder_ids` cannot perform. Round 3 (`a4df5b7..00a2dd2`) replaced that ceiling with a lookup budget. No fast test caught any of the three; each was found by a whole-diff reviewer reading across module boundaries.
-- 2026-08-27 — **a multi-source call is bounded by three checks, cheapest first, all in `src/telegram/source-selection.ts`; every later multi-source tool inherits them rather than defining its own.** (1) `MAX_SOURCE_NAMES_PER_CALL` = 1000 caps the sheer number of names, read from array lengths before any per-name work. (2) The distinct HELD selected sources, minus held exclusions and minus the count of network exclusions, are checked against `MAX_SOURCES_PER_CALL` = 25 — exact and free, because `resolveSource` answers those from the dialog index. (3) `MAX_NETWORK_RESOLUTIONS_PER_CALL` = 2x the ceiling caps the lookups that actually reach Telegram. `resolutionCost` in `src/telegram/peer-resolve.ts` classifies a name `local | network | never`, and `never` — unparseable names and invite links — is charged nothing, because it never reaches the network and diagnosing it as an overflow would ask for a split that cannot help. The module-level resolve cache is deliberately not counted as local, so a call is not legal on a warm instance and rejected on a cold one.
-- 2026-08-27 — **the full 25-source ceiling cannot be applied before resolution, and the reason is worth keeping.** Two names the dialog index cannot answer may resolve to the same peer, so a count of names is an UPPER bound on the canonical result and refusing on it would refuse legal calls. Only the held half is exact. Held exclusions are subtracted or the folder-minus-members case is refused again; network exclusions are subtracted because any one of them may yet resolve to a held peer and remove it. Every direction of imprecision left in that bound makes it looser, never tighter.
-- 2026-08-27 — a peer's username lookup is a per-index `Map` held in a `WeakMap` keyed on the `DialogIndex` object, first-wins, built once. It replaced a linear scan of every dialog per name, which a caller could drive: 200,000 names against a 1000-entry index went from about 4.5s of CPU to 66ms, inside a 60s `maxDuration`. Latent and unreachable today: a `DialogIndex` mutated after first use would be served a stale map, and nothing mutates one after `fetchDialogIndex` builds it.
-- 2026-08-27 — **an exclusion degrades on `CHANNEL_NOT_FOUND`, and on `PRIVATE_CHANNEL_NOT_ACCESSIBLE` only when it was named by marked id** — including a `t.me/c/<id>` link, which parses to the same marked id. There the peer's identity is exactly what the caller wrote, so the degrade key is exact and a channel the account was banned from does not take the whole page down for an exclusion that is provably a no-op. Named by username it still fails the call, because no id is learned and the target stays unknown. The original rule and its reasoning:
-- 2026-08-27 — **an exclusion degrades only on `CHANNEL_NOT_FOUND`.** That code means the name resolves nowhere, which is the cold-instance case the degrade path exists for. A malformed name, an invite link, a rate limit or a transport failure all leave the exclusion's status unknown, and serving content the caller asked to omit on a guess is worse than failing the call — spec §11 also mandates `INVALID_INPUT` for a bad source name, and an exclusion must not be the one place that escapes it. Two reviewers disagreed here; this is the ruling that stands.
-- 2026-08-27 — a deliberate non-fix, so it is not re-raised: a bare unmarked id such as `1234567890` is not matched against a channel's marked id in `aliasKeys`. An unmarked id is not a documented source name, it fails resolution anyway, and matching it would collide with a user id, which Telegram marks as the bare id unchanged.
-- 2026-08-27 — process trap: `npx prettier --write` over a directory reformatted 22 files unrelated to the change, because the repository is not prettier-clean and `npm run lint` does not enforce formatting. Format the files you edited, never a directory, or revert the rest before committing.
-- 2026-08-28 — accepted residuals in sub-project 3, judged not worth a fifth fix round and recorded so they are not re-raised as defects. (a) When a selection's held half is already over the ceiling AND an exclusion is unusable, the caller is told about the ceiling rather than about the bad name; both statements are true and both are `INVALID_INPUT`, so it costs one extra round trip. (b) `25 held + 26 unjoined` names still buys up to 16 lookups before failing at 51 canonical sources — unavoidable, because all 26 could be aliases of the held peers, which would make the call legal; the 50-lookup budget bounds it. (c) If a username were transferred between two channels the account holds within one warm instance, the resolve cache and a fresh dialog index would disagree and the free held count could be inflated by one.
-
-- 2026-08-28 — **Telegram discovery, measured live against the real account** (throwaway probe, deleted, not committed; sub-project 4 input). Do not re-probe these.
-  - `contacts.search` matches NAMES, not topics: `q=AI` returned zero public channels while `q=artificial intelligence` returned nine. It is a lookup by title and username, so a tool description that lets the agent read it as a topical search engine will produce "no such channels exist" from a query that is merely too short.
-  - `contacts.search` caps global results at **10** regardless of `limit`; 50 and 200 returned the same page. There is no offset or cursor parameter, so the tool is single-page by construction.
-  - The `broadcasts: true` flag both filters out users and refills the quota with channels: `q=нейросети` went from 9 mixed results (4 chats, 5 users) to 10, all channels.
-  - Its `Channel` objects carry `title`, `participantsCount`, `verified`, `scam`, `fake`, `restricted`, `left`, `broadcast`, `megagroup`, `min` — but **no `about`**. A description costs one `getFullChannel` per candidate.
-  - `username` is often null while the active handle sits in `usernames[]` (`chatgptv`, `neiroseti` both arrived that way). Read both; `entityUsernames` in peer-id.ts already does.
-  - `channels.getChannelRecommendations({channel})` returns `messages.ChatsSlice` with `count: 79` and only **10 chats** on this non-Premium account — `count` is what exists, the 10 are what is served, and there is no paging parameter to reach the rest.
-  - `channels.getChannelRecommendations({})` — no channel — returns `messages.Chats` with **100 chats** and no `count`: global recommendations derived from the account's own subscriptions, untruncated.
-- 2026-08-28 — the owner reviewed and approved the sub-project 4 (Discovery) spec as written; no changes were requested. The brainstorming approval gate is closed and planning may proceed.
-- 2026-08-28 — **sub-project 4 connector acceptance passed after reconnecting the ChatGPT connector.** `tools/list` exposed exactly 13 expected tools. The initial seed `@exampleaiseed` returned zero similar channels, so the owner selected the already-followed public channel `@exampleaichannel` as the fallback seed; it returned 10 candidates with `total_similar: 74` and `truncated: true`. All 10 candidates had usernames and 9 had descriptions. Four `get_messages` calls by candidate `@username` succeeded with no failures, and three recommendations were based on the posts read. The scenario made no joins and no Telegram account-state changes.
-- 2026-08-28 — **sub-project 4 is closed, deployed, accepted, and review-clean.** The final whole-implementation review over `4055790..3c38cf9` found 0 Critical, 2 Important, and 4 Minor findings. The Important findings were missing concurrent/empty details-cache flood protection and a misleading global `get_similar_channels` description. Commit `3c7383b2292387e523915ba07005a14f094b1427` fixed both and three opportunistic Minor findings; scoped re-review was CLEAN, addressed 2/2, residual 0/0/0, and Ready to close was Yes. Fresh final gates at that commit passed: 28 test files / 382 tests, typecheck, lint, and Next build; build-induced `tsconfig.json` churn was restored. `origin/main` was independently verified at the same full SHA.
-
-- 2026-08-29 — Saved Messages measured live during the 5b brainstorm, with a
-  throwaway probe that was deleted afterwards; the account was returned to its
-  baseline. Five facts, each of which constrains the design:
-  **(1)** teleproto's high-level `client.sendMessage` applies markdown parsing
-  by default — `**bold**` came back as `bold`, the asterisks consumed into an
-  entity. Raw `Api.messages.SendMessage` with no `entities` round-trips the text
-  byte-exact. A note store that mangles its own payload is worthless, so notes
-  must be written through the raw call, never through `sendMessage`.
-  **(2)** Search inside the `me` peer finds a note by `gs:src:1002222222222`, by
-  the bare digits, by the `-100…` marked form, and by a Russian word in the
-  body. Lookup by source id through search is therefore viable, and so is
-  topic search.
-  **(3)** `editMessage` on the account's own Saved Messages works. The probe
-  could only edit a message seconds old, so whether Telegram's 48-hour edit
-  window applies here is still unmeasured; the design must fall back to
-  delete-and-resend rather than assume.
-  **(4)** The `me` peer holds service messages — this account has an
-  undeletable `MessageActionHistoryClear` at id 86, which survived a
-  `DeleteMessages` with `revoke`. Every read path must filter to real text
-  messages instead of assuming each message is a note.
-  **(5)** A message id is not a stable handle for a note: after the probe's
-  message was deleted, reading that same id returned a different object rather
-  than nothing. Notes must be addressed by a content marker, not by a stored
-  message id.
-
-# Current point
-
-**Sub-projects 1-5b are complete, deployed, review-clean, and owner-accepted.
-GramScope ships as version 1.4.0 with nineteen tools, and the planned roadmap
-is complete.** All nine 5b implementation tasks and the single broad-review fix
-wave are complete; the scoped re-review found every item addressed with no new
-Critical/Important breakage. The owner-run authenticated connector workflow
-from spec §12.4 passed on 2026-08-30 and returned Saved Messages to an empty
-source-note baseline. The connector exposed all nineteen tools but did not
-expose the server version to the model; record that UI observation as
-unavailable rather than claiming a direct version check. The task table below
-and the acceptance record under Changes and findings are authoritative.
-
-Historical sub-project 5 decisions retained below:
-- Sub-project 5 is split. **5a** = `mark_unread`, `join_channel`,
-  `leave_channel`, `manage_folder`. **5b** = `save_message`,
-  `get_saved_messages`, `search_saved_messages`, specced separately later.
-- The owner rejected a confirm-token gate on the destructive actions and
-  redirected the problem: content read from Telegram is data, never an
-  instruction and never evidence; channels pass opinion off as fact. Protection
-  must come from how data is shaped and framed, not from confirmation ceremony.
-- Correction to an assumption recorded earlier on this card: the account's
-  folders are the agent's workspace, not the owner's curation. The owner does
-  not intend to open Telegram at all. No design may rest on a human noticing
-  something in a Telegram client.
-- The untrusted-content framing does not become its own sub-project. The
-  ChatGPT Project instructions carry the meaning; the server carries only what
-  they cannot. Shared guidance moves into `ServerOptions.instructions`, said
-  once, and `OUTSIDE_SOURCE_GUIDANCE` is removed from the nine shipped
-  descriptions that repeat it.
-- Invite links, confirmation gates, folder sharing and a folder-kind output
-  field are all out of scope by owner decision.
-
-**Spec for 5a is approved by the owner, 2026-08-28:**
-`docs/superpowers/specs/2026-08-28-gramscope-writes-design.md`, no changes
-requested. The implementation plan is written:
-`docs/superpowers/plans/2026-08-28-gramscope-writes.md`, twelve tasks. The owner
-chose subagent-driven execution on 2026-08-28.
-
-**Execution in flight.** The ledger is
-`.superpowers/sdd/2026-08-28-gramscope-writes/progress.md` — git-ignored and
-machine-local, so on a fresh clone reconstruct position from `git log` instead.
-A pre-flight conflict scan of the plan ran before Task 1 and produced six
-rulings; five of them are already applied to the plan file in commit `038d4de`,
-so the plan text on disk is the corrected one and those corrections must not be
-re-derived. **Base commit for the whole sub-project: `d2cc3a3`.** Every commit
-after it is implementation.
-
-Outcomes below are filled in as each task closes, so another agent — Codex on
-this machine, or any fresh session — can resume from the first row that is not
-yet complete without re-running anything above it.
-
-| Task | State |
-| --- | --- |
-| 1 Server-level instructions replace the per-tool guidance | complete, `f032556`, review clean; 385 tests |
-| 2 `unread_mark` on the read side | complete, `2616025`, review clean, no findings; 388 tests |
-| 3 `get_unread_summary` reports the manual flag | complete, `f42bd9c`, review clean; 392 tests |
-| 4 `peerKind`, `toInputPeer`, `markUnread` engine | complete, `1432f22`..`7c6b4b0`, clean after 1 fix round; 399 tests |
-| 5 `mark_unread` tool | complete, `067047d`, review clean; 400 tests, fourteen tools |
-| 6 `join_channel` | complete, `f550122`..`cc46c43`, clean after 1 fix round; 405 tests, fifteen tools |
-| 7 `leave_channel` | complete, `c02321a`, review clean; 409 tests, sixteen tools |
-| 8 Folder round-trip rule, create/rename/delete | complete, `914ea66`; review closed by TL-constructor ruling, 2 minor test findings deferred; 417 tests |
-| 9 Folder membership and order | complete, `d7f8dc9`, review clean; 431 tests |
-| 10 `manage_folder` tool | complete, `546b2a9`, review clean; 433 tests, seventeen tools |
-| 11 Version 1.3.0, README, deploy | complete, `690ecb6`..`3c99774`, clean after 1 fix round; 433 tests + build; deployed and verified in production |
-| 12 Live tier | complete, `9c2b5ec`..`dd47f22`, clean after 1 fix round; live tier 35 passed/1 skipped, fast tier 433 |
-
-Rulings made during execution, each of which the owner may overrule:
-
-- Pre-flight, applied to the plan at `038d4de`: `leaveChannel`'s kind check moves
-  above the membership early-return; the folder-edit test fake applies the writes
-  it receives to its own filter list; Task 1 extracts a shared `connectServer`
-  test helper instead of duplicating the handshake; Task 10's schema assertion
-  copies the enum's array before sorting it; Task 8 implements `createFolder`
-  without the `source_ids` branch, which Task 9 adds.
-- Task 4: the duplicated `source_ids` validation guard is extracted into
-  `src/telegram/source-selection.ts` as `assertSourceIdsBounded(ids, toolName,
-  ceiling)`. **Task 9's folder editing must use that helper instead of writing
-  its own `assertBatchSize`, passing `MAX_SOURCES_PER_CALL`** — the plan text
-  still says `assertBatchSize`, and this ruling overrides it.
-- Task 5: `tests/mcp-handler.test.ts` got a local writers array in place of a
-  chain of `!==` comparisons, folded into Task 6 rather than deferred, because
-  the chain would have reached five clauses by Task 10.
-- Task 6: the `peerKind` guard moves above the membership branch in
-  `joinChannel`, and the entity is resolved once up front for both branches.
-  The plan text put the guard in only the not-held branch, so a numeric id
-  naming an already-held private chat returned `already_member: true` — a
-  success for a target the tool's own description says cannot be joined. Same
-  shape as the pre-flight ruling for `leaveChannel`: kind is a property of the
-  target, not of membership. The `sourceType` test around `fetchChannelDetails`
-  disappeared with it, since every entity surviving the guard is a channel.
-- Task 8: retain `pinnedPeers: []` and `excludePeers: []` when constructing a
-  new `DialogFilter`, despite the spec's shorthand that create sets only `id`,
-  `title` and `includePeers`. Teleproto declares all three peer vectors as
-  required, non-optional constructor fields, and the Task 8 brief therefore
-  supplies the two empty vectors explicitly. They carry no user-selected state.
-  Cost if wrong: create writes explicit empty vectors where Telegram might have
-  supplied an equivalent default; omitting them instead fails the declared TL
-  constructor contract.
-- Task 11: the plan's four-file list omitted `package-lock.json`, but the
-  repository already treated its two root version fields as part of the tested
-  public-version invariant. The lockfile therefore moves to 1.3.0 and the
-  existing assertions stay; removing the assertions to preserve the plan's
-  file list was rejected in review. Cost if wrong: one extra metadata file in
-  the Task 11 diff. README now distinguishes five state-change tools deployed
-  in 1.3.0 from the six planned for full Slice 5; `save_message` remains 5b.
-
-**Brainstorm in flight, 2026-08-29 (sub-project 5b).** Nothing is specced yet.
-The first owner decision already overrides the README's description of the
-sub-project:
-
-- **Saved Messages are not a forwarding archive.** The owner rejected the
-  README's "prefer native forwarding semantics" framing outright: posts are not
-  to be forwarded into Saved Messages at all. Saved Messages are to hold a
-  compact, agent-written **classifier and memory about sources** — which
-  channels write about what, a short summary of what a channel covers — so that
-  a specific question whose answer does not fall out of the folder taxonomy can
-  still be routed to the right channels. The owner's constraint on it: "не
-  превращать сохраненные сообщения в свалку, там должно быть компактно и
-  удобно." They are open to widening the idea, not to loosening that constraint.
-- **Sub-project 6 is absorbed into 5b, owner decision 2026-08-29.** The
-  `Source Meta` private channel described in the README and in earlier cards
-  will not be created, and `get_channel_note` / `set_channel_note` will not ship
-  as separate tools against it. Saved Messages is the single store for source
-  memory. The owner picked it over the private channel knowing the trade: a
-  channel guarantees unrestricted in-place editing of one's own posts, while
-  Saved Messages avoids creating and bootstrapping a channel, storing its id in
-  config, and handling the "channel does not exist yet" path, and search inside
-  the account's own chats was already measured working in sub-project 3. **Any
-  design that needs to update a note in place must first confirm by live probe
-  that `messages.editMessage` works on the account's own Saved Messages without
-  a time limit**; if it does not, the update path becomes delete-and-resend and
-  the spec must say so.
-- Consequence for the README: its §H `save_message` description ("prefer native
-  forwarding/saving semantics so the original source remains traceable") and its
-  `Source Meta` sections describe work that will not be built. They are stale as
-  of this decision and are rewritten when 5b ships.
-- **The owner delegated the shape of a note** ("подумай как лучше всего
-  организовать, я не знаю"), keeping one binding constraint: the store stays
-  compact and never becomes a dump. The model chosen is one note per source,
-  overwritten in place, with per-field caps — bounded by the account's
-  inventory rather than by the number of questions asked. Two tools,
-  `set_source_note` and `get_source_notes`, replace the five that the README
-  and sub-project 6 between them promised. Nineteen tools, version 1.4.0.
-- The design was approved section by section in chat on 2026-08-29 and written
-  up as `docs/superpowers/specs/2026-08-29-gramscope-source-notes-design.md`
-  (`11bf2c1`). **The owner approved the written spec on 2026-08-29 with no
-  changes requested.** The implementation plan is written:
-  `docs/superpowers/plans/2026-08-29-gramscope-source-notes.md` (`619f608`,
-  self-review fixes in `f2a6532`, formatting in `9924e32`), nine tasks.
-  **Base commit for sub-project 5b: `e613575`** — every commit after it is 5b
-  work. Implementation and owner acceptance are complete; the outcomes are
-  recorded in the task table and current-point paragraph.
-
-Outcomes are filled in as each task closes, so another agent — Codex on this
-machine, or a fresh session — can resume from the first row that is not yet
-complete without re-running anything above it.
-
-| Task | State |
-| --- | --- |
-| 1 Note shape and input caps | complete, `b7d66df`..`4fd23e6`, clean after 1 fix round; 12 tests in the new suite |
-| 2 Wire format | complete, `d7646fe`..`c76f3d1`, clean after 1 fix round; 465 tests |
-| 3 Reading the store | complete, `cdd0983`..`4c01701`, clean after 1 fix round; 476 tests |
-| 4 Writing a note | complete, `81609e0`; gate repair `c02b176`; review clean; 484 fast tests |
-| 5 Deleting a note | complete, `81e4034`; review clean; 488 fast tests after gate repair |
-| 6 `get_source_notes` tool | complete, `37166db`; review clean; 489 fast tests after gate repair fix round 2; eighteen tools |
-| 7 `set_source_note` tool | complete, `157c70f`; review clean; 490 fast tests; nineteen tools, six writers |
-| 8 Version 1.4.0, README, Project instructions, deploy | complete, `4da02fa`..`ee708c0`, clean after 1 fix round; 490 tests + build; production Ready; owner re-paste/reconnect complete; connector exposed 19 tools, while its version was not model-visible |
-| 9 Live tier | complete, `50d8522`; review approved; live 38 passed/1 skipped twice; Saved Messages zero-note baseline confirmed twice |
-| Final broad-review fix wave | complete, `8631163`, scoped re-review clean; failure-atomic resend, concurrent-write reconciliation, stored semantic invariants, trust/tool-contract wording, and four minors resolved; 80 focused and 499 fast tests; full live tier 38 passed/1 skipped twice with zero-note cleanup; production Ready; owner connector acceptance PASS on 2026-08-30 |
-
-## Historical sub-project 5b execution record — superseded
-
-This section preserves execution history only. **Do not use it to resume or
-dispatch work.** The task table and `# Current point` above are the authority;
-the final-fix brief and report hold the last review-wave evidence.
-
-- Spec: `docs/superpowers/specs/2026-08-29-gramscope-source-notes-design.md`.
-  Plan: `docs/superpowers/plans/2026-08-29-gramscope-source-notes.md`, nine
-  tasks, executed with `superpowers:subagent-driven-development` — one
-  implementer subagent per task, a spec-plus-quality review after each, a
-  scoped re-review after each fix round, one broad whole-branch review at the
-  end.
-- **Base commit: `e613575`.** Everything after it is 5b work.
-- The working ledger is `.superpowers/sdd/2026-08-29-gramscope-source-notes/`,
-  git-ignored and machine-local, so it does not survive a clone. **Resume from
-  the task table above**, at the first row that is not `complete`; everything
-  above that row is committed and reviewed and must not be redone.
-- The pre-flight conflict scan ran before Task 1 and produced five rulings,
-  recorded below. The plan text on disk was NOT rewritten for them, so the
-  rulings override the plan where they conflict.
-
-### Historical pause on 2026-08-29 — superseded, do not resume here
-
-**Work stopped here because the owner's weekly usage limit ran down, not
-because anything failed.** Tasks 1, 2 and 3 are complete, reviewed and pushed.
-`main` is at `3da6605`, the working tree is clean, and the fast suite stood at
-476 green. Task 4 was dispatched once and stopped before it wrote a single
-line; nothing of it exists on disk, so it starts from scratch.
-
-The instruction at that time was to resume by dispatching Task 4 from the plan;
-it is now obsolete and must not be followed. The briefs under
-`.superpowers/sdd/2026-08-29-gramscope-source-notes/` are regenerable at any
-time with the plugin's `scripts/task-brief <plan> <N>`; the ledger there is
-git-ignored and does not travel, which is why everything below is here instead.
-
-**Four things Task 4's implementer must be told, because the plan text is stale
-on each of them:**
-
-1. `findNoteMessages` no longer returns a bare array. It returns
-   `{ notes, malformed }` — `notes` newest-first and filtered to exact id
-   matches, `malformed` carrying `message_id` and `reason` for messages whose
-   first line equals that source's marker exactly. Everywhere the plan writes
-   `existing[0]`, `existing.length` or `existing.slice(1)`, it means
-   `found.notes`.
-2. **`setSourceNote` must delete the malformed messages too when it collapses
-   duplicates.** A malformed message under this source's exact marker is a
-   corrupt copy of the note being overwritten; leaving it means
-   `get_source_notes` reports it forever for a source whose note was just
-   rewritten correctly. The write path may do this because it is already
-   overwriting that source's note — the read path must still never delete
-   anything. This requirement is nowhere in the plan.
-3. Imports from one module go in a single statement. The plan shows each task
-   appending its own `import ... from "./client"` line to a file that already
-   imports from that module; those are additive instructions, not literal
-   statements, and a duplicate fails lint.
-4. Tests must call `__resetPeerCacheForTests()` from
-   `src/telegram/peer-resolve.ts` in the same `afterEach` that resets the
-   client. `resolveSource` keeps a module-scope cache and the plan's test code
-   omits the reset.
-
-**One correction carried over from Task 3, still outstanding.** The comment on
-the `TotalList` structural test in `tests/telegram-source-notes.test.ts` claims
-it catches a dropped `Array.from` in `fetchPage`. That was measured false —
-`collect` rebuilds the array independently. The comment should say what the
-test actually guards, the module's plain-`Array` output contract. Fold it into
-Task 4, which edits that file anyway; do not delete the test and do not change
-`fetchPage`.
-
-**Final-review minors — resolved in the single 2026-08-29 fix wave:** exact-cap
-passing coverage now exercises every bounded field, topic count, and individual
-topic; over-long-topic errors name the index, measured length, and limit without
-echoing the value; the marker-search ceiling documents why cleanup scans only
-the newest 20 interrupted-write copies; and the live by-ID lookup asserts the
-returned note ID equals the target.
-
-### Sub-project 5b — rulings taken on the owner's behalf during execution
-
-- **Final review, write atomicity:** Task 4's plan-mandated fallback order is
-  overturned. After an edit failure, `setSourceNote` sends the replacement
-  first and preserves the old valid note until that send succeeds, then
-  reconciles by exact marker. A transient send failure must not destroy the
-  store's only valid note. Cost if wrong: a successful send followed by a
-  cleanup failure can leave a visible duplicate instead of causing data loss.
-- **Final review, concurrent writes:** every successful set performs a fresh
-  post-write exact-marker reconciliation, keeps the newest valid note, deletes
-  all other valid and exact-marker malformed copies, then re-reads. Two
-  concurrent first writes can both miss the pre-write snapshot; the later
-  post-write lookup must restore the one-note invariant. Cost if wrong: two
-  extra marker searches and a cleanup attempt per set.
-- **Final review, stored invariants:** stored-note parsing stays permissive
-  about historical field lengths, but requires nonempty/nonblank topics and a
-  valid ISO date. Those are durable semantic invariants, not mutable compactness
-  caps. Cost if wrong: an old semantically corrupt marked payload becomes
-  visible in `malformed` instead of entering the routing table.
-- **Final review, trust wording:** tool and owner-facing prose distinguishes
-  GramScope assessment fields (`about`, `topics`, `kind`, optional cadence,
-  language and provenance) from Telegram-derived `id`, `handle` and `title`,
-  which remain third-party metadata. Cost if wrong: longer descriptions and
-  Project instructions.
-- **Task 5:** `deleteSourceNote` deletes both well-formed note messages and
-  malformed messages attributed by `findNoteMessages` to the source's exact
-  marker, and reports `deleted: true` if either existed. The plan's bare-array
-  code predates Task 3's corruption-visibility contract, while Task 5 itself
-  requires deleting every message carrying that source's marker. Cost if
-  wrong: an explicit delete removes a corrupt claimed note instead of leaving
-  it visible for diagnosis.
-- **Task 4 gate repair:** the full fast suite reproducibly timed out in the
-  pre-existing `tests/env-file.test.ts` durability test after every other fast
-  test passed (470/470 after Task 4). The changed source-note surface is not
-  involved, but the plan requires an exit-0 full gate before each task closes.
-  The process-wait race in that test is repaired in a separate commit and
-  separately reviewed before Task 4 review. The first repair landed as
-  `c02b176`; Task 5's full gate then exposed a second timing race in the same
-  test's observation loop. Fix round 1 landed as `5f436cf`, but Task 6's gate
-  proved its watcher was still resource-dependent (`EMFILE`). Fix round 2
-  landed as `080f4f2`: it removed the external child and watcher, calibrated a
-  shared in-process observer against an explicitly synchronized
-  truncate-then-write control, then applied it to the real atomic upsert. The
-  scoped re-review passed, as did the full 489/489 gate, typecheck and lint.
-  Cost if wrong: three out-of-scope, test-only commits in the 5b history.
-- **Task 1:** the plan's own test snippet covered cap violations for `about` and
-  `topics` only, leaving `MAX_LANG_CHARS`, `MAX_CADENCE_CHARS` and
-  `MAX_DERIVED_FROM_CHARS` — three of the six exported caps — with no
-  behavioural test at all. Spec §5 requires every cap to be enforced at input
-  validation with its limit named, so the three tests were added. Cost if
-  wrong: three redundant tests.
-- **Task 3:** `findNoteMessages` collected only well-formed notes, so on the
-  `source_ids` path a corrupt note was indistinguishable from no note, and a
-  stale older copy could silently win when the newest copy was the corrupt one.
-  It now returns `{ notes, malformed }`, and a malformed message is attributed
-  to a source **only when its first line equals that source's marker exactly** —
-  the body is corrupt, so the id inside it cannot be trusted, and Telegram's
-  search matches word prefixes. Cost if wrong: the read reports a corrupt
-  message the agent then ignores, which is visible noise rather than a silent
-  hole.
-- **Task 3:** the suite had no structural test for teleproto's `TotalList`
-  leaking into a domain result, so deleting the `Array.from` normalization
-  would have failed nothing. One was added, following the shape already used in
-  `tests/telegram-dialogs.test.ts` and `tests/telegram-messages.test.ts`.
-  Measured caveat worth keeping: the test does **not** fail if `fetchPage`'s
-  `Array.from` is removed, because `collect` rebuilds the array independently.
-  It guards the module's plain-`Array` output contract, not that one line.
-- **Task 2:** the plan's `parseNoteMessage` decided "is this message ours?" with
-  `^gs:src:\d+$`, so a first line carrying the `gs:src:` prefix with a corrupt
-  suffix — and a message with no body at all — were classified `other` and
-  skipped silently by every caller. **The prefix, not the digits, now decides.**
-  `gs:src:` is this server's own namespace, so such a message is a corrupt note
-  of ours, and the `malformed` outcome exists precisely to keep a corrupt note
-  visible. The argument that settles it is spec §14: it provides for the marker
-  gaining a version segment if the wire format ever changes, and under a
-  digit-only regex every note in the older format would have become silently
-  invisible at exactly the moment the agent most needs to see it. Cost if
-  wrong: a foreign message that happens to start with this namespace is
-  reported as malformed noise — visible rather than silent, and effectively
-  impossible.
-
-### Sub-project 5b — pre-flight rulings
-
-- **The plan never names `tests/mcp-handler.test.ts` in a task's Files block**,
-  yet that file holds both the hardcoded exact tool list
-  (`advertises all seventeen tools`) and the five assertions pinning version
-  1.3.1. Task 6 and Task 7 each update the tool list and its title; Task 8
-  updates the version assertions and title. Without this those tasks land red
-  on a test the plan does not mention.
-- `tests/tools.test.ts` builds its exact set from a local `READ_ONLY` array
-  plus `WRITERS`. Task 6 adds `get_source_notes` to `READ_ONLY`; Task 7 adds
-  `set_source_note` to `WRITERS` in `tests/tool-names.ts`.
-- The plan shows Tasks 3, 4 and 5 each appending their own
-  `import ... from "./client"` to `src/telegram/source-notes.ts`. Those are
-  additive instructions, not literal statements: imports from one module are
-  merged into a single statement.
-- Tasks 4 and 5 call `__resetPeerCacheForTests()` in the same `afterEach` that
-  resets the client. `resolveSource` keeps a module-scope cache and the plan's
-  test code omits the reset.
-- Task 3's test block opens a second `import { afterEach } from "vitest"` in a
-  file that already imports from vitest; merge it into the existing import.
-
-## How to resume sub-project 5a
-
-Read this before dispatching anything, whether you are Codex on this machine or
-a fresh session.
-
-- The plan is `docs/superpowers/plans/2026-08-28-gramscope-writes.md`, executed
-  with `superpowers:subagent-driven-development`: one implementer subagent per
-  task, a spec-plus-quality review after each, a scoped re-review after each fix
-  round, and one broad whole-branch review at the end.
-- **The plan text on disk is already corrected.** Five pre-flight rulings were
-  applied to it at `038d4de` and must not be re-derived. The rulings above,
-  however, override the plan text where they conflict — the plan file was not
-  rewritten for them.
-- The working ledger and the per-task briefs lived in
-  `.superpowers/sdd/2026-08-28-gramscope-writes/`, which was git-ignored and
-  machine-local. It was **deleted** after the final re-review came back clean,
-  per `superpowers:subagent-driven-development`. Its durable content — every
-  ruling and every deferred item — was lifted into this card first; git history
-  carries the rest.
-- Resume at the first table row above that is not `complete`. Everything above
-  it is committed, reviewed, and must not be redone.
-- **Current point (2026-08-29):** sub-project 5a is finished apart from owner
-  acceptance. All twelve tasks are complete and reviewed. The broad
-  whole-sub-project review over `d2cc3a3`..`7017671` returned Needs fixes with
-  three Important findings; the single fix wave closed them across `f85e101`,
-  `8332274` and `74e0f56`; and the scoped re-review of that wave returned
-  "All findings addressed, no new Critical/Important breakage" with the gates
-  re-run independently (443/443 fast tier, typecheck, lint). Production serves
-  **1.3.1**, and its `401` Bearer challenge and protected-resource document
-  were re-checked after that deploy. The git-ignored ledger was deleted per
-  `superpowers:subagent-driven-development`, so this card is now the whole
-  durable record — the rulings and deferred items below were lifted out of it
-  before deletion. **Sub-project 5a is complete, owner acceptance included.** Both
-  acceptance actions passed on 2026-08-29 and nothing is outstanding; the next
-  work is sub-project 5b (`save_message` and the Saved Messages reads) or 6
-  (source notes in the private metadata channel).
-  - **Owner acceptance, spec §12.5, passed 2026-08-29 in the ChatGPT
-    connector.** The full sequence ran without a single error:
-    `search_channels("космос")` → `join_channel("@examplechannel")`
-    (`already_member: false`) → `manage_folder(create, title "Probe",
-    source_ids ["@examplechannel"])`, which returned folder id 5 with
-    `included_peer_ids: ["-1002222222222"]` → `list_dialogs(folder_id: "5")`,
-    which showed the channel filed there → `leave_channel("@examplechannel")`
-    (`was_member: true`) → `manage_folder(delete, folder_id: "5")`. The
-    connector reported exactly seventeen tools by name. A read-only audit
-    afterwards confirmed the account is back to its baseline: folders 2/17,
-    3/15, 4/14, 58 dialogs, 0 manual unread flags, no membership left behind.
-    This also settles the deployed-version question — seventeen tools counted
-    from inside ChatGPT is the 1.3.1 acceptance check, so no second browser
-    token was needed.
-  - **Owner acceptance, spec §12.6, passed 2026-08-29:** the owner created the
-    ChatGPT Project from `docs/chatgpt-project-instructions.md`. That file is
-    now live prompt text, not a draft — every future edit to it changes the
-    standing instructions of a Project that already exists, and the repository
-    copy is only the source of truth for as long as the two are kept in step.
-    **The Project contains everything from `## What this connector is`
-    downwards and nothing above it**; the H1 and the paragraph under it are
-    notes about the file, not instructions to the model. That boundary is now
-    stated in the file itself, so a re-paste needs no judgement.
-    Whenever a tool's accepted input changes, check that file the way the final
-    fix wave had to.
-  - **The throwaway WorkOS client stays.** `GramScope acceptance probe`,
-    `client_id` `client_01M14EP0KM5CFN1491QE4JZ0M3`, was registered so a
-    loopback `authorization_code` + PKCE flow could hold an owner token outside
-    ChatGPT — AuthKit offers no `client_credentials` grant and refuses the
-    device grant to DCR clients. The owner decided on 2026-08-29 to keep it
-    rather than delete it, since it is the only way to query the deployed MCP
-    directly. It is a public client with no secret, redirecting only to
-    `http://127.0.0.1:8765/callback`, and any token it mints still has to pass
-    `verifyOwnerToken`'s audience and `sub == OWNER_USER_ID` checks.
-
-- **Final fix wave (2026-08-29), one wave only, no second round.** Fixed, all
-  within the existing taxonomy: (1) `manage_folder(create)` now rejects an
-  absent or empty `source_ids` with `INVALID_INPUT` naming the constraint —
-  Telegram answers a zero-peer include list with `FILTER_INCLUDE_EMPTY`, so the
-  advertised create-empty-then-fill sequence could never work; schema, tool
-  description and README now say `source_ids` is required on create. (2) New
-  `MAX_FOLDER_TITLE = 12` beside `MAX_FOLDERS`, checked in `createFolder` and
-  `renameFolder`, mirrored as `.max(12)` on the zod field and stated in the tool
-  description; `MESSAGE_TOO_LONG` and `FILTER_INCLUDE_EMPTY` join `EXACT` in
-  `src/errors/from-telegram.ts` mapped to `INVALID_INPUT` as belt and braces.
-  (3) `manage_folder(remove_sources)` no longer silently removes nothing when
-  given a `@username` or a `t.me` link: **option (a) of the reviewer's two was
-  taken** — every entry must be a marked id, rejected otherwise with
-  `INVALID_INPUT` pointing at `list_folders`' `included_peer_ids`. Option (b),
-  resolving through `resolveSource`, was rejected on inspection: `resolveSource`
-  needs a `DialogIndex`, `folder-edit.ts` holds none, and building one is
-  `fetchDialogIndex()` — a `messages.GetDialogFilters` plus a paged
-  `getDialogs({limit: 1000})` — so it is not the free lookup the review assumed,
-  and it would add the account's heaviest read to a call that today makes two
-  invokes. Minors: the four drifted files formatted with an explicit
-  `prettier --write` file list (never a directory — the repo is not
-  prettier-clean); `WRITERS` extracted to `tests/tool-names.ts` and imported by
-  both suites; `test:live` now sets `GRAMSCOPE_LIVE=1` itself so the live tier's
-  `fileParallelism` serialization cannot be lost to a forgotten export. Version
-  bumped to 1.3.1 in `src/mcp/version.ts`, `package.json`, both
-  `package-lock.json` root fields, the `mcp-handler` assertion and the README;
-  tool count stays seventeen.
-
-- **Follow-up in the same wave.** Fix (3) falsified the standing instruction in
-  `docs/chatgpt-project-instructions.md` telling the model to address every
-  source by @username, so that bullet gained a clause naming
-  `manage_folder(remove_sources)` as the exception and pointing at
-  `list_folders`. The folder-title cap and the create-needs-sources rule were
-  deliberately NOT added there: both are already in `manage_folder`'s own
-  description and in the `INVALID_INPUT` message, and standing instructions cost
-  context in every session including the read-only ones. `SERVER_INSTRUCTIONS`
-  (`src/mcp/instructions.ts:17`) carries the same @username rule and is
-  falsified the same way; it was flagged for the owner rather than changed,
-  since it ships beside the tool description that overrides it. **Ruled on and
-  fixed in the same wave:** `SERVER_INSTRUCTIONS` is what the client receives at
-  `initialize`, so it is the more authoritative of the two texts and carries the
-  same clause now, worded to match the document. Both suites that pin the
-  addressing rule keep the old substring and gained an assertion on the new
-  clause, proved non-vacuous by deleting the clause and watching both fail.
-
-- **Task 11 detail (2026-08-28):** Task 11 is complete, deployment included.
-  `main` was pushed to `origin/main` at `e7c1ba6`, carrying Tasks 7-11. Vercel
-  production deployment `dpl_B7UzJxGm5JbMLeZtb3jXpRyRZYxP`
-  (`https://gram-scope-abc123def-example-projects.vercel.app`, alias
-  `https://gramscope.vercel.app`) reached `Ready`, and every part of
-  acceptance criterion 3 was verified against it — see "Production acceptance
-  of 1.3.0" below. Do not redo Task 11's implementation, tests, review or
-  deployment. Next: Task 12, the live tier, then the broad whole-sub-project
-  review over `d2cc3a3`..HEAD.
-
-- **Production acceptance of 1.3.0, verified 2026-08-28.** Unauthenticated:
-  `/api/mcp` answers `401` with a `WWW-Authenticate: Bearer` challenge naming
-  the resource metadata, and `/.well-known/oauth-protected-resource` returns
-  `resource` = `https://gramscope.vercel.app/api/mcp` with the AuthKit
-  issuer. Authenticated as the owner: `initialize` returns `serverInfo.name`
-  `gramscope`, `serverInfo.version` `1.3.0` and a 777-character `instructions`
-  string; `tools/list` returns exactly seventeen tools — `get_channel`,
-  `get_message`, `get_messages`, `get_pinned_messages`,
-  `get_similar_channels`, `get_thread`, `get_unread_summary`, `join_channel`,
-  `leave_channel`, `list_dialogs`, `list_folders`, `manage_folder`,
-  `mark_read`, `mark_unread`, `resolve_telegram_url`, `search_channels`,
-  `search_messages`.
-
-- **How the authenticated check was made, and the cleanup it left.** WorkOS
-  AuthKit exposes no `client_credentials` grant and refuses the device grant to
-  dynamically registered clients, so the only way to hold an owner token
-  outside ChatGPT is a loopback `authorization_code` + PKCE flow the owner
-  approves in a browser, with `resource` set to the MCP URL so the token's
-  `aud` matches what `verifyOwnerToken` demands. Doing that required
-  registering a throwaway DCR client, `GramScope acceptance probe`,
-  `client_id` `client_01M14EP0KM5CFN1491QE4JZ0M3`. **It still exists in the
-  WorkOS environment and should be deleted** — it is not needed again unless
-  this check is repeated.
-- Gates for every task: `npm run test`, `npm run typecheck`, `npm run lint`.
-  The live tier is excluded from `npm run test` by design and runs only in
-  Task 12, with `GRAMSCOPE_LIVE=1 npm run test:live`. Never commit the
-  `tsconfig.json` churn `npm run build` leaves behind.
-
-Three points the spec left open are decided in the plan, not in the spec, and a
-reviewer may overrule any of them: `leave_channel` covers channels and
-supergroups only and refuses a legacy chat or a user dialog; the manual unread
-flag is reported by `get_unread_summary` under `group_by: "source"` only;
-`manage_folder(add_sources)` fails the whole action if any named source does not
-resolve. The plan also places `toInputPeer` in `src/telegram/client.ts` and
-`peerKind` in `src/telegram/peer-id.ts`, neither of which the spec's file list
-names, because the teleproto-boundary rule leaves nowhere else for them.
-
-**Next: sub-project 5, Writes.** No spec yet. Its scope, per the README tool set
-and the decisions recorded above, is `mark_unread`, `join_channel`,
-`leave_channel`, `manage_folder`, `save_message`, and the Saved Messages reads
-(`get_saved_messages`, `search_saved_messages`) that sub-project 3 deferred here.
-Sub-project 6 (source notes in the private metadata channel) follows.
-
-- Spec `docs/superpowers/specs/2026-08-28-gramscope-discovery-design.md`,
-  approved by the owner and amended at `4639fa4` for the `getFullChannel` flood
-  ceiling.
-- Plan `docs/superpowers/plans/2026-08-28-gramscope-discovery.md` at `56f2ee5`,
-  with two pre-flight rulings on its live tier at `4055790`.
-- Executed through `superpowers:subagent-driven-development`. **Base commit for
-  the whole sub-project: `4055790`.** Its temporary workspace and ledger were
-  removed after the clean final re-review; this card preserves the durable
-  outcomes, rulings, and deferred items.
-
-| Task | State |
-| --- | --- |
-| 1 Candidate schema and mapping | complete, `c26a657`, review clean |
-| 2 Capped, throttled, cached enrichment | complete, `25ad447`, review clean |
-| 3 `search_channels` engine | complete, `ecd0b62`, clean after 1 fix round |
-| 4 `get_similar_channels` engine | complete, `2cae8b4`; final review downgraded the duplicated page-building block to deferred Minor, see below |
-| 5 Expose both tools, bump to 1.2.0 | complete, `4e57eb5` |
-| 6 Live tier | complete, `d7c6435`; final gates at `3c7383b` passed: 28 test files / 382 tests, typecheck, lint, and Next build; `tsconfig.json` restored |
-| 7 Deploy and accept | complete: production Ready, OAuth/MCP checks and owner connector acceptance passed; final review fixed and re-reviewed clean |
-
-Final production deployment: `dpl_Ha9w9mNsBo1wEXwqTpa1PUB78xMB`, target
-`production`, status `Ready`, URL
-`https://gram-scope-xyz789ghi-example-projects.vercel.app`, alias
-`https://gramscope.vercel.app`. `/api/mcp` returned the expected `401`
-Bearer metadata challenge and the protected-resource document was correct.
-
-**Deferred, non-blocking:** Task 4's review found that
-`src/telegram/discovery.ts:154-164` and `:190-198` carry the same
-enrich / map / `fitToSizeCap` / slice block verbatim in both engines, differing
-only in which array feeds the slice. The final reviewer downgraded this to
-Minor and parked it until the pipeline next changes or a third caller appears.
-
-**Do not redo:** tasks 1-7, anything in sub-projects 1-3, or any item the four
-sub-project 3 fix rounds closed. The live discovery measurements under "Changes
-and findings" cost real FLOOD_WAIT budget — read them rather than re-probing.
-
-**Rulings taken on the owner's behalf so far**, preserved here: two pre-flight
-rewrites of Task 6's live tests (the wall-clock cache
-comparison and the every-candidate-has-a-username assertion, both flake risks);
-and a ruling that the reviewer's concern about de-duplication under-reporting
-`truncated` is not a real gap, because Telegram's `results` list is the one
-capped at ten and its members are distinct.
-
-## Sub-project 5a — rulings taken on the owner's behalf
-
-Lifted from the git-ignored ledger before it was deleted. Each says what was
-decided and what it costs if wrong. Rework any of them freely.
-
-1. **T4** — the review's duplicated-guard finding beat the plan text, which
-   wrote both guards out in full. The guard moved into
-   `src/telegram/source-selection.ts` as `assertSourceIdsBounded(ids, toolName,
-   ceiling)`, which already owns "how many sources may one call name". Cost:
-   one extra import edge, and a helper with two call sites until Task 9 added
-   the third.
-2. **T4** — Task 9 uses that shared helper instead of writing its own
-   `assertBatchSize`. Cost: Task 9's brief and its implementation diverge on a
-   function name.
-3. **T4** — the two Minors went into the fix round rather than the deferred
-   list, because a stale docstring is a factual error the diff introduced and
-   the untested `chat`/`user` branches of `toInputPeer` are the exact failure
-   `peerKind` exists to prevent. Cost: a slightly larger fix diff.
-4. **T5** — `tests/mcp-handler.test.ts` hardcoded `name !== "mark_read" &&
-   name !== "mark_unread"`, which would have grown to five chained clauses;
-   Task 6 extracted a shared writers list instead. Cost: test churn in a file
-   Task 6 already touched.
-5. **T6** — the Important finding beat the plan text: `joinChannel`'s
-   already-member path returned `already_member: true` for a held non-channel
-   peer while the not-held path rejected the same shape. The `peerKind` guard
-   moved above the membership branch, as pre-flight ruling R3 had already done
-   for `leaveChannel`. Kind is a property of the target, not of membership.
-   Cost: `join_channel` on an already-held legacy group now errors instead of
-   reporting `already_member: true` — the more informative answer, since such a
-   group cannot be joined by username at all.
-6. **T6** — the Minor folded into that same fix: once the kind guard runs
-   first, `fetchChannelDetails` needs no type test and the wasted
-   `GetFullChannel` round trip on a legacy group disappears. Cost: none.
-7. **T8** — `pinnedPeers: []` and `excludePeers: []` are retained on a new
-   `DialogFilter` even though the spec says create sets only
-   `id`/`title`/`includePeers`, because teleproto's generated constructor
-   declares all three vectors non-optional. Empty vectors carry no user state.
-   Cost: create writes explicit empty vectors where Telegram might have
-   defaulted them.
-8. **T11** — the lockfile finding beat the plan's four-file list;
-   `package-lock.json` was already part of the tested public-version invariant.
-   Cost: one extra metadata file in the diff.
-9. **T12** — the hung implementer was re-dispatched on the same model rather
-   than escalated, because the failure was procedural (it waited on a
-   background monitor instead of running the suite in the foreground) and its
-   file was complete. Cost: one more wasted dispatch.
-10. **T12** — the live-tier race was fixed in both halves, not either alone.
-    `tests/live/reading.live.test.ts:163` asserted `unread_count > 0` for every
-    source group, which Task 3 had already invalidated, so it was wrong
-    independent of any race; and every live file mutates one shared real
-    account, so `fileParallelism` is now off for the live tier. Cost: the live
-    tier runs serially, and one assertion is looser.
-11. **Final review** — the fix wave took the three Important findings plus
-    Minors 1, 2 and 9 only. Cost: seven small quality items carry into
-    sub-project 5b (listed below).
-12. **Final review** — the version went to **1.3.1**, because production served
-    1.3.0 with behaviour this wave changed and yesterday's acceptance check was
-    made against 1.3.0. Tool count unchanged at seventeen. Cost: a patch
-    version the spec did not explicitly authorize.
-13. **Final review** — the falsified `@username` rule was corrected in
-    `src/mcp/instructions.ts` as well as in the Project document.
-    `SERVER_INSTRUCTIONS` is what the client receives at `initialize` on every
-    session, so it is the more authoritative of the two. Cost: a few more
-    tokens spent on every session, read-only ones included.
-
-## Sub-project 5a — deferred, not blocking
-
-Each was raised in a review, judged non-blocking, and left open on purpose. The
-final reviewer re-triaged every one of them and confirmed each could stay
-deferred.
-
-- `tests/mcp-handler.test.ts` — the `initialize` test does not close its
-  transport, unlike `listTools`' `try/finally`. In-memory transport; no flake
-  risk.
-- `src/mcp/tools/search-channels.ts:391` — prettier flipped the string
-  delimiters as churn from Task 1's refactor.
-- `tests/telegram-unread.test.ts` — `indexWith` uses a truthy check where
-  `src/telegram/unread.ts` uses `=== true`; the production predicate is tested
-  directly.
-- `src/mcp/tools/mark-read.ts` and `mark-unread.ts` are structurally identical
-  registration wrappers. All seventeen registration files share the shape;
-  judged idiom, not defect.
-- **`src/telegram/peer-resolve.ts`'s module-level resolve cache** returns a
-  `ResolvedSource` without re-checking held status, so within one warm instance
-  a name resolved via the network branch keeps its `entity` after a membership
-  change. The final reviewer checked whether join/leave made this worse and
-  found it does not: `fetchDialogIndex()` runs fresh on every call and is not
-  cached, and the cache supplies only the entity and access hash, which survive
-  a membership change. The residual staleness is a cached `title` on the echoed
-  source.
-- `tests/telegram-folder-edit.test.ts` — the create tests do not pin the exact
-  constructor payload shape, and "changes the title and nothing else" asserts
-  the title only; the adjacent preservation test carries the unmodelled-field
-  assertions.
-- `tests/live/writes.live.test.ts:115-118` uses `expect.arrayContaining` rather
-  than full-set equality. Telegram does not guarantee peer order in a returned
-  filter, so a stricter check would trade an assertion for a flake.
-- `tests/live/writes.live.test.ts:53-76` — the join/leave restore path runs
-  only when the account does not already follow the target, so the test can
-  pass having verified little. Inherited from the plan's own design.
-- **Vocabulary drift, now in three places:** `docs/chatgpt-project-instructions.md`
-  and `src/mcp/tools/manage-folder.ts:130` say "numeric ids" where
-  `src/mcp/instructions.ts` says "marked ids". "Marked id" is the project's
-  precise term; unify on the next edit that touches any of them.
-- **`reorder` has no live coverage** and its handling of the reserved id 0 is
-  unverified. `src/telegram/folder-edit.ts` sends only the ids of real filters
-  and `DialogFilterDefault` has no id, so whether Telegram expects 0 in the
-  order vector was never measured. It is the one folder action of six with no
-  real-account evidence.
-- **`manage_folder`'s dispatcher is untested.** `src/mcp/tools/manage-folder.ts`
-  holds the `required()` errors and two distinct response shapes, and no test
-  drives `run()`. The engines beneath it are well covered.
-- **`mark_unread` echoes the caller's own string back as `source_id`**
-  (`src/telegram/read-state.ts`), so `mark_unread(["@exampleuser"])` returns
-  `source_id: "@exampleuser"` with no title. Consistent with `mark_read`'s shape by
-  spec §5.4, but it is the one write of four that does not satisfy §4.2's
-  purpose — that a target which resolved to something other than what the
-  caller meant is visible in the response.
-- **`deleteFolder` pays for a re-read it discards** — `writeFilter` always
-  re-fetches all filters and the delete path throws the result away. One saved
-  round trip per delete.
-- **`add_sources` resolves through raw `resolveEntity`, not `resolveSource`**,
-  so it is the only source-naming path that skips `parseTelegramName`: an
-  invite link reaches teleproto instead of GramScope's own refusal, the
-  dialog-index shortcut is unused, and 25 sources cost 25 serial network
-  resolutions.
-- **`remove_sources` is still a silent no-op for a marked id the folder does
-  not hold.** The fix wave addressed the wrong-format case only.
-- **Leaving a channel does not remove it from folders**, surfaced by the
-  owner's acceptance run on 2026-08-29: `leave_channel` echoed
-  `folder_ids: ["5"]` for a channel it had just left, because a folder's
-  `includePeers` is independent of membership. The run deleted the folder
-  straight afterwards so nothing was left stale, but an agent that joins a
-  channel, files it, and later leaves it will leave the folder pointing at a
-  peer the account no longer holds — and `list_dialogs(folder_id)` would then
-  report a source that is not in the account's dialogs. Decide in sub-project
-  5b whether `leave_channel` should offer to unfile, or whether the tool
-  descriptions should simply say the two are independent.
-- **The 12-character title cap is measured, undocumented, and counted in
-  UTF-16 code units.** If Telegram's rule is bytes, or the cap moves, the
-  `MESSAGE_TOO_LONG` mapping is the only backstop.
-- **`fileParallelism` serializes files, not tests within a file.** Sound as
-  shipped, since no live test is marked `concurrent`; a future
-  `describe.concurrent` would quietly reopen the hazard.
-
-# Blocked — awaiting owner
-Nothing. Every item that blocked sub-project 1 cleared on 2026-08-27; see
-"Changes and findings" for what each one produced.
-
-
-# Review findings not yet addressed
-- ~~No test exercises `tools/list` through the MCP handler.~~ **Closed 2026-08-27** by Task 12 of the sub-project 2 plan, commit `1e96589`. `tests/mcp-handler.test.ts` drives a real `McpServer` over the SDK's `InMemoryTransport` and speaks raw JSON-RPC. The reviewer confirmed independently that it catches both failure modes: a dropped tool fails the exact-set assertion, and an `inputSchema` the SDK cannot convert is converted lazily *inside* the `tools/list` handler, so it turns the whole listing into a JSON-RPC error and takes the test red.
-
-# Deferred, not blocking
-
-Carried out of the sub-project 2 ledger, which is git-ignored and machine-local.
-Each was raised in a task review, judged non-blocking, and left open on purpose.
-
-From Task 10 (`mark_read`):
-- No test exercises a TL `Bool` false return from `channels.readHistory`. A no-op `maxId` legitimately returns false, and the failure signal is a thrown mapped error rather than a falsy return, so the distinction is asserted nowhere.
-- The 26-source rejection test checks only the `INVALID_INPUT` code, not that the message names the limit.
-- No test pins input order under varied concurrency; ordering is currently a property of the implementation rather than a guarded contract.
-
-From Task 12 (`tools/list` handler test):
-- `waitFor` returns any JSON-RPC message with a matching id, including an error response, and the caller then reads `.result.tools`. An unconvertible `inputSchema` therefore surfaces as `Cannot read properties of undefined` and the SDK's precise diagnostic is discarded. The test still goes red; only the message is lost.
-- The schema and `readOnlyHint` loops pass vacuously on an empty tools array. The suite is non-vacuous because the exact-set test covers that case, but the two tests are individually weak.
-- The 200x10ms poll caps a response at 2 s, tighter than the suite's 120 s `testTimeout`, so a loaded machine fails as "no response to request 1" rather than as a timeout.
-- The schema test asserts only `inputSchema`. All seven tools also register an `outputSchema` on the same conversion path, so a dropped or unconvertible one is the same class of silent ship.
-
-# Decisions carried into later sub-projects
-- `TelegramSource.id` is Telegram's MARKED id (`-100…` for channels). Every later tool joins on this field, and sub-project 6 keys source notes by it.
-- Cursors carry a kind discriminator (`k`); each new paginated tool must use its own, or a foreign cursor silently returns a wrong page.
-- ~~There is no access-hash story yet.~~ Superseded 2026-08-27: resolution from a bare id works for reads and writes alike, see the finding above. `id` keeps its meaning. Folder edits, joins and leaves in sub-projects 5 and 6 inherit the same resolution path. **Qualified 2026-08-27: bare-id resolution works only for peers the account already holds.** A channel it has never joined answers `CHANNEL_INVALID` by id and resolves only by username; once resolved in-process the id then works, but a fresh serverless instance loses that. So any tool that reaches outside the account's own dialogs must carry a username or resolve one first — `TelegramSource.id` alone is not a sufficient handle there.
-- `readOnlyHint` is currently uniform and unenforced. Sub-project 2 makes it behaviour-derived — `false` on `mark_read`, `true` on the reads — and the handler test asserts it. Later write tools inherit that obligation.
-- The grouped-by-source response shape and the per-source `offset_id` cursor introduced in sub-project 2 are the house format for every later multi-source tool, `search_messages` included.
-- **Normalize teleproto's arrays with `Array.from` before they enter a domain result.** `getDialogs` and `getMessages` return an `Array` subclass carrying `total`, and the subclass survives `filter`/`map`/`slice`. A leak is invisible to the fast tier and to the wire response, so only a live run or a structural comparison catches it. Every later tool that maps a TL list into a returned value inherits this obligation.
-
-# Links
-- brief: README.md
-- spec (sub-project 1, Foundation): docs/superpowers/specs/2026-08-26-gramscope-foundation-design.md
-- plan (sub-project 1, Foundation): docs/superpowers/plans/2026-08-26-gramscope-foundation.md
-- spec (sub-project 5b, Source Notes): docs/superpowers/specs/2026-08-29-gramscope-source-notes-design.md
-- plan (sub-project 5b, Source Notes): docs/superpowers/plans/2026-08-29-gramscope-source-notes.md
-- spec (sub-project 2, Reading): docs/superpowers/specs/2026-08-27-gramscope-reading-design.md
-- spec (sub-project 3, Research): docs/superpowers/specs/2026-08-27-gramscope-research-design.md
-- plan (sub-project 2, Reading): docs/superpowers/plans/2026-08-27-gramscope-reading.md
-- plan (sub-project 3, Research): docs/superpowers/plans/2026-08-27-gramscope-research.md
-- ledger (sub-project 2, Reading): .superpowers/sdd/2026-08-27-gramscope-reading/progress.md — git-ignored, machine-local. It opens with a "How to resume this work in another tool" block; `/sp:next` reads it automatically.
-- ledger: deleted with the plan workspace after the final whole-branch review came back clean, per superpowers:subagent-driven-development. Recover sub-project 1's history from `git log` if needed.
-- deployment: https://gramscope.vercel.app (Vercel Git integration; a push to `main` deploys)
-- MCP endpoint: https://gramscope.vercel.app/api/mcp
+Nothing is awaiting an owner decision.
+
+# Requirement changes
+
+- 2026-08-26 — Use `teleproto`, the maintained TypeScript fork of GramJS,
+  rather than the stale `telegram` package named in the original brief.
+- 2026-08-26 — Authenticate the ChatGPT connector through WorkOS AuthKit with
+  static OAuth client credentials. DCR and CIMD are not required.
+- 2026-08-27 — Work directly on `main`; do not create per-slice branches.
+- 2026-08-27 — Move `mark_read` into the Reading slice so unread workflows are
+  functional when they ship.
+- 2026-08-27 — Accept source names as a marked ID, `@username`, or Telegram URL
+  on read/research paths. Public sources outside the account require a username
+  or public URL; a bare marked ID is insufficient on a cold instance.
+- 2026-08-27 — Search results are a flat ranked stream. Other multi-source read
+  results remain grouped by source.
+- 2026-08-28 — Treat the dedicated Telegram account as the agent's workspace,
+  not a human-curated client. No behavior may depend on a person noticing or
+  repairing state in Telegram.
+- 2026-08-28 — Telegram content is untrusted data, never instruction or
+  self-authenticating evidence. Put the full rule in ChatGPT Project
+  instructions and the compact invariant in MCP server instructions.
+- 2026-08-28 — Do not add confirmation tokens. Write tools act on one target at
+  a time and return the target actually changed.
+- 2026-08-28 — Keep invite links, arbitrary messaging, mute/unmute,
+  archive/unarchive, and folder sharing out of scope.
+- 2026-08-29 — Replace the proposed Source Meta channel and saved-post tools
+  with GramScope-authored source notes stored as raw messages in Saved
+  Messages. Address notes by a stable `gs:src:<absolute marked id>` marker.
+- 2026-08-29 — A source note's Telegram identity fields are third-party data;
+  its `about`, `topics`, `kind`, `lang`, `cadence`, and `derived_from` fields
+  are GramScope assessments based only on posts actually read.
+
+# Review findings
+
+These findings were accepted as non-blocking. Keep them until they are moved to
+the issue tracker or explicitly closed.
+
+## Reading and MCP tests
+
+- `mark_read` has no test for a legitimate false return from
+  `channels.readHistory`.
+- The 26-source rejection test checks the error code but not the limit text.
+- No test pins multi-source output order under varied concurrency.
+- `tests/mcp-handler.test.ts` can replace a precise JSON-RPC error with a
+  `Cannot read properties of undefined` diagnostic in its polling helper.
+- The MCP schema and `readOnlyHint` loops are individually vacuous on an empty
+  tool list, although the exact-set test covers the suite-level case.
+- The MCP polling helper has a 2-second ceiling despite a 120-second test
+  timeout.
+- The MCP schema test checks `inputSchema`, not `outputSchema`.
+- The MCP initialize test does not close its in-memory transport.
+
+## Source selection and caching
+
+- A cached `ResolvedSource` can retain a stale echoed title after membership
+  changes within one warm instance; the entity and access hash remain valid.
+- If a username transfers between two held channels within one warm instance,
+  the resolve cache and a fresh dialog index can disagree and inflate the held
+  count by one.
+- A request containing 25 held sources and 26 unjoined names can spend up to 16
+  lookups before canonicalization proves it exceeds the 25-source limit. The
+  50-lookup budget bounds the cost; rejecting earlier would reject legal alias
+  combinations.
+- When the held half already exceeds the source limit and an exclusion is
+  invalid, the caller sees the source-limit error first. Both are valid
+  `INVALID_INPUT` errors, but diagnosis can take one extra call.
+
+## Write tools and folders
+
+- `mark_read` and `mark_unread` have duplicate registration wrappers, matching
+  the repository's broader registration-file pattern.
+- `mark_unread` echoes the caller's source string rather than the canonical
+  marked ID and title.
+- `manage_folder`'s dispatcher and its two response shapes lack direct tests.
+- Folder create/rename tests do not independently pin every preserved
+  constructor field.
+- Folder reorder has no real-account coverage; handling of reserved folder ID
+  `0` remains unmeasured.
+- The live join/leave restore path does little when the account already follows
+  the target.
+- The live folder membership assertion uses partial set matching because
+  Telegram does not guarantee peer order.
+- `deleteFolder` performs and discards a post-write folder re-read.
+- `add_sources` bypasses `parseTelegramName` and the dialog-index shortcut,
+  making it inconsistent and potentially expensive.
+- `remove_sources` silently succeeds when the folder does not contain the
+  supplied marked ID.
+- Leaving a channel does not remove it from folders. Membership and folder
+  inclusion are independent Telegram states.
+- The observed 12-character folder-title limit may be bytes rather than UTF-16
+  code units; GramScope has no direct documentation for the rule.
+- Live files are serialized, but a future `describe.concurrent` inside one file
+  would reopen shared-account races.
+
+## Minor code and fixture quality
+
+- `src/telegram/discovery.ts` duplicates the enrich/map/size-cap/slice pipeline
+  in both discovery engines. Keep it until the pipeline changes or gains a
+  third caller.
+- `tests/telegram-unread.test.ts` uses a truthy fixture check where production
+  requires `=== true`.
+- `src/mcp/tools/search-channels.ts` contains one delimiter-only formatting
+  change inherited from an earlier refactor.
+
+# Artifact links
+
+- Foundation:
+  [spec](../specs/2026-08-26-gramscope-foundation-design.md),
+  [plan](../plans/2026-08-26-gramscope-foundation.md)
+- Reading:
+  [spec](../specs/2026-08-27-gramscope-reading-design.md),
+  [plan](../plans/2026-08-27-gramscope-reading.md),
+  ledger `.superpowers/sdd/2026-08-27-gramscope-reading/progress.md`
+- Research:
+  [spec](../specs/2026-08-27-gramscope-research-design.md),
+  [plan](../plans/2026-08-27-gramscope-research.md),
+  ledger `.superpowers/sdd/2026-08-27-gramscope-research/progress.md`
+- Discovery:
+  [spec](../specs/2026-08-28-gramscope-discovery-design.md),
+  [plan](../plans/2026-08-28-gramscope-discovery.md)
+- Writes:
+  [spec](../specs/2026-08-28-gramscope-writes-design.md),
+  [plan](../plans/2026-08-28-gramscope-writes.md)
+- Source Notes:
+  [spec](../specs/2026-08-29-gramscope-source-notes-design.md),
+  [plan](../plans/2026-08-29-gramscope-source-notes.md)
+- ChatGPT Project instructions: [`../../chatgpt-project-instructions.md`](../../chatgpt-project-instructions.md)
+- Production endpoint: `https://gramscope.vercel.app/api/mcp`
+
+The original brief and every removed execution record remain recoverable from
+git history. Specs and plans are retained as the approved historical authority
+for their delivery slices.
