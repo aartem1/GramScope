@@ -120,8 +120,9 @@ created: 2026-08-26
 
 **Sub-projects 1-5a are complete, deployed, and owner-accepted. Sub-project 5b
 is implemented as version 1.4.0 with nineteen tools; all nine implementation
-tasks and the single broad-review fix wave are complete.** The task table below
-and the current acceptance paragraph are authoritative. The only remaining
+tasks and the single broad-review fix wave are complete, and the scoped
+re-review found every item addressed with no new Critical/Important breakage.**
+The task table below and the current acceptance paragraph are authoritative. The only remaining
 5b acceptance is owner-only work in the live ChatGPT Project: re-paste the
 updated Project instructions, reconnect so ChatGPT refreshes `tools/list`, and
 run the authenticated connector workflow from spec §12.4. Do not infer or
@@ -284,7 +285,7 @@ complete without re-running anything above it.
 | 7 `set_source_note` tool | complete, `157c70f`; review clean; 490 fast tests; nineteen tools, six writers |
 | 8 Version 1.4.0, README, Project instructions, deploy | complete, `4da02fa`..`ee708c0`, clean after 1 fix round; 490 tests + build; production Ready; owner re-paste/reconnect and authenticated 1.4.0/19-tool check pending |
 | 9 Live tier | complete, `50d8522`; review approved; live 38 passed/1 skipped twice; Saved Messages zero-note baseline confirmed twice |
-| Final broad-review fix wave | complete in the single authorized wave; failure-atomic resend, concurrent-write reconciliation, stored semantic invariants, trust/tool-contract wording, and four minors resolved; 80 focused and 499 fast tests; full live tier 38 passed/1 skipped twice with zero-note cleanup; owner connector acceptance still pending |
+| Final broad-review fix wave | complete, `8631163`, scoped re-review clean; failure-atomic resend, concurrent-write reconciliation, stored semantic invariants, trust/tool-contract wording, and four minors resolved; 80 focused and 499 fast tests; full live tier 38 passed/1 skipped twice with zero-note cleanup; production Ready; owner connector acceptance still pending |
 
 ## Historical sub-project 5b execution record — superseded
 
