@@ -5,6 +5,7 @@ export type Config = {
   workosIssuer: string;
   workosJwksUrl: string;
   ownerUserId: string;
+  mediaTokenSecret: Uint8Array;
   /**
    * The resource identifier this server accepts tokens for (the deployed
    * origin + /api/mcp). Required: without it the audience check cannot run,
@@ -22,6 +23,18 @@ function required(env: Env, name: string): string {
   return value;
 }
 
+function requiredMediaTokenSecret(env: Env): Uint8Array {
+  const encoded = required(env, "MEDIA_TOKEN_SECRET");
+  if (!/^[A-Za-z0-9_-]+$/.test(encoded)) {
+    throw new Error("MEDIA_TOKEN_SECRET must be base64url without padding");
+  }
+  const bytes = Buffer.from(encoded, "base64url");
+  if (bytes.length !== 32) {
+    throw new Error("MEDIA_TOKEN_SECRET must decode to exactly 32 bytes");
+  }
+  return new Uint8Array(bytes);
+}
+
 export function loadConfig(env: Env = process.env): Config {
   const rawApiId = required(env, "TELEGRAM_API_ID");
   const telegramApiId = Number(rawApiId);
@@ -36,5 +49,6 @@ export function loadConfig(env: Env = process.env): Config {
     workosJwksUrl: required(env, "WORKOS_JWKS_URL"),
     ownerUserId: required(env, "OWNER_USER_ID"),
     mcpResourceUrl: required(env, "MCP_RESOURCE_URL"),
+    mediaTokenSecret: requiredMediaTokenSecret(env),
   };
 }

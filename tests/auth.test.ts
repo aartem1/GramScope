@@ -39,6 +39,7 @@ function env() {
     WORKOS_JWKS_URL: `${ISSUER}/jwks`,
     OWNER_USER_ID: "user_owner",
     MCP_RESOURCE_URL: AUDIENCE,
+    MEDIA_TOKEN_SECRET: Buffer.alloc(32, 7).toString("base64url"),
   };
 }
 

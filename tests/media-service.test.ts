@@ -6,6 +6,7 @@ import {
 import { mediaToolResult } from "@/mcp/media-result";
 import { runGetMediaTool } from "@/mcp/tools/get-media";
 import {
+  attachOriginalLink,
   getMedia,
   type MediaAsset,
   type MediaDependencies,
@@ -180,10 +181,13 @@ function fakeMediaDeps(options: {
       width: 1,
       height: 1,
     }),
+    attachOriginalLink: async (_asset, outcome) => outcome,
   };
 }
 
 afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllEnvs();
   telegramMocks.fetchDialogIndex.mockClear();
   telegramMocks.resolveSource.mockClear();
 });
@@ -253,6 +257,52 @@ describe("Telegram media bytes", () => {
 });
 
 describe("getMedia", () => {
+  it("issues an encrypted same-origin original link from the stable selector", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-30T12:00:00Z"));
+    const key = Buffer.alloc(32, 7).toString("base64url");
+    const environment = {
+      TELEGRAM_API_ID: "12345",
+      TELEGRAM_API_HASH: "hash",
+      TELEGRAM_SESSION: "session",
+      WORKOS_ISSUER: "https://auth.example.test",
+      WORKOS_JWKS_URL: "https://auth.example.test/jwks",
+      OWNER_USER_ID: "owner-1",
+      MCP_RESOURCE_URL: "https://gramscope.test/api/mcp",
+      MEDIA_TOKEN_SECRET: key,
+    };
+    for (const [name, value] of Object.entries(environment)) vi.stubEnv(name, value);
+    const asset = fakeAsset({
+      type: "document",
+      file_name: "report.pdf",
+      mime_type: "application/pdf",
+      size: 123,
+    });
+    const outcome = await attachOriginalLink(asset, {
+      result: {
+        status: "fallback",
+        source_id: asset.sourceId,
+        message_id: asset.messageId,
+        media: asset.descriptor,
+        representation: { kind: "metadata" },
+        code: "UNSUPPORTED_MEDIA",
+        retryable: false,
+        message: "fallback",
+      },
+    });
+
+    expect(outcome.result.download?.expires_at).toBe("2026-08-30T12:10:00.000Z");
+    expect(outcome.link).toMatchObject({
+      name: "report.pdf",
+      mimeType: "application/pdf",
+      size: 123,
+    });
+    const link = new URL(outcome.link!.uri);
+    expect(link.origin).toBe("https://gramscope.test");
+    expect(link.pathname).toMatch(/^\/api\/media\/[^/]+$/);
+    expect(link.pathname).not.toContain(asset.sourceId);
+  });
+
   it("returns a direct image for a bounded photo", async () => {
     const deps = fakeMediaDeps();
 
@@ -296,6 +346,48 @@ describe("getMedia", () => {
       result: { status: "ready", representation: { kind: "audio" } },
       artifact: { type: "audio", mimeType: "audio/ogg" },
     });
+  });
+
+  it("adds one same-call original link to one bounded source-audio block", async () => {
+    const bytes = Buffer.from("source-ogg");
+    const deps = fakeMediaDeps({
+      asset: fakeAsset({
+        type: "voice",
+        mime_type: "audio/ogg",
+        file_name: "voice.ogg",
+        size: bytes.length,
+      }),
+      bytes,
+    });
+    deps.attachOriginalLink = async (_asset, outcome) => ({
+      ...outcome,
+      result: {
+        ...outcome.result,
+        download: {
+          url: "https://gramscope.test/api/media/encrypted",
+          expires_at: "2026-08-30T12:10:00.000Z",
+        },
+      },
+      link: {
+        uri: "https://gramscope.test/api/media/encrypted",
+        name: "voice.ogg",
+        mimeType: "audio/ogg",
+        size: bytes.length,
+      },
+    });
+
+    const outcome = await getMedia(input(), deps);
+    const toolResult = mediaToolResult(outcome);
+    expect(toolResult.content.filter((part) => part.type === "audio")).toHaveLength(1);
+    expect(toolResult.content.filter((part) => part.type === "resource_link")).toEqual([{
+      type: "resource_link",
+      uri: "https://gramscope.test/api/media/encrypted",
+      name: "voice.ogg",
+      mimeType: "audio/ogg",
+      size: bytes.length,
+    }]);
+    expect(outcome.artifact).toMatchObject({ type: "audio", mimeType: "audio/ogg" });
+    expect(outcome.artifact?.data.equals(bytes)).toBe(true);
   });
 
   it.each([

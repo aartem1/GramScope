@@ -5,8 +5,10 @@ import type {
 } from "../schemas/media";
 import { INLINE_MEDIA_MAX_BYTES } from "../schemas/media";
 import { GramScopeError } from "../errors/taxonomy";
+import { loadConfig } from "../config";
 import { normalizeImage } from "./image";
 import { safeMediaFilename } from "./names";
+import { issueMediaToken } from "./token";
 import { withTelegram, type TelegramLike } from "../telegram/client";
 import {
   readAssetBytes,
@@ -73,7 +75,45 @@ const productionMediaDependencies: MediaDependencies = {
   readBytes: readAssetBytes,
   readThumbnail: readAssetThumbnail,
   normalizeImage,
+  attachOriginalLink,
 };
+
+export async function attachOriginalLink(
+  asset: MediaAsset,
+  outcome: MediaOutcome,
+): Promise<MediaOutcome> {
+  const config = loadConfig();
+  const issued = await issueMediaToken({
+    v: 1,
+    purpose: "telegram-original",
+    sourceId: asset.sourceId,
+    messageId: asset.messageId,
+    ownerId: config.ownerUserId,
+  }, new Date(), config.mediaTokenSecret);
+  const uri = `${new URL(config.mcpResourceUrl).origin}/api/media/${encodeURIComponent(issued.token)}`;
+  const name = safeMediaFilename({
+    supplied: asset.descriptor.file_name,
+    kind: asset.descriptor.type,
+    messageId: asset.messageId,
+    mimeType: asset.descriptor.mime_type,
+  });
+  return {
+    ...outcome,
+    result: {
+      ...outcome.result,
+      download: {
+        url: uri,
+        expires_at: issued.expiresAt.toISOString(),
+      },
+    },
+    link: {
+      uri,
+      name,
+      mimeType: asset.descriptor.mime_type,
+      size: asset.descriptor.size,
+    },
+  };
+}
 
 function readyOutcome(asset: MediaAsset, artifact: MediaArtifact): MediaOutcome {
   const fileName = safeMediaFilename({
@@ -217,8 +257,8 @@ async function directAudioOrFallback(
   if ((asset.descriptor.size ?? INLINE_MEDIA_MAX_BYTES + 1) > INLINE_MEDIA_MAX_BYTES) {
     return withOriginalLink(asset, fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false), deps);
   }
-  const outcome = await directOriginal(client, asset, deps);
-  return outcome.result.status === "fallback" ? withOriginalLink(asset, outcome, deps) : outcome;
+  const direct = await directOriginal(client, asset, deps);
+  return withOriginalLink(asset, direct, deps);
 }
 
 async function directImage(

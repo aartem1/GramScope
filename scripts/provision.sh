@@ -46,7 +46,7 @@ env_set() {
 # Everything entered is written to .env.local the moment it is answered, and
 # that write is atomic, so an interrupt at any point keeps what you have
 # already given. This reports what survived and how to pick up again.
-REQUIRED_KEYS="TELEGRAM_API_ID TELEGRAM_API_HASH TELEGRAM_SESSION WORKOS_ISSUER WORKOS_JWKS_URL OWNER_USER_ID MCP_RESOURCE_URL"
+REQUIRED_KEYS="TELEGRAM_API_ID TELEGRAM_API_HASH TELEGRAM_SESSION WORKOS_ISSUER WORKOS_JWKS_URL OWNER_USER_ID MCP_RESOURCE_URL MEDIA_TOKEN_SECRET"
 
 summarise() {
   local have=() missing=() k
@@ -119,6 +119,18 @@ else
   chmod 600 "$ENV_FILE"
   echo
   note "Using existing $ENV_FILE — filling in only what is missing."
+fi
+
+# Capability links use a dedicated random key. Generate it locally once and
+# pass it to the atomic env writer over stdin; never print it or put it in a
+# process argument.
+if [ -z "$(env_get MEDIA_TOKEN_SECRET)" ]; then
+  value="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
+  env_set MEDIA_TOKEN_SECRET "$value"
+  unset value
+  note "Generated MEDIA_TOKEN_SECRET."
+else
+  note "MEDIA_TOKEN_SECRET already set — keeping it."
 fi
 
 # ---------------------------------------------------------------- Telegram ---
