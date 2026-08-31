@@ -391,6 +391,48 @@ describe("getMedia", () => {
   });
 
   it.each([
+    ["voice", "explicit frames", { mode: "frames" }],
+    ["voice", "timestamps", { timestamps_seconds: [1] as number[] }],
+    ["audio", "explicit frames", { mode: "frames" }],
+    ["audio", "timestamps", { timestamps_seconds: [1] as number[] }],
+  ] as const)(
+    "adds exactly one original link to %s rejected by %s representation",
+    async (type, _case, inputOverrides) => {
+      const deps = fakeMediaDeps({
+        asset: fakeAsset({ type, mime_type: "audio/ogg", size: 128 }),
+      });
+      deps.attachOriginalLink = async (_asset, outcome) => ({
+        ...outcome,
+        result: {
+          ...outcome.result,
+          download: {
+            url: "https://gramscope.test/api/media/encrypted",
+            expires_at: "2026-08-30T12:10:00.000Z",
+          },
+        },
+        link: {
+          uri: "https://gramscope.test/api/media/encrypted",
+          name: `${type}-7.ogg`,
+          mimeType: "audio/ogg",
+          size: 128,
+        },
+      });
+
+      const outcome = await getMedia(input(inputOverrides), deps);
+      const content = mediaToolResult(outcome).content;
+      expect(outcome.result).toMatchObject({
+        status: "error",
+        code: "UNSUPPORTED_MEDIA",
+        representation: { kind: "metadata" },
+      });
+      expect(content.filter((part) => part.type === "resource_link")).toHaveLength(1);
+      expect(content.filter((part) => part.type === "audio" || part.type === "image"))
+        .toHaveLength(0);
+      expect(deps.readBytes).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
     ["photo", "image/jpeg", "image"],
     ["document", "image/png", "image"],
     ["voice", "audio/ogg", "audio"],

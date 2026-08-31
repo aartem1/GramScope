@@ -11,7 +11,12 @@ const mediaTokenClaimsSchema = z.object({
   sourceId: z.string().min(1),
   messageId: z.number().int().positive(),
   ownerId: z.string().min(1),
-});
+}).strict();
+
+const mediaTokenPayloadSchema = mediaTokenClaimsSchema.extend({
+  iat: z.number().int(),
+  exp: z.number().int(),
+}).strict();
 
 export type MediaTokenClaims = z.infer<typeof mediaTokenClaimsSchema>;
 
@@ -47,9 +52,20 @@ export async function verifyMediaToken(
       keyManagementAlgorithms: ["dir"],
       contentEncryptionAlgorithms: ["A256GCM"],
       currentDate: now,
+      requiredClaims: ["iat", "exp"],
     });
     if (protectedHeader.typ !== "JWT") throw new Error("invalid token type");
-    return mediaTokenClaimsSchema.parse(payload);
+    const validated = mediaTokenPayloadSchema.parse(payload);
+    if (validated.exp - validated.iat !== TTL_SECONDS) {
+      throw new Error("invalid token lifetime");
+    }
+    return {
+      v: validated.v,
+      purpose: validated.purpose,
+      sourceId: validated.sourceId,
+      messageId: validated.messageId,
+      ownerId: validated.ownerId,
+    };
   } catch {
     throw new GramScopeError(
       "AUTH_REQUIRED",

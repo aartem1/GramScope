@@ -75,4 +75,31 @@ describe("media capability tokens", () => {
       verifyMediaToken(await encrypt({ v: 2 }), now, KEY),
     ).rejects.toMatchObject({ code: "AUTH_REQUIRED" });
   });
+
+  it.each([
+    ["missing exp", { ...claims, iat: 1_788_091_200 }],
+    ["missing iat", { ...claims, exp: 1_788_091_800 }],
+    ["an overlong lifetime", {
+      ...claims,
+      iat: 1_788_091_200,
+      exp: 1_788_091_801,
+    }],
+    ["an extra payload claim", {
+      ...claims,
+      iat: 1_788_091_200,
+      exp: 1_788_091_800,
+      file_name: "must-not-pass.txt",
+    }],
+  ] as const)("rejects a crafted token with %s", async (_case, payload) => {
+    const token = await new EncryptJWT(payload)
+      .setProtectedHeader({ alg: "dir", enc: "A256GCM", typ: "JWT" })
+      .encrypt(KEY);
+
+    await expect(
+      verifyMediaToken(token, new Date("2026-08-30T12:05:00Z"), KEY),
+    ).rejects.toMatchObject({
+      code: "AUTH_REQUIRED",
+      message: "The media link is invalid or expired",
+    });
+  });
 });

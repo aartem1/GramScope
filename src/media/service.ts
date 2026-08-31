@@ -195,7 +195,10 @@ async function represent(
   }
   if (mode === "frames") {
     if (!["video", "gif", "video_note"].includes(asset.descriptor.type)) {
-      return errorOutcome(asset, "UNSUPPORTED_MEDIA", false);
+      const unsupported = errorOutcome(asset, "UNSUPPORTED_MEDIA", false);
+      return isDirectAudio(asset)
+        ? withOriginalLink(asset, unsupported, deps)
+        : unsupported;
     }
     return thumbnailFallback(client, asset, deps);
   }
