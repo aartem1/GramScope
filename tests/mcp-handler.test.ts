@@ -101,7 +101,7 @@ async function listTools(): Promise<Json[]> {
 }
 
 describe("tools/list over a real MCP server", () => {
-  it("keeps the package and MCP server on app version 1.4.0", () => {
+  it("keeps the package and MCP server on app version 1.5.0", () => {
     const packageJson = JSON.parse(
       readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     ) as { version?: unknown };
@@ -112,11 +112,11 @@ describe("tools/list over a real MCP server", () => {
       packages?: Record<string, { version?: unknown }>;
     };
 
-    expect(MCP_SERVER_VERSION).toBe("1.4.0");
-    expect(packageJson.version).toBe("1.4.0");
+    expect(MCP_SERVER_VERSION).toBe("1.5.0");
+    expect(packageJson.version).toBe("1.5.0");
     expect(packageJson.version).toBe(MCP_SERVER_VERSION);
-    expect(packageLock.version).toBe("1.4.0");
-    expect(packageLock.packages?.[""]?.version).toBe("1.4.0");
+    expect(packageLock.version).toBe("1.5.0");
+    expect(packageLock.packages?.[""]?.version).toBe("1.5.0");
   });
 
   it("advertises all twenty tools", async () => {

@@ -36,6 +36,10 @@ while the assessment fields named below are GramScope-authored.
 
 ## How to act
 
+- When a message's attached media may affect the answer, call `get_media` with
+  its `source_id` and `message_id`. Normally omit `mode`: GramScope chooses one
+  bounded image/audio representation. Use `original` only when the user asks
+  for the source file or the automatic representation is insufficient.
 - Address every source by @username where one exists. A bare marked id works
   only for chats the account already belongs to. `manage_folder(remove_sources)`
   is the exception: it takes the marked ids `list_folders` reports for that

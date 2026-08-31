@@ -320,6 +320,11 @@ Run the live tests against the real account:
 
   GRAMSCOPE_LIVE=1 npm run test:live
 
+The media suite also requires GRAMSCOPE_LIVE_MEDIA_SOURCE and every explicit
+GRAMSCOPE_LIVE_*_MESSAGE_ID listed in .env.example. Keep those selectors only
+in .env.local; the wizard does not publish them to Vercel. Without the explicit
+GRAMSCOPE_LIVE=1 flag, npm run test:live performs no Telegram calls.
+
 Then in ChatGPT: Settings -> Connectors -> add a custom connector at
 
   $MCP_RESOURCE_URL
@@ -327,7 +332,7 @@ Then in ChatGPT: Settings -> Connectors -> add a custom connector at
 choose OAuth, paste the WorkOS OAuth client id and secret, and complete the
 sign-in.
 
-You should see exactly nineteen tools. If the connector was already installed,
+You should see exactly twenty tools. If the connector was already installed,
 reconnect it: ChatGPT caches tool names, descriptions, and schemas at connection
 time.
 TXT

@@ -1,6 +1,6 @@
 {
   "name": "gramscope",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
     "test": "vitest run --exclude '**/*.live.test.ts'",
-    "test:live": "GRAMSCOPE_LIVE=1 vitest run tests/live",
+    "test:live": "vitest run tests/live",
     "telegram:login": "tsx --env-file=.env.local scripts/create-telegram-session.ts"
   },
   "dependencies": {

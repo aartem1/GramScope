@@ -5,8 +5,10 @@ account as a personal information workspace. It can read and search channels,
 inspect discussions, discover sources, manage subscriptions and folders, track
 read state, and keep compact notes about sources.
 
-Version **1.4.0** exposes 19 tools. The production workflow was accepted against
-a real Telegram account on 2026-08-30.
+Version **1.5.0** exposes 20 tools. The core production workflow was accepted
+against a real Telegram account on 2026-08-30; the media-specific Telegram and
+ordinary-ChatGPT acceptance gates are tracked separately in
+[`docs/media-chatgpt-acceptance.md`](docs/media-chatgpt-acceptance.md).
 
 ## How it works
 
@@ -42,6 +44,8 @@ GramScope provides bounded Telegram operations and structured results.
 - `get_thread` — read comments under a channel post.
 - `get_pinned_messages` — read a source's pinned messages.
 - `get_unread_summary` — summarize unread state.
+- `get_media` — retrieve one bounded representation of the media attached to
+  an explicitly selected message.
 
 ### Research and discovery
 
@@ -65,6 +69,25 @@ GramScope provides bounded Telegram operations and structured results.
 
 The MCP schemas and tool descriptions are the authoritative input/output
 reference. They include per-call limits, cursor rules, and mutation annotations.
+
+### On-demand media
+
+`get_media(source_id, message_id, mode?)` is the only media retrieval tool.
+Normally omit `mode`: GramScope returns one bounded image for photos, image
+documents, videos, GIFs, and video notes, or source audio bytes for a small
+voice/audio message. It never transcribes audio and never downloads media as a
+side effect of discovery, search, or message-reading tools.
+
+Direct image/audio content is capped at 2 MiB of raw bytes. Larger originals
+and unsupported previews use an encrypted, authenticated download link that
+expires after ten minutes. The download route refetches the Telegram message,
+supports one HTTP byte range, and sends private/no-store headers.
+
+Video contact sheets use the bundled native FFmpeg binary plus `sharp`. Input
+and frame files exist only under the platform's temporary directory and are
+removed after processing unless a bounded generated derivative is transferred
+to the 30-minute, 256 MiB warm-instance cache. Telegram originals are never
+placed in that cache.
 
 ## Important operating rules
 
@@ -125,15 +148,22 @@ WORKOS_ISSUER
 WORKOS_JWKS_URL
 OWNER_USER_ID
 MCP_RESOURCE_URL
+MEDIA_TOKEN_SECRET
 ```
 
 `MCP_RESOURCE_URL` must be the exact public endpoint, including `/api/mcp`, and
 must match the WorkOS resource indicator. The server validates the token issuer,
 audience, signature, and owner subject on every authenticated request.
 
+`MEDIA_TOKEN_SECRET` must be an unpadded base64url value that decodes to exactly
+32 bytes. The provisioning wizard generates it locally without printing it and
+publishes it to Vercel through stdin. Rotating it immediately invalidates every
+outstanding media link.
+
 After deployment, add the endpoint as a custom ChatGPT connector, choose OAuth,
 and paste the WorkOS OAuth client ID and secret. A successful connection exposes
-exactly 19 tools.
+exactly 20 tools. Refresh or reconnect the connector after every deployment that
+changes tool schemas because ChatGPT caches the action list.
 
 ## Development
 
@@ -143,12 +173,16 @@ npm test           # fast test suite; excludes real-account tests
 npm run typecheck
 npm run lint
 npm run build
-npm run test:live  # mutates the dedicated Telegram account
+npm run test:live  # safe discovery run; skips every live suite by default
+GRAMSCOPE_LIVE=1 npm run test:live  # explicit real-account run
 ```
 
 Live test files run sequentially because they share one real Telegram account.
 They require the Telegram variables in `.env.local` and may encounter Telegram
-rate limits. Never run them against a personal account.
+rate limits. Media acceptance additionally requires every explicit
+`GRAMSCOPE_LIVE_MEDIA_SOURCE` / `GRAMSCOPE_LIVE_*_MESSAGE_ID` selector shown in
+`.env.example`; the suite never guesses messages or scans the account for
+fixtures. Never run live tests against a personal account.
 
 The MCP endpoint is `app/api/mcp/route.ts`. Tool registration is centralized in
 `src/mcp/server.ts`; Telegram operations live under `src/telegram/`.
