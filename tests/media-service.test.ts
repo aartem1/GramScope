@@ -16,8 +16,11 @@ import {
   resolveMediaAsset,
 } from "@/telegram/media";
 import { mapMessage } from "@/schemas/message";
+import { normalizeImage } from "@/media/image";
+import { mediaError } from "@/errors/taxonomy";
 import type { TelegramLike } from "@/telegram/client";
 import type { GetMediaInput, MediaDescriptor } from "@/schemas/media";
+import sharp from "sharp";
 
 const telegramMocks = vi.hoisted(() => ({
   fetchDialogIndex: vi.fn(async () => ({ byId: new Map(), folders: [] })),
@@ -339,6 +342,82 @@ describe("getMedia", () => {
     );
     expect(outcome.artifact?.data.equals(bytes)).toBe(true);
     expect(outcome.artifact?.mimeType).toBe("audio/ogg");
+  });
+
+  it("falls back when original-mode audio exceeds the measured limit", async () => {
+    const deps = fakeMediaDeps({
+      asset: fakeAsset({ type: "voice", mime_type: "audio/ogg", size: 128 }),
+    });
+    deps.readBytes.mockRejectedValue(mediaError(
+      "INLINE_LIMIT_EXCEEDED",
+      "Media exceeds the inline media limit",
+    ));
+
+    await expect(getMedia(input({ mode: "original" }), deps)).resolves.toMatchObject({
+      result: { status: "fallback", code: "INLINE_LIMIT_EXCEEDED" },
+    });
+  });
+
+  it("classifies unsupported original-mode media before the size fallback", async () => {
+    const deps = fakeMediaDeps({
+      asset: fakeAsset({ type: "archive", size: 128 }),
+      bytes: Buffer.alloc(128),
+    });
+    deps.attachOriginalLink = async (_asset, outcome) => ({
+      ...outcome,
+      link: { uri: "https://example.test/original", name: "original" },
+    });
+
+    await expect(getMedia(input({ mode: "original" }), deps)).resolves.toMatchObject({
+      result: { status: "error", code: "UNSUPPORTED_MEDIA" },
+      link: { uri: "https://example.test/original" },
+    });
+    expect(deps.readBytes).not.toHaveBeenCalled();
+  });
+
+  it("normalizes a large thumbnail before emitting it as an image", async () => {
+    const thumbnailData = await sharp({
+      create: { width: 2400, height: 1800, channels: 3, background: "#cc3311" },
+    }).jpeg({ quality: 100 }).toBuffer();
+    const deps = fakeMediaDeps({ asset: fakeAsset({ type: "video", mime_type: "video/mp4" }) });
+    deps.readThumbnail = async () => ({
+      type: "image",
+      data: thumbnailData,
+      mimeType: "image/jpeg",
+    });
+    deps.normalizeImage = normalizeImage;
+
+    const outcome = await getMedia(input(), deps);
+    expect(outcome.artifact).toMatchObject({ type: "image", mimeType: "image/jpeg" });
+    expect(outcome.result.representation).toMatchObject({ width: 1600, height: 1200 });
+    expect(outcome.result.representation).toMatchObject({
+      kind: "image",
+      mime_type: "image/jpeg",
+      byte_size: outcome.artifact?.data.length,
+    });
+    expect(outcome.artifact?.data.length).toBeLessThanOrEqual(INLINE_MEDIA_MAX_BYTES);
+  });
+
+  it("uses the emitted image MIME for the direct artifact filename", async () => {
+    const deps = fakeMediaDeps({
+      asset: fakeAsset({
+        type: "document",
+        mime_type: "image/png",
+        file_name: "cover.png",
+        size: 128,
+      }),
+      bytes: Buffer.alloc(128),
+    });
+    deps.normalizeImage = async (data) => ({
+      data,
+      mimeType: "image/jpeg",
+      width: 320,
+      height: 180,
+    });
+
+    await expect(getMedia(input(), deps)).resolves.toMatchObject({
+      result: { representation: { file_name: "cover.jpg", mime_type: "image/jpeg" } },
+    });
   });
 
   it("returns metadata-only fallback before downloading oversized media", async () => {

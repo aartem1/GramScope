@@ -23,7 +23,15 @@ export function safeMediaFilename(input: {
       input.supplied.replace(/[\u0000-\u001f\u007f]/g, "").replace(/\\/g, "/"),
     )
     : "";
-  if (basename && basename !== "." && basename !== "..") return basename.slice(-180);
   const extension = MIME_EXTENSIONS[input.mimeType ?? ""] ?? ".bin";
+  if (basename && basename !== "." && basename !== "..") {
+    const existingExtension = path.posix.extname(basename);
+    const stem = existingExtension && existingExtension !== "."
+      ? basename.slice(0, -existingExtension.length)
+      : basename;
+    if (stem && stem !== "." && stem !== "..") {
+      return `${stem.slice(-(180 - extension.length))}${extension}`;
+    }
+  }
   return `${input.kind}-${input.messageId}${extension}`;
 }

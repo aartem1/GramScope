@@ -24,6 +24,21 @@ describe("safeMediaFilename", () => {
     expect(safeMediaFilename({ kind: "voice", messageId: 42, mimeType: "audio/ogg" }))
       .toBe("voice-42.ogg");
   });
+
+  it("uses the emitted MIME extension for supplied names", () => {
+    expect(safeMediaFilename({
+      supplied: "cover",
+      kind: "document",
+      messageId: 42,
+      mimeType: "image/jpeg",
+    })).toBe("cover.jpg");
+    expect(safeMediaFilename({
+      supplied: "cover.png",
+      kind: "document",
+      messageId: 42,
+      mimeType: "image/jpeg",
+    })).toBe("cover.jpg");
+  });
 });
 
 describe("normalizeImage", () => {

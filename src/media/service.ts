@@ -140,12 +140,13 @@ async function represent(
 ): Promise<MediaOutcome> {
   const mode = input.timestamps_seconds?.length ? "frames" : input.mode;
   if (mode === "original") {
-    const base = asset.descriptor.size !== undefined &&
-        asset.descriptor.size <= INLINE_MEDIA_MAX_BYTES &&
-        (isDirectImage(asset) || isDirectAudio(asset))
-      ? await directOriginal(client, asset, deps)
-      : fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false);
-    return deps.attachOriginalLink ? deps.attachOriginalLink(asset, base) : base;
+    if (!isDirectImage(asset) && !isDirectAudio(asset)) {
+      return withOriginalLink(asset, errorOutcome(asset, "UNSUPPORTED_MEDIA", false), deps);
+    }
+    if (asset.descriptor.size === undefined || asset.descriptor.size > INLINE_MEDIA_MAX_BYTES) {
+      return withOriginalLink(asset, fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false), deps);
+    }
+    return withOriginalLink(asset, await directOriginal(client, asset, deps), deps);
   }
   if (mode === "preview") {
     return isDirectImage(asset)
@@ -194,13 +195,18 @@ async function directOriginal(
   asset: MediaAsset,
   deps: MediaDependencies,
 ): Promise<MediaOutcome> {
-  if (isDirectImage(asset)) return directImage(client, asset, deps);
-  const data = await deps.readBytes(client, asset, INLINE_MEDIA_MAX_BYTES);
-  return readyOutcome(asset, {
-    type: "audio",
-    data,
-    mimeType: asset.descriptor.mime_type ?? "audio/ogg",
-  });
+  if (isDirectImage(asset)) return directImage(client, asset, deps, false);
+  try {
+    const data = await deps.readBytes(client, asset, INLINE_MEDIA_MAX_BYTES);
+    return readyOutcome(asset, {
+      type: "audio",
+      data,
+      mimeType: asset.descriptor.mime_type ?? "audio/ogg",
+    });
+  } catch (error) {
+    if (!(error instanceof GramScopeError) || error.code !== "INLINE_LIMIT_EXCEEDED") throw error;
+    return fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false);
+  }
 }
 
 async function directAudioOrFallback(
@@ -211,24 +217,22 @@ async function directAudioOrFallback(
   if ((asset.descriptor.size ?? INLINE_MEDIA_MAX_BYTES + 1) > INLINE_MEDIA_MAX_BYTES) {
     return withOriginalLink(asset, fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false), deps);
   }
-  try {
-    return await directOriginal(client, asset, deps);
-  } catch (error) {
-    if (!(error instanceof GramScopeError) || error.code !== "INLINE_LIMIT_EXCEEDED") throw error;
-    return withOriginalLink(asset, fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false), deps);
-  }
+  const outcome = await directOriginal(client, asset, deps);
+  return outcome.result.status === "fallback" ? withOriginalLink(asset, outcome, deps) : outcome;
 }
 
 async function directImage(
   client: TelegramLike,
   asset: MediaAsset,
   deps: MediaDependencies,
+  attachLinkOnFallback = true,
 ): Promise<MediaOutcome> {
   try {
     return await directImageOnce(client, asset, deps);
   } catch (error) {
     if (!(error instanceof GramScopeError) || error.code !== "INLINE_LIMIT_EXCEEDED") throw error;
-    return withOriginalLink(asset, fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false), deps);
+    const fallback = fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false);
+    return attachLinkOnFallback ? withOriginalLink(asset, fallback, deps) : fallback;
   }
 }
 
@@ -245,18 +249,12 @@ async function directImageOnce(
     );
   }
   const source = thumbnail?.data ?? await deps.readBytes(client, asset, INLINE_MEDIA_MAX_BYTES);
-  const processed = deps.normalizeImage
-    ? await deps.normalizeImage(source, {
-      preserveTransparency: asset.descriptor.mime_type === "image/png" ||
-        asset.descriptor.mime_type === "image/webp",
-      sourceMimeType: thumbnail?.mimeType ?? asset.descriptor.mime_type,
-    })
-    : {
-      data: source,
-      mimeType: (thumbnail?.mimeType ?? asset.descriptor.mime_type ?? "image/jpeg") as "image/jpeg",
-      width: asset.descriptor.width ?? 1,
-      height: asset.descriptor.height ?? 1,
-    };
+  const processed = await normalizeImageArtifact(
+    asset,
+    source,
+    thumbnail?.mimeType ?? asset.descriptor.mime_type,
+    deps,
+  );
   const outcome = readyOutcome(asset, {
     type: "image",
     data: processed.data,
@@ -275,17 +273,45 @@ async function thumbnailFallback(
   asset: MediaAsset,
   deps: MediaDependencies,
 ): Promise<MediaOutcome> {
-  const thumbnail = await deps.readThumbnail?.(client, asset, INLINE_MEDIA_MAX_BYTES);
-  const base = fallbackOutcome(asset, "UNSUPPORTED_MEDIA", false);
-  if (thumbnail) {
-    base.artifact = thumbnail;
-    base.result.representation = {
-      kind: "image",
-      mime_type: thumbnail.mimeType,
-      byte_size: thumbnail.data.length,
-    };
+  try {
+    const thumbnail = await deps.readThumbnail?.(client, asset, INLINE_MEDIA_MAX_BYTES);
+    const base = fallbackOutcome(asset, "UNSUPPORTED_MEDIA", false);
+    if (thumbnail) {
+      const processed = await normalizeImageArtifact(asset, thumbnail.data, thumbnail.mimeType, deps);
+      base.artifact = { type: "image", data: processed.data, mimeType: processed.mimeType };
+      base.result.representation = {
+        kind: "image",
+        mime_type: processed.mimeType,
+        byte_size: processed.data.length,
+        width: processed.width,
+        height: processed.height,
+      };
+    }
+    return withOriginalLink(asset, base, deps);
+  } catch (error) {
+    if (!(error instanceof GramScopeError) || error.code !== "INLINE_LIMIT_EXCEEDED") throw error;
+    return withOriginalLink(asset, fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false), deps);
   }
-  return withOriginalLink(asset, base, deps);
+}
+
+async function normalizeImageArtifact(
+  asset: MediaAsset,
+  source: Buffer,
+  sourceMimeType: string | undefined,
+  deps: MediaDependencies,
+): Promise<{ data: Buffer; mimeType: "image/jpeg" | "image/png" | "image/webp"; width: number; height: number }> {
+  return deps.normalizeImage
+    ? deps.normalizeImage(source, {
+      preserveTransparency: asset.descriptor.mime_type === "image/png" ||
+        asset.descriptor.mime_type === "image/webp",
+      sourceMimeType,
+    })
+    : {
+      data: source,
+      mimeType: (sourceMimeType ?? asset.descriptor.mime_type ?? "image/jpeg") as "image/jpeg",
+      width: asset.descriptor.width ?? 1,
+      height: asset.descriptor.height ?? 1,
+    };
 }
 
 async function withOriginalLink(
