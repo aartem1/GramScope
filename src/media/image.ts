@@ -14,8 +14,15 @@ export type ProcessedImage = {
 
 export async function normalizeImage(
   source: Buffer,
-  options: { preserveTransparency?: boolean; sourceMimeType?: string } = {},
+  options: {
+    preserveTransparency?: boolean;
+    sourceMimeType?: string;
+    maxBytes?: number;
+    maxLongEdge?: number;
+  } = {},
 ): Promise<ProcessedImage> {
+  const maxBytes = options.maxBytes ?? INLINE_MEDIA_MAX_BYTES;
+  const maxLongEdge = options.maxLongEdge ?? EDGES[0];
   const metadata = await sharp(source).metadata();
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;
@@ -24,10 +31,10 @@ export async function normalizeImage(
   );
   if (
     supportedSourceMime &&
-    source.length <= INLINE_MEDIA_MAX_BYTES &&
+    source.length <= maxBytes &&
     width > 0 &&
     height > 0 &&
-    Math.max(width, height) <= EDGES[0]
+    Math.max(width, height) <= maxLongEdge
   ) {
     return {
       data: source,
@@ -38,7 +45,8 @@ export async function normalizeImage(
   }
 
   const transparent = options.preserveTransparency === true && metadata.hasAlpha === true;
-  for (const edge of EDGES) {
+  const edges = [maxLongEdge, ...EDGES.filter((edge) => edge < maxLongEdge)];
+  for (const edge of edges) {
     for (const quality of QUALITIES) {
       const pipeline = sharp(source, { failOn: "warning" })
         .rotate()
@@ -47,7 +55,7 @@ export async function normalizeImage(
         ? pipeline.webp({ quality, alphaQuality: quality })
         : pipeline.jpeg({ quality, mozjpeg: true }))
         .toBuffer({ resolveWithObject: true });
-      if (data.length <= INLINE_MEDIA_MAX_BYTES) {
+      if (data.length <= maxBytes) {
         return {
           data,
           mimeType: transparent ? "image/webp" : "image/jpeg",

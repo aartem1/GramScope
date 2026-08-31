@@ -1,3 +1,5 @@
+import { open, unlink, type FileHandle } from "node:fs/promises";
+import { GramScopeError } from "../errors/taxonomy";
 import { mediaId, type MediaDescriptor } from "../schemas/media";
 import { mediaOf } from "../schemas/message";
 import { mediaError } from "../errors/taxonomy";
@@ -206,6 +208,127 @@ export async function readAssetBytes(
     chunks.push(chunk);
   }
   return Buffer.concat(chunks, total);
+}
+
+async function writeWhole(handle: FileHandle, chunk: Buffer): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.length) {
+    const { bytesWritten } = await handle.write(chunk, offset, chunk.length - offset, null);
+    if (bytesWritten <= 0) {
+      throw mediaError("TELEGRAM_DOWNLOAD_FAILED", "Telegram media download failed", true);
+    }
+    offset += bytesWritten;
+  }
+}
+
+async function nextChunk(
+  iterator: AsyncIterator<Buffer>,
+  signal: AbortSignal,
+): Promise<IteratorResult<Buffer>> {
+  if (signal.aborted) throw new DOMException("Media download aborted", "AbortError");
+  return new Promise<IteratorResult<Buffer>>((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(new DOMException("Media download aborted", "AbortError"));
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    iterator.next().then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", abort);
+    });
+  });
+}
+
+export async function downloadAssetToFile(
+  client: TelegramLike,
+  asset: MediaAsset,
+  options: {
+    path: string;
+    maxBytes: number;
+    deadlineMs: number;
+    signal?: AbortSignal;
+  },
+): Promise<number> {
+  const controller = new AbortController();
+  const startedAt = Date.now();
+  let created = false;
+  let completed = false;
+  let handle: FileHandle | undefined;
+  let iterator: AsyncIterator<Buffer> | undefined;
+  const abort = () => controller.abort();
+  const timer = setTimeout(abort, options.deadlineMs);
+  options.signal?.addEventListener("abort", abort, { once: true });
+
+  try {
+    if (options.signal?.aborted || controller.signal.aborted) {
+      throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+    }
+    handle = await open(options.path, "wx", 0o600);
+    created = true;
+    let total = 0;
+    iterator = iterAssetBytes(client, asset, {
+      limit: options.maxBytes + 1,
+      signal: controller.signal,
+    })[Symbol.asyncIterator]();
+    while (true) {
+      const next = await nextChunk(iterator, controller.signal);
+      if (next.done) break;
+      const chunk = next.value;
+      if (
+        controller.signal.aborted ||
+        options.signal?.aborted ||
+        Date.now() - startedAt >= options.deadlineMs
+      ) {
+        throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+      }
+      total += chunk.length;
+      if (total > options.maxBytes) {
+        throw mediaError(
+          "INLINE_LIMIT_EXCEEDED",
+          `Media exceeds the ${options.maxBytes}-byte processing limit`,
+          false,
+        );
+      }
+      await writeWhole(handle, chunk);
+      if (
+        controller.signal.aborted ||
+        options.signal?.aborted ||
+        Date.now() - startedAt >= options.deadlineMs
+      ) {
+        throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+      }
+    }
+    if (
+      controller.signal.aborted ||
+      options.signal?.aborted ||
+      Date.now() - startedAt >= options.deadlineMs
+    ) {
+      throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+    }
+    completed = true;
+    return total;
+  } catch (error) {
+    if (error instanceof GramScopeError) throw error;
+    if (
+      controller.signal.aborted ||
+      options.signal?.aborted ||
+      (error instanceof DOMException && error.name === "AbortError")
+    ) {
+      throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+    }
+    throw mediaError("TELEGRAM_DOWNLOAD_FAILED", "Telegram media download failed", true);
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abort);
+    if (!completed) {
+      const closing = iterator?.return?.();
+      if (closing) void closing.catch(() => undefined);
+    }
+    await handle?.close().catch(() => undefined);
+    if (created && !completed) {
+      await unlink(options.path).catch(() => undefined);
+    }
+  }
 }
 
 export async function* iterAssetBytes(

@@ -1,3 +1,6 @@
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   getMediaInputSchema,
@@ -6,12 +9,17 @@ import {
 import { mediaToolResult } from "@/mcp/media-result";
 import { runGetMediaTool } from "@/mcp/tools/get-media";
 import {
+  AUTO_VIDEO_DEADLINE_MS,
+  AUTO_VIDEO_MAX_BYTES,
   attachOriginalLink,
+  FRAMES_VIDEO_DEADLINE_MS,
+  FRAMES_VIDEO_MAX_BYTES,
   getMedia,
   type MediaAsset,
   type MediaDependencies,
 } from "@/media/service";
 import {
+  downloadAssetToFile,
   iterAssetBytes,
   readAssetBytes,
   resolveMediaAsset,
@@ -19,6 +27,7 @@ import {
 import { mapMessage } from "@/schemas/message";
 import { normalizeImage } from "@/media/image";
 import { mediaError } from "@/errors/taxonomy";
+import type { ContactSheetRequest } from "@/media/processor";
 import type { TelegramLike } from "@/telegram/client";
 import type { GetMediaInput, MediaDescriptor } from "@/schemas/media";
 import sharp from "sharp";
@@ -185,6 +194,62 @@ function fakeMediaDeps(options: {
   };
 }
 
+function fakeVideoDeps() {
+  const base = fakeMediaDeps({
+    asset: fakeAsset({
+      type: "video",
+      mime_type: "video/mp4",
+      size: 10_000,
+      duration_seconds: 90,
+    }),
+  });
+  return {
+    ...base,
+    downloadToFile: vi.fn(async () => 10_000),
+    probeDuration: vi.fn(async (path: string, deadline: AbortSignal) => {
+      void path;
+      void deadline;
+      return 90;
+    }),
+    contactSheet: vi.fn(async (_path: string, request: ContactSheetRequest) => ({
+      data: Buffer.from("jpeg"),
+      mimeType: "image/jpeg" as const,
+      width: 1200,
+      height: 800,
+      frameCount: request.timestampsSeconds.length,
+      timestampsSeconds: request.timestampsSeconds,
+    })),
+    attachOriginalLink: vi.fn(async (_asset: MediaAsset, outcome: Awaited<ReturnType<typeof getMedia>>) => ({
+      ...outcome,
+      result: {
+        ...outcome.result,
+        download: {
+          url: "https://gramscope.test/api/media/test",
+          expires_at: "2026-08-30T12:10:00.000Z",
+        },
+      },
+      link: { uri: "https://gramscope.test/api/media/test", name: "video-7.mp4" },
+    })),
+  };
+}
+
+function fakeTimedOutVideoDeps(options: { thumbnail: boolean }) {
+  const deps = fakeVideoDeps();
+  deps.contactSheet = vi.fn(async () => {
+    throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+  });
+  return {
+    ...deps,
+    readThumbnail: options.thumbnail
+      ? vi.fn(async () => ({
+          type: "image" as const,
+          data: Buffer.from("thumb"),
+          mimeType: "image/jpeg",
+        }))
+      : vi.fn(async () => undefined),
+  };
+}
+
 afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllEnvs();
@@ -193,6 +258,108 @@ afterEach(() => {
 });
 
 describe("Telegram media bytes", () => {
+  it("streams a bounded asset to an exclusively created file", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "gramscope-download-test-"));
+    const outputPath = join(directory, "asset.bin");
+    const client = fakeMediaClient({
+      iterDownload: async function* () {
+        yield Buffer.from("ab");
+        yield Buffer.from("cde");
+      },
+    });
+    try {
+      await expect(downloadAssetToFile(client, fakeAsset({ size: 5 }), {
+        path: outputPath,
+        maxBytes: 5,
+        deadlineMs: 1_000,
+      })).resolves.toBe(5);
+      expect(await readFile(outputPath, "utf8")).toBe("abcde");
+      await expect(downloadAssetToFile(client, fakeAsset({ size: 5 }), {
+        path: outputPath,
+        maxBytes: 5,
+        deadlineMs: 1_000,
+      })).rejects.toMatchObject({ code: "TELEGRAM_DOWNLOAD_FAILED" });
+      expect(await readFile(outputPath, "utf8")).toBe("abcde");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("deletes a partial file immediately when the video byte cap is exceeded", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "gramscope-download-test-"));
+    const outputPath = join(directory, "asset.bin");
+    const client = fakeMediaClient({
+      iterDownload: async function* () {
+        yield Buffer.from("abcd");
+        yield Buffer.from("ef");
+      },
+    });
+    try {
+      await expect(downloadAssetToFile(client, fakeAsset({ size: undefined }), {
+        path: outputPath,
+        maxBytes: 5,
+        deadlineMs: 1_000,
+      })).rejects.toMatchObject({ code: "INLINE_LIMIT_EXCEEDED" });
+      await expect(access(outputPath)).rejects.toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("does not create a destination for an already-aborted download", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "gramscope-download-test-"));
+    const outputPath = join(directory, "asset.bin");
+    const controller = new AbortController();
+    controller.abort();
+    try {
+      await expect(downloadAssetToFile(fakeMediaClient(), fakeAsset(), {
+        path: outputPath,
+        maxBytes: 5,
+        deadlineMs: 1_000,
+        signal: controller.signal,
+      })).rejects.toMatchObject({ code: "PROCESSING_TIMEOUT" });
+      await expect(access(outputPath)).rejects.toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("interrupts a stalled Telegram iterator and deletes the partial file on abort", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "gramscope-download-test-"));
+    const outputPath = join(directory, "asset.bin");
+    const controller = new AbortController();
+    let release!: () => void;
+    const stalled = new Promise<void>((resolve) => { release = resolve; });
+    const client = fakeMediaClient({
+      iterDownload: async function* () {
+        yield Buffer.from("a");
+        await stalled;
+        yield Buffer.from("b");
+      },
+    });
+    try {
+      const download = downloadAssetToFile(client, fakeAsset({ size: 2 }), {
+        path: outputPath,
+        maxBytes: 2,
+        deadlineMs: 1_000,
+        signal: controller.signal,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      controller.abort();
+      const result = await Promise.race([
+        download.then(() => "resolved", () => "rejected"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("stalled"), 75)),
+      ]);
+      expect(result).toBe("rejected");
+      await expect(access(outputPath)).rejects.toThrow();
+      release();
+      await download.catch(() => undefined);
+    } finally {
+      release();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each([
     ["video", [{ className: "DocumentAttributeVideo", w: 1280, h: 720, duration: 4 }]],
     ["gif", [
@@ -257,6 +424,97 @@ describe("Telegram media bytes", () => {
 });
 
 describe("getMedia", () => {
+  it("auto uses eight frames and the 64 MiB/25 second budget", async () => {
+    const deps = fakeVideoDeps();
+    await getMedia(input(), deps);
+
+    expect(deps.contactSheet).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      timestampsSeconds: [10, 20, 30, 40, 50, 60, 70, 80],
+    }));
+    expect(deps.downloadToFile).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      path: expect.any(String),
+      maxBytes: AUTO_VIDEO_MAX_BYTES,
+      deadlineMs: AUTO_VIDEO_DEADLINE_MS,
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("explicit timestamps are sorted and returned on one artifact", async () => {
+    const outcome = await getMedia(input({
+      timestamps_seconds: [8, 1, 5],
+    }), fakeVideoDeps());
+
+    expect(outcome.result.representation?.timestamps_seconds).toEqual([1, 5, 8]);
+    expect(outcome.result.representation?.frame_count).toBe(3);
+    expect(outcome.artifact?.type).toBe("image");
+  });
+
+  it("rejects duplicate millisecond timestamps as invalid input", async () => {
+    await expect(getMedia(input({
+      timestamps_seconds: [1.0001, 1.0004],
+    }), fakeVideoDeps())).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("explicit frames uses the 128 MiB/45 second budget", async () => {
+    const deps = fakeVideoDeps();
+    await getMedia(input({ mode: "frames" }), deps);
+
+    expect(deps.downloadToFile).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+      path: expect.any(String),
+      maxBytes: FRAMES_VIDEO_MAX_BYTES,
+      deadlineMs: FRAMES_VIDEO_DEADLINE_MS,
+      signal: expect.any(AbortSignal),
+    });
+  });
+
+  it("probes a missing duration within the same deadline before spacing frames", async () => {
+    const deps = fakeVideoDeps();
+    deps.resolveAsset = vi.fn(async () => fakeAsset({
+      type: "video",
+      mime_type: "video/mp4",
+      size: 10_000,
+      duration_seconds: undefined,
+    }));
+    await getMedia(input(), deps);
+
+    expect(deps.probeDuration).toHaveBeenCalledOnce();
+    const probeSignal = deps.probeDuration.mock.calls[0]?.[1];
+    const sheetSignal = deps.contactSheet.mock.calls[0]?.[1].deadline;
+    expect(probeSignal).toBe(sheetSignal);
+    expect(deps.contactSheet).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+      timestampsSeconds: [10, 20, 30, 40, 50, 60, 70, 80],
+    }));
+  });
+
+  it("auto timeout returns thumbnail plus original link; explicit frames errors", async () => {
+    const auto = await getMedia(input(), fakeTimedOutVideoDeps({ thumbnail: true }));
+    expect(auto.result).toMatchObject({ status: "fallback", code: "PROCESSING_TIMEOUT" });
+    expect(auto.artifact?.type).toBe("image");
+    expect(auto.link).toBeDefined();
+
+    const frames = await getMedia(
+      input({ mode: "frames" }),
+      fakeTimedOutVideoDeps({ thumbnail: true }),
+    );
+    expect(frames.result).toMatchObject({ status: "error", code: "PROCESSING_TIMEOUT" });
+  });
+
+  it("rejects a declared oversized video before creating a file or requesting a chunk", async () => {
+    const deps = fakeVideoDeps();
+    deps.resolveAsset = vi.fn(async () => fakeAsset({
+      type: "video",
+      mime_type: "video/mp4",
+      size: AUTO_VIDEO_MAX_BYTES + 1,
+      duration_seconds: 90,
+    }));
+
+    const outcome = await getMedia(input(), deps);
+    expect(outcome.result).toMatchObject({ status: "fallback", code: "INLINE_LIMIT_EXCEEDED" });
+    expect(outcome.link).toBeDefined();
+    expect(deps.downloadToFile).not.toHaveBeenCalled();
+    expect(deps.contactSheet).not.toHaveBeenCalled();
+  });
+
   it("issues an encrypted same-origin original link from the stable selector", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-08-30T12:00:00Z"));

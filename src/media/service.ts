@@ -1,16 +1,25 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   GetMediaInput,
   GetMediaResult,
   MediaResultCode,
 } from "../schemas/media";
-import { INLINE_MEDIA_MAX_BYTES } from "../schemas/media";
-import { GramScopeError } from "../errors/taxonomy";
+import { INLINE_MEDIA_MAX_BYTES, MEDIA_RESULT_CODES } from "../schemas/media";
+import { GramScopeError, mediaError } from "../errors/taxonomy";
 import { loadConfig } from "../config";
 import { normalizeImage } from "./image";
+import {
+  evenlySpacedTimestamps,
+  mediaProcessor,
+  normalizeRequestedTimestamps,
+} from "./ffmpeg-processor";
 import { safeMediaFilename } from "./names";
 import { issueMediaToken } from "./token";
 import { withTelegram, type TelegramLike } from "../telegram/client";
 import {
+  downloadAssetToFile,
   readAssetBytes,
   readAssetThumbnail,
   resolveMediaAsset,
@@ -18,6 +27,13 @@ import {
 } from "../telegram/media";
 
 export type { MediaAsset } from "../telegram/media";
+
+export const AUTO_VIDEO_MAX_BYTES = 64 * 1024 * 1024;
+export const AUTO_VIDEO_DEADLINE_MS = 25_000;
+export const FRAMES_VIDEO_MAX_BYTES = 128 * 1024 * 1024;
+export const FRAMES_VIDEO_DEADLINE_MS = 45_000;
+
+const MEDIA_RESULT_CODE_SET = new Set<string>(MEDIA_RESULT_CODES);
 
 export type MediaArtifact = {
   type: "image" | "audio";
@@ -76,6 +92,9 @@ const productionMediaDependencies: MediaDependencies = {
   readThumbnail: readAssetThumbnail,
   normalizeImage,
   attachOriginalLink,
+  downloadToFile: downloadAssetToFile,
+  probeDuration: (inputPath, deadline) => mediaProcessor.probeDuration(inputPath, deadline),
+  contactSheet: (inputPath, request) => mediaProcessor.contactSheet(inputPath, request),
 };
 
 export async function attachOriginalLink(
@@ -200,7 +219,7 @@ async function represent(
         ? withOriginalLink(asset, unsupported, deps)
         : unsupported;
     }
-    return thumbnailFallback(client, asset, deps);
+    return videoContactSheet(client, asset, input, deps, true);
   }
 
   switch (asset.descriptor.type) {
@@ -212,7 +231,7 @@ async function represent(
     case "video":
     case "gif":
     case "video_note":
-      return thumbnailFallback(client, asset, deps);
+      return videoContactSheet(client, asset, input, deps, false);
     case "sticker":
     case "document":
       return asset.descriptor.mime_type?.startsWith("image/")
@@ -220,6 +239,95 @@ async function represent(
         : thumbnailFallback(client, asset, deps);
     default:
       return errorOutcome(asset, "UNSUPPORTED_MEDIA", false);
+  }
+}
+
+async function videoContactSheet(
+  client: TelegramLike,
+  asset: MediaAsset,
+  input: GetMediaInput,
+  deps: MediaDependencies,
+  explicitFrames: boolean,
+): Promise<MediaOutcome> {
+  const maxBytes = explicitFrames ? FRAMES_VIDEO_MAX_BYTES : AUTO_VIDEO_MAX_BYTES;
+  const deadlineMs = explicitFrames ? FRAMES_VIDEO_DEADLINE_MS : AUTO_VIDEO_DEADLINE_MS;
+  if (asset.descriptor.size !== undefined && asset.descriptor.size > maxBytes) {
+    return explicitFrames
+      ? errorOutcome(asset, "INLINE_LIMIT_EXCEEDED", false)
+      : thumbnailFallback(client, asset, deps, "INLINE_LIMIT_EXCEEDED", false);
+  }
+  if (!deps.downloadToFile || !deps.probeDuration || !deps.contactSheet) {
+    const unavailable = "UNSUPPORTED_MEDIA" as const;
+    return explicitFrames
+      ? errorOutcome(asset, unavailable, false)
+      : thumbnailFallback(client, asset, deps, unavailable, false);
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), deadlineMs);
+  timer.unref?.();
+  let directory: string | undefined;
+  try {
+    directory = await mkdtemp(join(tmpdir(), "gramscope-video-"));
+    const inputPath = join(directory, "input.bin");
+    await deps.downloadToFile(client, asset, {
+      path: inputPath,
+      maxBytes,
+      deadlineMs,
+      signal: controller.signal,
+    });
+    if (controller.signal.aborted) {
+      throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+    }
+    const declaredDuration = asset.descriptor.duration_seconds;
+    const duration = declaredDuration !== undefined && declaredDuration > 0
+      ? declaredDuration
+      : await deps.probeDuration(inputPath, controller.signal);
+    const timestamps = input.timestamps_seconds?.length
+      ? normalizeRequestedTimestamps(input.timestamps_seconds, duration)
+      : evenlySpacedTimestamps(duration, input.max_frames);
+    const processed = await deps.contactSheet(inputPath, {
+      timestampsSeconds: timestamps,
+      maxBytes: INLINE_MEDIA_MAX_BYTES,
+      maxLongEdge: 1600,
+      deadline: controller.signal,
+    });
+    if (controller.signal.aborted) {
+      throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+    }
+    if (processed.data.length > INLINE_MEDIA_MAX_BYTES) {
+      throw mediaError("INLINE_LIMIT_EXCEEDED", "Contact sheet exceeds the inline media limit", false);
+    }
+    const outcome = readyOutcome(asset, {
+      type: "image",
+      data: processed.data,
+      mimeType: processed.mimeType,
+    });
+    outcome.result.representation = {
+      ...outcome.result.representation!,
+      width: processed.width,
+      height: processed.height,
+      frame_count: processed.frameCount,
+      timestamps_seconds: processed.timestampsSeconds,
+    };
+    return outcome;
+  } catch (error) {
+    if (!(error instanceof GramScopeError)) throw error;
+    if (!MEDIA_RESULT_CODE_SET.has(error.code)) throw error;
+    const code = error.code as MediaResultCode;
+    return explicitFrames
+      ? errorOutcome(asset, code, error.retryable)
+      : thumbnailFallback(
+        client,
+        asset,
+        deps,
+        code,
+        error.retryable,
+      );
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+    if (directory) await rm(directory, { recursive: true, force: true });
   }
 }
 
@@ -315,10 +423,12 @@ async function thumbnailFallback(
   client: TelegramLike,
   asset: MediaAsset,
   deps: MediaDependencies,
+  code: MediaResultCode = "UNSUPPORTED_MEDIA",
+  retryable = false,
 ): Promise<MediaOutcome> {
   try {
     const thumbnail = await deps.readThumbnail?.(client, asset, INLINE_MEDIA_MAX_BYTES);
-    const base = fallbackOutcome(asset, "UNSUPPORTED_MEDIA", false);
+    const base = fallbackOutcome(asset, code, retryable);
     if (thumbnail) {
       const processed = await normalizeImageArtifact(asset, thumbnail.data, thumbnail.mimeType, deps);
       base.artifact = { type: "image", data: processed.data, mimeType: processed.mimeType };
