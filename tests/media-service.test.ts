@@ -329,13 +329,22 @@ describe("Telegram media bytes", () => {
     const outputPath = join(directory, "asset.bin");
     const controller = new AbortController();
     let release!: () => void;
-    const stalled = new Promise<void>((resolve) => { release = resolve; });
+    const stalled = new Promise<IteratorResult<Buffer>>((resolve) => {
+      release = () => resolve({ done: false, value: Buffer.from("b") });
+    });
+    let calls = 0;
+    const upstream = {
+      next: vi.fn(() => {
+        calls += 1;
+        return calls === 1
+          ? Promise.resolve({ done: false as const, value: Buffer.from("a") })
+          : stalled;
+      }),
+      return: vi.fn(async () => ({ done: true as const, value: undefined })),
+      [Symbol.asyncIterator]() { return this; },
+    };
     const client = fakeMediaClient({
-      iterDownload: async function* () {
-        yield Buffer.from("a");
-        await stalled;
-        yield Buffer.from("b");
-      },
+      iterDownload: vi.fn(() => upstream as unknown as AsyncGenerator<Buffer, void, unknown>),
     });
     try {
       const download = downloadAssetToFile(client, fakeAsset({ size: 2 }), {
@@ -352,6 +361,10 @@ describe("Telegram media bytes", () => {
       ]);
       expect(result).toBe("rejected");
       await expect(access(outputPath)).rejects.toThrow();
+      expect(upstream.return).toHaveBeenCalledOnce();
+      expect(client.iterDownload).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+        signal: expect.any(AbortSignal),
+      }));
       release();
       await download.catch(() => undefined);
     } finally {

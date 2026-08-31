@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { EventEmitter } from "node:events";
+import { access } from "node:fs/promises";
+import { PassThrough } from "node:stream";
+import { describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import {
   buildFfmpegArgs,
+  createFfmpegCommandRunner,
   createFfmpegProcessor,
   evenlySpacedTimestamps,
   normalizeRequestedTimestamps,
@@ -20,6 +24,11 @@ describe("FFmpeg media processor contracts", () => {
     expect(args).toContain("/tmp/in;touch-pwned.mp4");
     expect(args.join(" ")).not.toContain("sh -c");
     expect(args.filter((arg) => arg === "-frames:v")).toHaveLength(2);
+    expect(args.filter((arg) => arg === "-vf")).toHaveLength(2);
+    expect(args).toContain("scale=1600:1600:force_original_aspect_ratio=decrease");
+    expect(args.filter((arg) => arg === "-fs")).toHaveLength(2);
+    expect(args.filter((arg) => arg === "4194304")).toHaveLength(2);
+    expect(args).toContain("/tmp/frames/frame-0.jpg");
   });
 
   it("rejects non-positive duration and more than ten frames", () => {
@@ -50,7 +59,7 @@ describe("FFmpeg media processor contracts", () => {
             channels: 3,
             background: `rgb(${180 + i * 20},180,180)`,
           },
-        }).png().toFile(`${directory}/frame-${i}.png`);
+        }).jpeg().toFile(`${directory}/frame-${i}.jpg`);
       }
     };
     const processor = createFfmpegProcessor({ run: runner });
@@ -73,5 +82,110 @@ describe("FFmpeg media processor contracts", () => {
       return (pixels[offset]! + pixels[offset + 1]! + pixels[offset + 2]!) / 3;
     };
     expect(luminanceAt(700, 790)).toBeLessThan(luminanceAt(700, 100) - 50);
+  });
+
+  it("rejects an intermediate frame above the decoded dimension bound", async () => {
+    const processor = createFfmpegProcessor({
+      run: async (_args, directory) => {
+        await sharp({
+          create: { width: 4000, height: 3000, channels: 3, background: "white" },
+        }).jpeg().toFile(`${directory}/frame-0.jpg`);
+      },
+    });
+
+    await expect(processor.contactSheet("/tmp/input.mp4", {
+      timestampsSeconds: [1],
+      maxBytes: INLINE_MEDIA_MAX_BYTES,
+      maxLongEdge: 1600,
+      deadline: new AbortController().signal,
+    })).rejects.toMatchObject({ code: "INLINE_LIMIT_EXCEEDED" });
+  });
+
+  it("rejects promptly and removes frames when aborted during post-decode assembly", async () => {
+    const controller = new AbortController();
+    let directory = "";
+    let startAssembly!: () => void;
+    const assemblyStarted = new Promise<void>((resolve) => { startAssembly = resolve; });
+    let releaseAssembly!: () => void;
+    const assemblyStall = new Promise<void>((resolve) => { releaseAssembly = resolve; });
+    const options = {
+      run: async (_args: string[], outputDirectory: string) => {
+        await sharp({
+          create: { width: 320, height: 180, channels: 3, background: "white" },
+        }).jpeg().toFile(`${outputDirectory}/frame-0.jpg`);
+      },
+      assemble: async (outputDirectory: string) => {
+        directory = outputDirectory;
+        startAssembly();
+        await assemblyStall;
+        throw new Error("released test assembly");
+      },
+    };
+    const pending = createFfmpegProcessor(options).contactSheet("/tmp/input.mp4", {
+      timestampsSeconds: [1],
+      maxBytes: INLINE_MEDIA_MAX_BYTES,
+      maxLongEdge: 1600,
+      deadline: controller.signal,
+    });
+
+    try {
+      const started = await Promise.race([
+        assemblyStarted.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 75)),
+      ]);
+      expect(started).toBe(true);
+      controller.abort();
+      const outcome = await Promise.race([
+        pending.then(() => "resolved", () => "rejected"),
+        new Promise<string>((resolve) => setTimeout(() => resolve("stalled"), 75)),
+      ]);
+      expect(outcome).toBe("rejected");
+      await expect(access(directory)).rejects.toThrow();
+    } finally {
+      controller.abort();
+      releaseAssembly();
+      await pending.catch(() => undefined);
+    }
+  });
+
+  it("caps stderr at 8 KiB and spawns FFmpeg without a shell", async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      stderr: PassThrough;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    child.stderr = new PassThrough();
+    child.kill = vi.fn(() => true);
+    const spawnProcess = vi.fn(() => child);
+    const command = createFfmpegCommandRunner(spawnProcess);
+    const pending = command(["-version"], new AbortController().signal);
+    child.stderr.write(Buffer.alloc(9 * 1024, 65));
+    child.emit("close", 0);
+
+    await expect(pending).resolves.toHaveLength(8 * 1024);
+    expect(spawnProcess).toHaveBeenCalledWith(expect.any(String), ["-version"], {
+      stdio: ["ignore", "ignore", "pipe"],
+      shell: false,
+    });
+  });
+
+  it("sends SIGKILL on abort and waits for process close before rejecting", async () => {
+    const child = new EventEmitter() as EventEmitter & {
+      stderr: PassThrough;
+      kill: ReturnType<typeof vi.fn>;
+    };
+    child.stderr = new PassThrough();
+    child.kill = vi.fn(() => true);
+    const command = createFfmpegCommandRunner(() => child);
+    const controller = new AbortController();
+    const pending = command(["-version"], controller.signal);
+    let settled = false;
+    void pending.finally(() => { settled = true; }).catch(() => undefined);
+
+    controller.abort();
+    await Promise.resolve();
+    expect(child.kill).toHaveBeenCalledWith("SIGKILL");
+    expect(settled).toBe(false);
+    child.emit("close", null);
+    await expect(pending).rejects.toMatchObject({ code: "PROCESSING_TIMEOUT" });
   });
 });

@@ -221,14 +221,32 @@ async function writeWhole(handle: FileHandle, chunk: Buffer): Promise<void> {
   }
 }
 
-async function nextChunk(
+function iteratorCloser(iterator: AsyncIterator<Buffer>): () => void {
+  let initiated = false;
+  return () => {
+    if (initiated) return;
+    initiated = true;
+    const closing = iterator.return?.();
+    if (closing) void closing.catch(() => undefined);
+  };
+}
+
+async function nextAssetChunk(
   iterator: AsyncIterator<Buffer>,
   signal: AbortSignal,
+  close: () => void,
 ): Promise<IteratorResult<Buffer>> {
-  if (signal.aborted) throw new DOMException("Media download aborted", "AbortError");
+  if (signal.aborted) {
+    close();
+    throw new DOMException("Media download aborted", "AbortError");
+  }
   return new Promise<IteratorResult<Buffer>>((resolve, reject) => {
     const abort = () => {
       signal.removeEventListener("abort", abort);
+      // Teleproto exposes AbortSignal and AsyncIterator.return(), but no API
+      // that can synchronously cancel an already-dispatched MTProto invoke.
+      // Initiate both immediately; the in-flight RPC may settle afterward.
+      close();
       reject(new DOMException("Media download aborted", "AbortError"));
     };
     signal.addEventListener("abort", abort, { once: true });
@@ -254,7 +272,6 @@ export async function downloadAssetToFile(
   let created = false;
   let completed = false;
   let handle: FileHandle | undefined;
-  let iterator: AsyncIterator<Buffer> | undefined;
   const abort = () => controller.abort();
   const timer = setTimeout(abort, options.deadlineMs);
   options.signal?.addEventListener("abort", abort, { once: true });
@@ -266,14 +283,10 @@ export async function downloadAssetToFile(
     handle = await open(options.path, "wx", 0o600);
     created = true;
     let total = 0;
-    iterator = iterAssetBytes(client, asset, {
+    for await (const chunk of iterAssetBytes(client, asset, {
       limit: options.maxBytes + 1,
       signal: controller.signal,
-    })[Symbol.asyncIterator]();
-    while (true) {
-      const next = await nextChunk(iterator, controller.signal);
-      if (next.done) break;
-      const chunk = next.value;
+    })) {
       if (
         controller.signal.aborted ||
         options.signal?.aborted ||
@@ -320,10 +333,6 @@ export async function downloadAssetToFile(
   } finally {
     clearTimeout(timer);
     options.signal?.removeEventListener("abort", abort);
-    if (!completed) {
-      const closing = iterator?.return?.();
-      if (closing) void closing.catch(() => undefined);
-    }
     await handle?.close().catch(() => undefined);
     if (created && !completed) {
       await unlink(options.path).catch(() => undefined);
@@ -341,16 +350,26 @@ export async function* iterAssetBytes(
     ...(options.offset !== undefined ? { offset: options.offset } : {}),
     ...(options.limit !== undefined ? { limit: options.limit } : {}),
     requestSize: 512 * 1024,
-  });
-  for await (const chunk of iterator) {
-    if (options.signal?.aborted) throw new DOMException("Media download aborted", "AbortError");
-    if (remaining === undefined) {
-      yield chunk;
-      continue;
+    ...(options.signal ? { signal: options.signal } : {}),
+  })[Symbol.asyncIterator]();
+  const close = iteratorCloser(iterator);
+  try {
+    while (true) {
+      const next = options.signal
+        ? await nextAssetChunk(iterator, options.signal, close)
+        : await iterator.next();
+      if (next.done) return;
+      const chunk = next.value;
+      if (remaining === undefined) {
+        yield chunk;
+        continue;
+      }
+      if (remaining <= 0) return;
+      const exact = chunk.subarray(0, remaining);
+      remaining -= exact.length;
+      if (exact.length > 0) yield exact;
     }
-    if (remaining <= 0) return;
-    const exact = chunk.subarray(0, remaining);
-    remaining -= exact.length;
-    if (exact.length > 0) yield exact;
+  } finally {
+    close();
   }
 }

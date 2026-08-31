@@ -36,7 +36,7 @@ export type TelegramLike = {
   ): Promise<unknown[]>;
   iterDownload(
     file: unknown,
-    params?: { offset?: number; limit?: number; requestSize?: number },
+    params?: { offset?: number; limit?: number; requestSize?: number; signal?: AbortSignal },
   ): AsyncGenerator<Buffer, void, unknown>;
 };
 

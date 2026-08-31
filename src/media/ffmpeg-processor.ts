@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ffmpegPath from "ffmpeg-static";
 import sharp from "sharp";
 import { GramScopeError, mediaError } from "../errors/taxonomy";
 import { MAX_FRAMES } from "../schemas/media";
-import { normalizeImage } from "./image";
+import { normalizeImage, runSharpOperation } from "./image";
 import type {
   ContactSheetRequest,
   ContactSheetResult,
@@ -14,12 +14,37 @@ import type {
 } from "./processor";
 
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
+export const INTERMEDIATE_FRAME_MAX_LONG_EDGE = 1600;
+export const INTERMEDIATE_FRAME_MAX_BYTES = 4 * 1024 * 1024;
+const INTERMEDIATE_FRAME_MAX_PIXELS = INTERMEDIATE_FRAME_MAX_LONG_EDGE ** 2;
 
 export type FrameRunner = (
   args: string[],
   outputDirectory: string,
   signal: AbortSignal,
 ) => Promise<void>;
+
+export type FfmpegChild = {
+  stderr: {
+    on(event: "data", listener: (value: Buffer | string) => void): unknown;
+  };
+  kill(signal: "SIGKILL"): boolean;
+  once(event: "error", listener: () => void): unknown;
+  once(event: "close", listener: (code: number | null) => void): unknown;
+};
+
+export type SpawnFfmpeg = (
+  binary: string,
+  args: string[],
+  options: { stdio: ["ignore", "ignore", "pipe"]; shell: false },
+) => FfmpegChild;
+
+export type FfmpegCommandRunner = (args: string[], signal: AbortSignal) => Promise<string>;
+
+export type ContactSheetAssembler = (
+  outputDirectory: string,
+  request: ContactSheetRequest,
+) => Promise<ContactSheetResult>;
 
 export function evenlySpacedTimestamps(durationSeconds: number, count: number): number[] {
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
@@ -85,11 +110,17 @@ export function buildFfmpegArgs(
   const outputs = timestamps.flatMap((_, index) => [
     "-map",
     `${index}:v:0`,
+    "-vf",
+    `scale=${INTERMEDIATE_FRAME_MAX_LONG_EDGE}:${INTERMEDIATE_FRAME_MAX_LONG_EDGE}:force_original_aspect_ratio=decrease`,
     "-frames:v",
     "1",
+    "-q:v",
+    "5",
+    "-fs",
+    String(INTERMEDIATE_FRAME_MAX_BYTES),
     "-f",
     "image2",
-    `${outputDirectory}/frame-${index}.png`,
+    `${outputDirectory}/frame-${index}.jpg`,
   ]);
   return ["-hide_banner", "-loglevel", "error", "-nostdin", "-y", ...inputs, ...outputs];
 }
@@ -102,61 +133,64 @@ function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw processingTimeout();
 }
 
-async function runFfmpeg(args: string[], signal: AbortSignal): Promise<string> {
-  throwIfAborted(signal);
-  if (!ffmpegPath) {
-    throw mediaError("UNSUPPORTED_MEDIA", "Video processing is unavailable", false);
-  }
-  const binary = ffmpegPath;
-  return new Promise<string>((resolve, reject) => {
-    const child = spawn(binary, args, {
-      stdio: ["ignore", "ignore", "pipe"],
-      shell: false,
-    });
-    const diagnostic: Buffer[] = [];
-    let diagnosticBytes = 0;
-    let aborted = false;
-    let settled = false;
+const defaultSpawnFfmpeg: SpawnFfmpeg = (binary, args, options) =>
+  spawn(binary, args, options) as unknown as FfmpegChild;
 
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", abort);
-      if (error) reject(error);
-      else resolve(Buffer.concat(diagnostic, diagnosticBytes).toString("utf8"));
-    };
-    const abort = () => {
-      aborted = true;
-      child.kill("SIGKILL");
-    };
+export function createFfmpegCommandRunner(
+  spawnProcess: SpawnFfmpeg = defaultSpawnFfmpeg,
+): FfmpegCommandRunner {
+  return async (args, signal) => {
+    throwIfAborted(signal);
+    if (!ffmpegPath) {
+      throw mediaError("UNSUPPORTED_MEDIA", "Video processing is unavailable", false);
+    }
+    const binary = ffmpegPath;
+    return new Promise<string>((resolve, reject) => {
+      const child = spawnProcess(binary, args, {
+        stdio: ["ignore", "ignore", "pipe"],
+        shell: false,
+      });
+      const diagnostic: Buffer[] = [];
+      let diagnosticBytes = 0;
+      let aborted = false;
+      let settled = false;
 
-    signal.addEventListener("abort", abort, { once: true });
-    child.stderr.on("data", (value: Buffer | string) => {
-      if (diagnosticBytes >= MAX_DIAGNOSTIC_BYTES) return;
-      const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
-      const bounded = chunk.subarray(0, MAX_DIAGNOSTIC_BYTES - diagnosticBytes);
-      diagnostic.push(bounded);
-      diagnosticBytes += bounded.length;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", abort);
+        if (error) reject(error);
+        else resolve(Buffer.concat(diagnostic, diagnosticBytes).toString("utf8"));
+      };
+      const abort = () => {
+        aborted = true;
+        child.kill("SIGKILL");
+      };
+
+      signal.addEventListener("abort", abort, { once: true });
+      child.stderr.on("data", (value: Buffer | string) => {
+        if (diagnosticBytes >= MAX_DIAGNOSTIC_BYTES) return;
+        const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+        const bounded = chunk.subarray(0, MAX_DIAGNOSTIC_BYTES - diagnosticBytes);
+        diagnostic.push(bounded);
+        diagnosticBytes += bounded.length;
+      });
+      child.once("error", () => {
+        finish(mediaError("UNSUPPORTED_MEDIA", "Video processing is unavailable", false));
+      });
+      child.once("close", (code) => {
+        if (aborted || signal.aborted) {
+          finish(processingTimeout());
+        } else if (code !== 0) {
+          finish(mediaError("UNSUPPORTED_MEDIA", "Video frames could not be decoded", false));
+        } else {
+          finish();
+        }
+      });
+      if (signal.aborted) abort();
     });
-    child.once("error", () => {
-      finish(mediaError("UNSUPPORTED_MEDIA", "Video processing is unavailable", false));
-    });
-    child.once("close", (code) => {
-      if (aborted || signal.aborted) {
-        finish(processingTimeout());
-      } else if (code !== 0) {
-        finish(mediaError("UNSUPPORTED_MEDIA", "Video frames could not be decoded", false));
-      } else {
-        finish();
-      }
-    });
-    if (signal.aborted) abort();
-  });
+  };
 }
-
-const defaultFrameRunner: FrameRunner = async (args, _outputDirectory, signal) => {
-  await runFfmpeg(args, signal);
-};
 
 function timestampLabel(seconds: number, width: number): Buffer {
   const minutes = Math.floor(seconds / 60);
@@ -183,12 +217,45 @@ async function buildContactSheet(
 
   for (let index = 0; index < frameCount; index += 1) {
     throwIfAborted(request.deadline);
-    const frame = await readFile(join(directory, `frame-${index}.png`));
-    const cell = await sharp(frame, { failOn: "warning" })
+    const framePath = join(directory, `frame-${index}.jpg`);
+    const frameStats = await stat(framePath);
+    if (frameStats.size > INTERMEDIATE_FRAME_MAX_BYTES) {
+      throw mediaError("INLINE_LIMIT_EXCEEDED", "Decoded video frame exceeds its byte limit", false);
+    }
+    const metadataPipeline = sharp(framePath, {
+      failOn: "warning",
+      limitInputPixels: INTERMEDIATE_FRAME_MAX_PIXELS,
+    });
+    let metadata: Awaited<ReturnType<typeof metadataPipeline.metadata>>;
+    try {
+      metadata = await runSharpOperation(
+        metadataPipeline,
+        (pipeline) => pipeline.metadata(),
+        request.deadline,
+      );
+    } catch (error) {
+      if (error instanceof GramScopeError) throw error;
+      throw mediaError("INLINE_LIMIT_EXCEEDED", "Decoded video frame exceeds its dimension limit", false);
+    }
+    if (
+      !metadata.width ||
+      !metadata.height ||
+      Math.max(metadata.width, metadata.height) > INTERMEDIATE_FRAME_MAX_LONG_EDGE
+    ) {
+      throw mediaError("INLINE_LIMIT_EXCEEDED", "Decoded video frame exceeds its dimension limit", false);
+    }
+    const framePipeline = sharp(framePath, {
+      failOn: "warning",
+      limitInputPixels: INTERMEDIATE_FRAME_MAX_PIXELS,
+    })
       .rotate()
       .resize({ width: cellSize, height: cellSize, fit: "cover" })
-      .jpeg({ quality: 90 })
-      .toBuffer();
+      .jpeg({ quality: 90 });
+    const cell = await runSharpOperation(
+      framePipeline,
+      (pipeline) => pipeline.toBuffer(),
+      request.deadline,
+    );
     const left = (index % columns) * cellSize;
     const top = Math.floor(index / columns) * cellSize;
     overlays.push({ input: cell, left, top });
@@ -200,14 +267,20 @@ async function buildContactSheet(
   }
 
   throwIfAborted(request.deadline);
-  const canvas = await sharp({
+  const compositePipeline = sharp({
     create: { width, height, channels: 3, background: "black" },
-  }).composite(overlays).png().toBuffer();
+  }).composite(overlays).png();
+  const canvas = await runSharpOperation(
+    compositePipeline,
+    (pipeline) => pipeline.toBuffer(),
+    request.deadline,
+  );
   throwIfAborted(request.deadline);
   const result = await normalizeImage(canvas, {
     maxBytes: request.maxBytes,
     maxLongEdge: request.maxLongEdge,
     sourceMimeType: "image/x-contact-sheet-source",
+    deadline: request.deadline,
   });
   throwIfAborted(request.deadline);
   if (result.mimeType !== "image/jpeg") {
@@ -221,11 +294,45 @@ async function buildContactSheet(
   };
 }
 
-export function createFfmpegProcessor(options: { run?: FrameRunner } = {}): MediaProcessor {
-  const run = options.run ?? defaultFrameRunner;
+async function raceWithDeadline<T>(start: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (error: unknown, result?: T) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      if (error !== undefined) reject(error);
+      else resolve(result as T);
+    };
+    const abort = () => finish(processingTimeout());
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    if (settled) return;
+    try {
+      start().then(
+        (result) => finish(undefined, result),
+        (error: unknown) => finish(error),
+      );
+    } catch (error) {
+      finish(error);
+    }
+  });
+}
+
+export function createFfmpegProcessor(options: {
+  run?: FrameRunner;
+  spawn?: SpawnFfmpeg;
+  assemble?: ContactSheetAssembler;
+} = {}): MediaProcessor {
+  const command = createFfmpegCommandRunner(options.spawn);
+  const run = options.run ?? (async (args: string[], _directory: string, signal: AbortSignal) => {
+    await command(args, signal);
+  });
+  const assemble = options.assemble ?? buildContactSheet;
   return {
     async probeDuration(inputPath, deadline) {
-      const stderr = await runFfmpeg(
+      const stderr = await command(
         ["-hide_banner", "-nostdin", "-i", inputPath, "-t", "0", "-f", "null", "-"],
         deadline,
       );
@@ -238,7 +345,7 @@ export function createFfmpegProcessor(options: { run?: FrameRunner } = {}): Medi
         const args = buildFfmpegArgs(inputPath, request.timestampsSeconds, directory);
         await run(args, directory, request.deadline);
         throwIfAborted(request.deadline);
-        return await buildContactSheet(directory, request);
+        return await raceWithDeadline(() => assemble(directory, request), request.deadline);
       } finally {
         await rm(directory, { recursive: true, force: true });
       }
