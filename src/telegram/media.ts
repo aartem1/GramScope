@@ -1,4 +1,5 @@
 import { mediaId, type MediaDescriptor } from "../schemas/media";
+import { mediaOf } from "../schemas/message";
 import { mediaError } from "../errors/taxonomy";
 import { fetchDialogIndex } from "./dialog-index";
 import type { TelegramLike } from "./client";
@@ -66,26 +67,11 @@ function descriptorOf(rawMedia: Record<string, unknown>): MediaDescriptor | unde
 
   const document = record(rawMedia.document);
   if (!document) return undefined;
-  const attributes = Array.isArray(document.attributes) ? document.attributes : [];
-  const audio = attributes
-    .map(record)
-    .find((attribute) => attribute?.className === "DocumentAttributeAudio");
-  const fileName = attributes
-    .map(record)
-    .find((attribute) => attribute?.className === "DocumentAttributeFilename")?.fileName;
-  const mimeType = typeof document.mimeType === "string" ? document.mimeType : undefined;
-  const isVoice = audio?.voice === true;
-  const type = isVoice ? "voice" : mimeType?.startsWith("audio/") ? "audio" : "document";
+  const descriptor = mediaOf(rawMedia);
+  if (!descriptor) return undefined;
   return {
+    ...descriptor,
     media_id: "med_pending",
-    type,
-    ...(typeof fileName === "string" ? { file_name: fileName } : {}),
-    ...(mimeType ? { mime_type: mimeType } : {}),
-    ...(positiveNumber(document.size) !== undefined ? { size: positiveNumber(document.size) } : {}),
-    ...(positiveNumber(audio?.duration) !== undefined
-      ? { duration_seconds: positiveNumber(audio?.duration) }
-      : {}),
-    ...(Array.isArray(document.thumbs) && document.thumbs.length > 0 ? { has_thumbnail: true } : {}),
   };
 }
 

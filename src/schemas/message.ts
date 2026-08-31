@@ -126,6 +126,7 @@ export function mediaOf(
   const sticker = attrs.some((attr) => attr.className === "DocumentAttributeSticker");
   const video = attrs.find((attr) => attr.className === "DocumentAttributeVideo");
   const audio = attrs.find((attr) => attr.className === "DocumentAttributeAudio");
+  const imageSize = attrs.find((attr) => attr.className === "DocumentAttributeImageSize");
   const filename = attrs.find((attr) => attr.className === "DocumentAttributeFilename")?.fileName;
   const type = animated ? "gif"
     : sticker ? "sticker"
@@ -134,13 +135,15 @@ export function mediaOf(
     : "document";
   const rawSize = readBigId(document.size);
   const size = rawSize === undefined ? undefined : Number(rawSize);
+  const width = finitePositive(video?.w) ?? finitePositive(imageSize?.w);
+  const height = finitePositive(video?.h) ?? finitePositive(imageSize?.h);
   return withIdentity({
     type,
     ...(typeof filename === "string" ? { file_name: filename } : {}),
     ...(typeof document.mimeType === "string" ? { mime_type: document.mimeType } : {}),
     ...(size !== undefined && Number.isSafeInteger(size) && size >= 0 ? { size } : {}),
-    ...(video && finitePositive(video.w) ? { width: Number(video.w) } : {}),
-    ...(video && finitePositive(video.h) ? { height: Number(video.h) } : {}),
+    ...(width !== undefined ? { width } : {}),
+    ...(height !== undefined ? { height } : {}),
     ...((video ?? audio) && finitePositive((video ?? audio)!.duration)
       ? { duration_seconds: Number((video ?? audio)!.duration) }
       : {}),

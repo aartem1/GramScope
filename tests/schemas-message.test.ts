@@ -99,6 +99,37 @@ describe("mediaOf", () => {
     });
   });
 
+  it("reads image dimensions from an image document attribute", () => {
+    expect(mediaOf(documentMedia({
+      id: 100n,
+      mimeType: "image/png",
+      attributes: [{
+        className: "DocumentAttributeImageSize",
+        w: 1920,
+        h: 1080,
+      }],
+    }), identity)).toMatchObject({
+      type: "document",
+      width: 1920,
+      height: 1080,
+    });
+  });
+
+  it("reads image dimensions from a sticker image-size attribute", () => {
+    expect(mediaOf(documentMedia({
+      id: 101n,
+      mimeType: "image/webp",
+      attributes: [
+        { className: "DocumentAttributeSticker" },
+        { className: "DocumentAttributeImageSize", w: 512, h: 512 },
+      ],
+    }), identity)).toMatchObject({
+      type: "sticker",
+      width: 512,
+      height: 512,
+    });
+  });
+
   it("changes media_id when attached media changes, not when file_reference changes", () => {
     const a = mediaOf(documentMedia({ id: 99n, fileReference: Buffer.from("a") }), identity);
     const b = mediaOf(documentMedia({ id: 99n, fileReference: Buffer.from("b") }), identity);

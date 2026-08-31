@@ -15,6 +15,7 @@ import {
   readAssetBytes,
   resolveMediaAsset,
 } from "@/telegram/media";
+import { mapMessage } from "@/schemas/message";
 import type { TelegramLike } from "@/telegram/client";
 import type { GetMediaInput, MediaDescriptor } from "@/schemas/media";
 
@@ -78,6 +79,27 @@ function photoMessage(input: { id: number; bytes: number }) {
       photo: { className: "Photo", id: 11n, sizes: [], dcId: 2 },
     },
     expectedBytes: input.bytes,
+  };
+}
+
+function documentMessage(input: {
+  id: number;
+  documentId: bigint;
+  attributes: readonly Record<string, unknown>[];
+}) {
+  return {
+    className: "Message",
+    id: input.id,
+    media: {
+      className: "MessageMediaDocument",
+      document: {
+        className: "Document",
+        id: input.documentId,
+        mimeType: "video/mp4",
+        size: 5000n,
+        attributes: input.attributes,
+      },
+    },
   };
 }
 
@@ -149,6 +171,37 @@ afterEach(() => {
 });
 
 describe("Telegram media bytes", () => {
+  it.each([
+    ["video", [{ className: "DocumentAttributeVideo", w: 1280, h: 720, duration: 4 }]],
+    ["gif", [
+      { className: "DocumentAttributeAnimated" },
+      { className: "DocumentAttributeVideo", w: 1280, h: 720, duration: 4 },
+    ]],
+    ["sticker", [
+      { className: "DocumentAttributeSticker" },
+      { className: "DocumentAttributeImageSize", w: 512, h: 512 },
+    ]],
+    ["video_note", [{
+      className: "DocumentAttributeVideo",
+      roundMessage: true,
+      w: 480,
+      h: 480,
+      duration: 12,
+    }]],
+  ] as const)("keeps %s identity identical in read and media-resolver paths", async (type, attributes) => {
+    const raw = documentMessage({ id: 7, documentId: 99n, attributes });
+    const client = fakeMediaClient({ getMessages: async () => [raw] });
+
+    const read = mapMessage(raw, { chatId: "-1001" }).media;
+    const asset = await resolveMediaAsset(client, { sourceId: "@news", messageId: 7 });
+
+    expect(read).toMatchObject({ type });
+    expect(asset.descriptor).toMatchObject({
+      type: read?.type,
+      media_id: read?.media_id,
+    });
+  });
+
   it("refetches by stable selector and joins download chunks", async () => {
     const calls: unknown[] = [];
     const client = fakeMediaClient({
