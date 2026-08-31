@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { GramScopeError } from "@/errors/taxonomy";
+import { GramScopeError, mediaError } from "@/errors/taxonomy";
 import { mapTelegramError } from "@/errors/from-telegram";
+import { errorResult } from "@/mcp/tool-result";
 
 class FakeRpcError extends Error {
   constructor(
@@ -17,6 +18,28 @@ describe("mapTelegramError", () => {
     expect(mapped.code).toBe("RATE_LIMITED");
     expect(mapped.retryAfterSeconds).toBe(42);
     expect(mapped.toStructured().retry_after_seconds).toBe(42);
+    expect(mapped.toStructured().retryable).toBe(true);
+  });
+
+  it("marks only transient media failures retryable by default", () => {
+    expect(new GramScopeError("PROCESSING_TIMEOUT", "slow").toStructured())
+      .toEqual({ code: "PROCESSING_TIMEOUT", message: "slow", retryable: true });
+    expect(mediaError("TELEGRAM_DOWNLOAD_FAILED", "transport").toStructured())
+      .toEqual({ code: "TELEGRAM_DOWNLOAD_FAILED", message: "transport", retryable: true });
+    for (const code of [
+      "NO_MEDIA",
+      "MEDIA_NOT_FOUND",
+      "UNSUPPORTED_MEDIA",
+      "INVALID_INPUT",
+      "INLINE_LIMIT_EXCEEDED",
+    ] as const) {
+      expect(new GramScopeError(code, "stable").toStructured()).not.toHaveProperty("retryable");
+    }
+  });
+
+  it("drops unknown exception messages from structured tool errors", () => {
+    expect(JSON.stringify(errorResult(new Error("token=secret-value"))))
+      .not.toContain("secret-value");
   });
 
   it("maps CHANNEL_INVALID to CHANNEL_NOT_FOUND", () => {

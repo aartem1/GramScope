@@ -28,12 +28,22 @@ export type StructuredError = {
   retryable?: boolean;
 };
 
+const RETRYABLE_BY_DEFAULT = new Set<ErrorCode>([
+  "RATE_LIMITED",
+  "PROCESSING_TIMEOUT",
+  "TELEGRAM_DOWNLOAD_FAILED",
+]);
+
+function defaultRetryable(code: ErrorCode): boolean {
+  return RETRYABLE_BY_DEFAULT.has(code);
+}
+
 export class GramScopeError extends Error {
   constructor(
     public readonly code: ErrorCode,
     message: string,
     public readonly retryAfterSeconds?: number,
-    public readonly retryable = false,
+    public readonly retryable = defaultRetryable(code),
   ) {
     super(message);
     this.name = "GramScopeError";
@@ -54,7 +64,7 @@ export class GramScopeError extends Error {
 export function mediaError(
   code: ErrorCode,
   message: string,
-  retryable = false,
+  retryable?: boolean,
 ): GramScopeError {
   return new GramScopeError(code, message, undefined, retryable);
 }

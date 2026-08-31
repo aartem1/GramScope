@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { formatEvent, formatToolCall, logEvent } from "@/mcp/logging";
 import { runTool } from "@/mcp/tool-result";
+import { runGetMediaTool } from "@/mcp/tools/get-media";
 import { GramScopeError } from "@/errors/taxonomy";
 
 describe("formatEvent", () => {
@@ -32,6 +33,50 @@ describe("formatEvent", () => {
 });
 
 describe("runTool logging", () => {
+  it("logs a media fallback with only coarse output fields and its stable code", async () => {
+    const lines: string[] = [];
+    await runGetMediaTool(
+      {
+        source_id: "-1001",
+        message_id: 7,
+        mode: "preview",
+        max_frames: 8,
+      },
+      async () => ({
+        result: {
+          status: "fallback",
+          source_id: "-1001",
+          message_id: 7,
+          media: {
+            media_id: "med_secret",
+            type: "document",
+            file_reference: "SECRET_FILE_REFERENCE",
+            access_hash: "SECRET_ACCESS_HASH",
+          },
+          representation: { kind: "image", byte_size: 321 },
+          download: {
+            url: "https://media.example/token=secret-value",
+            expires_at: "2026-08-30T12:10:00.000Z",
+          },
+          code: "UNSUPPORTED_MEDIA",
+          message: "safe fallback",
+        },
+        artifact: { type: "image", data: Buffer.alloc(321), mimeType: "image/jpeg" },
+        link: {
+          uri: "https://media.example/token=secret-value",
+          name: "secret-file-name.pdf",
+        },
+      }),
+      (line) => lines.push(line),
+    );
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/tool=get_media status=success duration_ms=\d+ code=UNSUPPORTED_MEDIA media_kind=document bytes=321/);
+    expect(lines[0]).not.toMatch(
+      /token|secret-value|secret-file-name|file_reference|access_hash|med_secret|-1001/i,
+    );
+  });
+
   it("logs only safe media fields", () => {
     const line = formatToolCall({
       name: "get_media",

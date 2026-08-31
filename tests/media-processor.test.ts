@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -110,6 +110,26 @@ describe("FFmpeg media processor contracts", () => {
       maxLongEdge: 1600,
       deadline: new AbortController().signal,
     })).rejects.toMatchObject({ code: "INLINE_LIMIT_EXCEEDED" });
+  });
+
+  it("removes the exact frame directory when the decoder fails", async () => {
+    let frameDirectory = "";
+    const processor = createFfmpegProcessor({
+      run: async (_args, directory) => {
+        frameDirectory = directory;
+        await writeFile(join(directory, "partial-frame.jpg"), "partial");
+        throw new Error("decoder failed");
+      },
+    });
+
+    await expect(processor.contactSheet("/tmp/input.mp4", {
+      timestampsSeconds: [1],
+      maxBytes: INLINE_MEDIA_MAX_BYTES,
+      maxLongEdge: 1600,
+      deadline: new AbortController().signal,
+    })).rejects.toThrow("decoder failed");
+    expect(frameDirectory).not.toBe("");
+    await expect(access(frameDirectory)).rejects.toThrow();
   });
 
   it("kills and awaits the assembly process before removing decoded frames", async () => {

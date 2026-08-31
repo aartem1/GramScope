@@ -27,6 +27,7 @@ export async function runGetMediaTool(
       ...(outcome.result.representation?.byte_size !== undefined
         ? { bytes: outcome.result.representation.byte_size }
         : {}),
+      ...(outcome.result.code ? { code: outcome.result.code } : {}),
     }, sink);
     return result;
   } catch (err) {

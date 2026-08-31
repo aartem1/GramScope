@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -17,6 +18,13 @@ import {
 } from "./ffmpeg-processor";
 import { safeMediaFilename } from "./names";
 import { issueMediaToken } from "./token";
+import {
+  derivativeCache,
+  derivativeKey,
+  singleFlight,
+  withVideoPermit,
+  type CachedDerivative,
+} from "./cache";
 import { withTelegram, type TelegramLike } from "../telegram/client";
 import {
   downloadAssetToFile,
@@ -83,6 +91,10 @@ export type MediaDependencies = {
     frameCount: number;
     timestampsSeconds: number[];
   }>;
+  derivativeCache?: Pick<typeof derivativeCache, "get" | "set">;
+  derivativePath?: () => string;
+  writeDerivative?: (path: string, data: Buffer) => Promise<void>;
+  removeDerivative?: (path: string) => Promise<void>;
 };
 
 const productionMediaDependencies: MediaDependencies = {
@@ -95,6 +107,14 @@ const productionMediaDependencies: MediaDependencies = {
   downloadToFile: downloadAssetToFile,
   probeDuration: (inputPath, deadline) => mediaProcessor.probeDuration(inputPath, deadline),
   contactSheet: (inputPath, request) => mediaProcessor.contactSheet(inputPath, request),
+  derivativeCache,
+  derivativePath: () => join(tmpdir(), `gramscope-derivative-${randomUUID()}`),
+  writeDerivative: async (path, data) => {
+    await writeFile(path, data, { flag: "wx", mode: 0o600 });
+  },
+  removeDerivative: async (path) => {
+    await rm(path, { force: true });
+  },
 };
 
 export async function attachOriginalLink(
@@ -209,7 +229,7 @@ async function represent(
   }
   if (mode === "preview") {
     return isDirectImage(asset)
-      ? directImage(client, asset, deps)
+      ? directImage(client, asset, deps, true, "preview")
       : thumbnailFallback(client, asset, deps);
   }
   if (mode === "frames") {
@@ -224,7 +244,7 @@ async function represent(
 
   switch (asset.descriptor.type) {
     case "photo":
-      return directImage(client, asset, deps);
+      return directImage(client, asset, deps, true, "auto");
     case "voice":
     case "audio":
       return directAudioOrFallback(client, asset, deps);
@@ -235,7 +255,7 @@ async function represent(
     case "sticker":
     case "document":
       return asset.descriptor.mime_type?.startsWith("image/")
-        ? directImage(client, asset, deps)
+        ? directImage(client, asset, deps, true, "auto")
         : thumbnailFallback(client, asset, deps);
     default:
       return errorOutcome(asset, "UNSUPPORTED_MEDIA", false);
@@ -251,52 +271,46 @@ async function videoContactSheet(
 ): Promise<MediaOutcome> {
   const maxBytes = explicitFrames ? FRAMES_VIDEO_MAX_BYTES : AUTO_VIDEO_MAX_BYTES;
   const deadlineMs = explicitFrames ? FRAMES_VIDEO_DEADLINE_MS : AUTO_VIDEO_DEADLINE_MS;
-  if (asset.descriptor.size !== undefined && asset.descriptor.size > maxBytes) {
-    return explicitFrames
-      ? errorOutcome(asset, "INLINE_LIMIT_EXCEEDED", false)
-      : thumbnailFallback(client, asset, deps, "INLINE_LIMIT_EXCEEDED", false);
-  }
-  if (!deps.downloadToFile || !deps.probeDuration || !deps.contactSheet) {
-    const unavailable = "UNSUPPORTED_MEDIA" as const;
-    return explicitFrames
-      ? errorOutcome(asset, unavailable, false)
-      : thumbnailFallback(client, asset, deps, unavailable, false);
-  }
-
+  const keyTimestamps = input.timestamps_seconds
+    ?.map((value) => Math.round(value * 1000) / 1000)
+    .sort((a, b) => a - b);
+  const key = derivativeKey({
+    mediaId: asset.descriptor.media_id,
+    mode: explicitFrames ? "frames" : "auto",
+    timestampsSeconds: keyTimestamps,
+    maxFrames: input.max_frames,
+    processorVersion: "contact-sheet-v1",
+  });
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), deadlineMs);
   timer.unref?.();
-  let directory: string | undefined;
   try {
-    directory = await mkdtemp(join(tmpdir(), "gramscope-video-"));
-    const inputPath = join(directory, "input.bin");
-    await deps.downloadToFile(client, asset, {
-      path: inputPath,
-      maxBytes,
-      deadlineMs,
-      signal: controller.signal,
-    });
+    const processed = await derivativeResult(key, async () => {
+      if (controller.signal.aborted) {
+        throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+      }
+      if (asset.descriptor.size !== undefined && asset.descriptor.size > maxBytes) {
+        throw mediaError(
+          "INLINE_LIMIT_EXCEEDED",
+          "Video exceeds its processing byte limit",
+          false,
+        );
+      }
+      if (!deps.downloadToFile || !deps.probeDuration || !deps.contactSheet) {
+        throw mediaError("UNSUPPORTED_MEDIA", "Video processing is unavailable", false);
+      }
+      return generateVideoDerivative(
+        client,
+        asset,
+        input,
+        deps,
+        maxBytes,
+        deadlineMs,
+        controller.signal,
+      );
+    }, deps, true);
     if (controller.signal.aborted) {
       throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
-    }
-    const declaredDuration = asset.descriptor.duration_seconds;
-    const duration = declaredDuration !== undefined && declaredDuration > 0
-      ? declaredDuration
-      : await deps.probeDuration(inputPath, controller.signal);
-    const timestamps = input.timestamps_seconds?.length
-      ? normalizeRequestedTimestamps(input.timestamps_seconds, duration)
-      : evenlySpacedTimestamps(duration, input.max_frames);
-    const processed = await deps.contactSheet(inputPath, {
-      timestampsSeconds: timestamps,
-      maxBytes: INLINE_MEDIA_MAX_BYTES,
-      maxLongEdge: 1600,
-      deadline: controller.signal,
-    });
-    if (controller.signal.aborted) {
-      throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
-    }
-    if (processed.data.length > INLINE_MEDIA_MAX_BYTES) {
-      throw mediaError("INLINE_LIMIT_EXCEEDED", "Contact sheet exceeds the inline media limit", false);
     }
     const outcome = readyOutcome(asset, {
       type: "image",
@@ -327,6 +341,55 @@ async function videoContactSheet(
   } finally {
     clearTimeout(timer);
     controller.abort();
+  }
+}
+
+async function generateVideoDerivative(
+  client: TelegramLike,
+  asset: MediaAsset,
+  input: GetMediaInput,
+  deps: MediaDependencies,
+  maxBytes: number,
+  deadlineMs: number,
+  deadline: AbortSignal,
+): Promise<GeneratedDerivative> {
+  let directory: string | undefined;
+  try {
+    if (deadline.aborted) {
+      throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+    }
+    directory = await mkdtemp(join(tmpdir(), "gramscope-video-"));
+    const inputPath = join(directory, "input.bin");
+    await deps.downloadToFile!(client, asset, {
+      path: inputPath,
+      maxBytes,
+      deadlineMs,
+      signal: deadline,
+    });
+    if (deadline.aborted) {
+      throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+    }
+    const declaredDuration = asset.descriptor.duration_seconds;
+    const duration = declaredDuration !== undefined && declaredDuration > 0
+      ? declaredDuration
+      : await deps.probeDuration!(inputPath, deadline);
+    const timestamps = input.timestamps_seconds?.length
+      ? normalizeRequestedTimestamps(input.timestamps_seconds, duration)
+      : evenlySpacedTimestamps(duration, input.max_frames);
+    const processed = await deps.contactSheet!(inputPath, {
+      timestampsSeconds: timestamps,
+      maxBytes: INLINE_MEDIA_MAX_BYTES,
+      maxLongEdge: 1600,
+      deadline,
+    });
+    if (deadline.aborted) {
+      throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
+    }
+    if (processed.data.length > INLINE_MEDIA_MAX_BYTES) {
+      throw mediaError("INLINE_LIMIT_EXCEEDED", "Contact sheet exceeds the inline media limit", false);
+    }
+    return processed;
+  } finally {
     if (directory) await rm(directory, { recursive: true, force: true });
   }
 }
@@ -377,9 +440,10 @@ async function directImage(
   asset: MediaAsset,
   deps: MediaDependencies,
   attachLinkOnFallback = true,
+  cacheMode?: string,
 ): Promise<MediaOutcome> {
   try {
-    return await directImageOnce(client, asset, deps);
+    return await directImageOnce(client, asset, deps, cacheMode);
   } catch (error) {
     if (!(error instanceof GramScopeError) || error.code !== "INLINE_LIMIT_EXCEEDED") throw error;
     const fallback = fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false);
@@ -391,21 +455,32 @@ async function directImageOnce(
   client: TelegramLike,
   asset: MediaAsset,
   deps: MediaDependencies,
+  cacheMode?: string,
 ): Promise<MediaOutcome> {
-  const thumbnail = await deps.readThumbnail?.(client, asset, INLINE_MEDIA_MAX_BYTES);
-  if (!thumbnail && (asset.descriptor.size ?? INLINE_MEDIA_MAX_BYTES + 1) > INLINE_MEDIA_MAX_BYTES) {
-    throw new GramScopeError(
-      "INLINE_LIMIT_EXCEEDED",
-      "Image source exceeds the inline media limit and has no bounded thumbnail",
+  const generate = async () => {
+    const thumbnail = await deps.readThumbnail?.(client, asset, INLINE_MEDIA_MAX_BYTES);
+    if (!thumbnail && (asset.descriptor.size ?? INLINE_MEDIA_MAX_BYTES + 1) > INLINE_MEDIA_MAX_BYTES) {
+      throw new GramScopeError(
+        "INLINE_LIMIT_EXCEEDED",
+        "Image source exceeds the inline media limit and has no bounded thumbnail",
+      );
+    }
+    const source = thumbnail?.data ?? await deps.readBytes(client, asset, INLINE_MEDIA_MAX_BYTES);
+    return normalizeImageArtifact(
+      asset,
+      source,
+      thumbnail?.mimeType ?? asset.descriptor.mime_type,
+      deps,
     );
-  }
-  const source = thumbnail?.data ?? await deps.readBytes(client, asset, INLINE_MEDIA_MAX_BYTES);
-  const processed = await normalizeImageArtifact(
-    asset,
-    source,
-    thumbnail?.mimeType ?? asset.descriptor.mime_type,
-    deps,
-  );
+  };
+  const processed = cacheMode
+    ? await derivativeResult(derivativeKey({
+      mediaId: asset.descriptor.media_id,
+      mode: cacheMode,
+      maxFrames: 1,
+      processorVersion: "normalized-image-v1",
+    }), generate, deps, false)
+    : await generate();
   const outcome = readyOutcome(asset, {
     type: "image",
     data: processed.data,
@@ -427,10 +502,18 @@ async function thumbnailFallback(
   retryable = false,
 ): Promise<MediaOutcome> {
   try {
-    const thumbnail = await deps.readThumbnail?.(client, asset, INLINE_MEDIA_MAX_BYTES);
+    const processed = await derivativeResult(derivativeKey({
+      mediaId: asset.descriptor.media_id,
+      mode: "thumbnail",
+      maxFrames: 1,
+      processorVersion: "normalized-image-v1",
+    }), async () => {
+      const thumbnail = await deps.readThumbnail?.(client, asset, INLINE_MEDIA_MAX_BYTES);
+      if (!thumbnail) return undefined;
+      return normalizeImageArtifact(asset, thumbnail.data, thumbnail.mimeType, deps);
+    }, deps, false);
     const base = fallbackOutcome(asset, code, retryable);
-    if (thumbnail) {
-      const processed = await normalizeImageArtifact(asset, thumbnail.data, thumbnail.mimeType, deps);
+    if (processed) {
       base.artifact = { type: "image", data: processed.data, mimeType: processed.mimeType };
       base.result.representation = {
         kind: "image",
@@ -465,6 +548,119 @@ async function normalizeImageArtifact(
       width: asset.descriptor.width ?? 1,
       height: asset.descriptor.height ?? 1,
     };
+}
+
+type GeneratedDerivative = {
+  data: Buffer;
+  mimeType: string;
+  width: number;
+  height: number;
+  frameCount?: number;
+  timestampsSeconds?: number[];
+};
+
+async function readCachedDerivative(
+  cached: CachedDerivative,
+): Promise<GeneratedDerivative | undefined> {
+  if (cached.bytes > INLINE_MEDIA_MAX_BYTES) {
+    throw mediaError("INLINE_LIMIT_EXCEEDED", "Cached derivative exceeds the inline limit", false);
+  }
+  let handle;
+  try {
+    handle = await open(cached.path, "r");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  try {
+    const stats = await handle.stat();
+    if (stats.size !== cached.bytes || stats.size > INLINE_MEDIA_MAX_BYTES) {
+      throw mediaError("INLINE_LIMIT_EXCEEDED", "Cached derivative size is invalid", false);
+    }
+    const data = Buffer.alloc(cached.bytes);
+    let offset = 0;
+    while (offset < data.length) {
+      const { bytesRead } = await handle.read(data, offset, data.length - offset, offset);
+      if (bytesRead === 0) return undefined;
+      offset += bytesRead;
+    }
+    return {
+      data,
+      mimeType: cached.mimeType,
+      width: cached.width,
+      height: cached.height,
+      ...(cached.frameCount !== undefined ? { frameCount: cached.frameCount } : {}),
+      ...(cached.timestampsSeconds
+        ? { timestampsSeconds: [...cached.timestampsSeconds] }
+        : {}),
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function derivativeResult(
+  key: string,
+  generate: () => Promise<GeneratedDerivative>,
+  deps: MediaDependencies,
+  video: boolean,
+): Promise<GeneratedDerivative>;
+async function derivativeResult(
+  key: string,
+  generate: () => Promise<GeneratedDerivative | undefined>,
+  deps: MediaDependencies,
+  video: boolean,
+): Promise<GeneratedDerivative | undefined>;
+async function derivativeResult(
+  key: string,
+  generate: () => Promise<GeneratedDerivative | undefined>,
+  deps: MediaDependencies,
+  video: boolean,
+): Promise<GeneratedDerivative | undefined> {
+  const cache = deps.derivativeCache;
+  if (!cache) {
+    return video ? withVideoPermit(generate) : generate();
+  }
+
+  const cached = await cache.get(key);
+  if (cached) {
+    const materialized = await readCachedDerivative(cached);
+    if (materialized) return materialized;
+  }
+
+  const stored = await singleFlight(key, async () => {
+    const raced = await cache.get(key);
+    if (raced) return raced;
+
+    const generated = await (video ? withVideoPermit(generate) : generate());
+    if (!generated) return undefined;
+    if (generated.data.length > INLINE_MEDIA_MAX_BYTES) {
+      throw mediaError("INLINE_LIMIT_EXCEEDED", "Derivative exceeds the inline media limit", false);
+    }
+    const path = deps.derivativePath!();
+    let transferred = false;
+    try {
+      await deps.writeDerivative!(path, generated.data);
+      const value: CachedDerivative = {
+        path,
+        bytes: generated.data.length,
+        mimeType: generated.mimeType,
+        width: generated.width,
+        height: generated.height,
+        ...(generated.frameCount !== undefined ? { frameCount: generated.frameCount } : {}),
+        ...(generated.timestampsSeconds
+          ? { timestampsSeconds: [...generated.timestampsSeconds] }
+          : {}),
+      };
+      await cache.set(key, value);
+      transferred = true;
+      return value;
+    } finally {
+      if (!transferred) await deps.removeDerivative!(path);
+    }
+  });
+
+  return stored ? readCachedDerivative(stored) : undefined;
 }
 
 async function withOriginalLink(

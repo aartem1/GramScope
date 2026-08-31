@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -27,6 +27,7 @@ import {
 import { mapMessage } from "@/schemas/message";
 import { normalizeImage } from "@/media/image";
 import { mediaError } from "@/errors/taxonomy";
+import { DerivativeCache } from "@/media/cache";
 import type { ContactSheetRequest } from "@/media/processor";
 import type { TelegramLike } from "@/telegram/client";
 import type { GetMediaInput, MediaDescriptor } from "@/schemas/media";
@@ -191,6 +192,7 @@ function fakeMediaDeps(options: {
       height: 1,
     }),
     attachOriginalLink: async (_asset, outcome) => outcome,
+    derivativeCache: undefined,
   };
 }
 
@@ -437,6 +439,301 @@ describe("Telegram media bytes", () => {
 });
 
 describe("getMedia", () => {
+  it("single-flights a video derivative and serves later calls from its file cache", async () => {
+    const cache = new DerivativeCache({ maxBytes: 1024, ttlMs: 60_000 });
+    const deps = fakeVideoDeps();
+    deps.derivativeCache = cache;
+    try {
+      const [first, concurrent] = await Promise.all([
+        getMedia(input(), deps),
+        getMedia(input(), deps),
+      ]);
+      const warm = await getMedia(input(), deps);
+
+      expect(deps.downloadToFile).toHaveBeenCalledTimes(1);
+      expect(deps.contactSheet).toHaveBeenCalledTimes(1);
+      expect(first.artifact?.data.equals(Buffer.from("jpeg"))).toBe(true);
+      expect(concurrent.result.representation).toEqual(first.result.representation);
+      expect(warm.result.representation).toEqual(first.result.representation);
+    } finally {
+      await cache.clear();
+    }
+  });
+
+  it("serializes different video derivatives without delaying an image fast path", async () => {
+    const deps = fakeVideoDeps();
+    deps.derivativeCache = undefined;
+    deps.resolveAsset = vi.fn(async (
+      _client: TelegramLike,
+      selector: { sourceId: string; messageId: number },
+    ) => selector.messageId === 9
+      ? fakeAsset({ media_id: "med_photo_9", type: "photo", size: 5 })
+      : fakeAsset({
+          media_id: `med_video_${selector.messageId}`,
+          type: "video",
+          mime_type: "video/mp4",
+          size: 10_000,
+          duration_seconds: 90,
+        }));
+    let active = 0;
+    let peak = 0;
+    const releases: Array<() => void> = [];
+    deps.contactSheet = vi.fn(async (_path: string, request: ContactSheetRequest) => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active -= 1;
+      return {
+        data: Buffer.from("jpeg"),
+        mimeType: "image/jpeg" as const,
+        width: 1200,
+        height: 800,
+        frameCount: request.timestampsSeconds.length,
+        timestampsSeconds: request.timestampsSeconds,
+      };
+    });
+
+    const first = getMedia(input({ message_id: 7 }), deps);
+    const second = getMedia(input({ message_id: 8 }), deps);
+    try {
+      await vi.waitFor(() => expect(deps.contactSheet).toHaveBeenCalledTimes(1));
+      await expect(getMedia(input({ message_id: 9 }), deps)).resolves.toMatchObject({
+        result: { status: "ready", representation: { kind: "image" } },
+      });
+      expect(peak).toBe(1);
+
+      releases.shift()!();
+      await vi.waitFor(() => expect(deps.contactSheet).toHaveBeenCalledTimes(2));
+      expect(peak).toBe(1);
+      releases.shift()!();
+      await expect(Promise.all([first, second])).resolves.toHaveLength(2);
+    } finally {
+      for (const release of releases) release();
+      await Promise.allSettled([first, second]);
+    }
+  });
+
+  it("counts time waiting for the video permit against the derivative deadline", async () => {
+    vi.useFakeTimers();
+    const deps = fakeVideoDeps();
+    deps.derivativeCache = undefined;
+    deps.resolveAsset = vi.fn(async (
+      _client: TelegramLike,
+      selector: { sourceId: string; messageId: number },
+    ) => fakeAsset({
+      media_id: `med_video_${selector.messageId}`,
+      type: "video",
+      mime_type: "video/mp4",
+      size: 10_000,
+      duration_seconds: 90,
+    }));
+    const downloadSignals: AbortSignal[] = [];
+    deps.downloadToFile = vi.fn(async (
+      _client: TelegramLike,
+      _asset: MediaAsset,
+      options: {
+        path: string;
+        maxBytes: number;
+        deadlineMs: number;
+        signal?: AbortSignal;
+      },
+    ) => {
+      downloadSignals.push(options.signal!);
+      return 10_000;
+    });
+    let releaseFirst!: () => void;
+    let markStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    let processorCalls = 0;
+    deps.contactSheet = vi.fn(async (_path: string, request: ContactSheetRequest) => {
+      processorCalls += 1;
+      if (processorCalls === 1) {
+        markStarted();
+        await firstGate;
+      }
+      return {
+        data: Buffer.from("jpeg"),
+        mimeType: "image/jpeg" as const,
+        width: 1200,
+        height: 800,
+        frameCount: request.timestampsSeconds.length,
+        timestampsSeconds: request.timestampsSeconds,
+      };
+    });
+
+    const first = getMedia(input({ message_id: 7 }), deps);
+    await firstStarted;
+    const queued = getMedia(input({ message_id: 8 }), deps);
+    await vi.advanceTimersByTimeAsync(AUTO_VIDEO_DEADLINE_MS + 1);
+    releaseFirst();
+
+    await expect(first).resolves.toMatchObject({
+      result: { status: "fallback", code: "PROCESSING_TIMEOUT", retryable: true },
+    });
+    await expect(queued).resolves.toMatchObject({
+      result: { status: "fallback", code: "PROCESSING_TIMEOUT", retryable: true },
+    });
+    expect(downloadSignals).toHaveLength(1);
+    expect(deps.contactSheet).toHaveBeenCalledTimes(1);
+  });
+
+  it("caches only thumbnail derivative metadata and issues a fresh link after each hit", async () => {
+    const cache = new DerivativeCache({ maxBytes: 1024, ttlMs: 60_000 });
+    const set = vi.spyOn(cache, "set");
+    const deps = fakeMediaDeps({
+      asset: fakeAsset({ type: "document", mime_type: "application/pdf", has_thumbnail: true }),
+    });
+    deps.derivativeCache = cache;
+    deps.readThumbnail = vi.fn(async () => ({
+      type: "image" as const,
+      data: Buffer.from("thumb"),
+      mimeType: "image/jpeg",
+    }));
+    deps.normalizeImage = vi.fn(async (data) => ({
+      data,
+      mimeType: "image/jpeg" as const,
+      width: 320,
+      height: 180,
+    }));
+    let linkNumber = 0;
+    deps.attachOriginalLink = vi.fn(async (_asset, outcome) => {
+      linkNumber += 1;
+      const uri = `https://gramscope.test/api/media/fresh-${linkNumber}`;
+      return {
+        ...outcome,
+        result: {
+          ...outcome.result,
+          download: { url: uri, expires_at: "2026-08-30T12:10:00.000Z" },
+        },
+        link: { uri, name: "report.pdf" },
+      };
+    });
+    try {
+      const first = await getMedia(input({ mode: "preview" }), deps);
+      const warm = await getMedia(input({ mode: "preview" }), deps);
+
+      expect(deps.readThumbnail).toHaveBeenCalledTimes(1);
+      expect(deps.normalizeImage).toHaveBeenCalledTimes(1);
+      expect(first.result.download?.url).not.toBe(warm.result.download?.url);
+      expect(set).toHaveBeenCalledTimes(1);
+      const cached = set.mock.calls[0]![1];
+      expect(cached).toMatchObject({ mimeType: "image/jpeg", bytes: 5, width: 320, height: 180 });
+      expect(JSON.stringify(cached)).not.toMatch(/url|token|expires_at/i);
+    } finally {
+      await cache.clear();
+    }
+  });
+
+  it("never consults or writes the derivative cache for originals and source audio", async () => {
+    const cache = {
+      get: vi.fn(async () => undefined),
+      set: vi.fn(async () => undefined),
+    };
+    const originalDeps = fakeMediaDeps();
+    originalDeps.derivativeCache = cache;
+    const audioDeps = fakeMediaDeps({
+      asset: fakeAsset({ type: "voice", mime_type: "audio/ogg", size: 5 }),
+    });
+    audioDeps.derivativeCache = cache;
+
+    await getMedia(input({ mode: "original" }), originalDeps);
+    await getMedia(input(), audioDeps);
+
+    expect(cache.get).not.toHaveBeenCalled();
+    expect(cache.set).not.toHaveBeenCalled();
+  });
+
+  it("removes an exact derivative file when its writer fails before ownership transfer", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "gramscope-cache-write-test-"));
+    const derivativePath = join(directory, "derivative.jpg");
+    const deps = fakeVideoDeps();
+    const cache = new DerivativeCache({ maxBytes: 1024, ttlMs: 60_000 });
+    deps.derivativeCache = cache;
+    deps.derivativePath = () => derivativePath;
+    deps.writeDerivative = async (path, data) => {
+      await writeFile(path, data);
+      throw new Error("writer failed");
+    };
+    try {
+      await expect(getMedia(input({ mode: "frames" }), deps)).rejects.toThrow("writer failed");
+      await expect(access(derivativePath)).rejects.toThrow();
+    } finally {
+      await cache.clear();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("removes an exact derivative file when cache transfer fails", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "gramscope-cache-set-test-"));
+    const derivativePath = join(directory, "derivative.jpg");
+    const deps = fakeVideoDeps();
+    deps.derivativeCache = {
+      get: vi.fn(async () => undefined),
+      set: vi.fn(async () => { throw new Error("cache failed"); }),
+    };
+    deps.derivativePath = () => derivativePath;
+    try {
+      await expect(getMedia(input({ mode: "frames" }), deps)).rejects.toThrow("cache failed");
+      await expect(access(derivativePath)).rejects.toThrow();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("never reads an oversized cached derivative into memory", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "gramscope-cache-read-test-"));
+    const derivativePath = join(directory, "oversized.jpg");
+    await writeFile(derivativePath, Buffer.alloc(INLINE_MEDIA_MAX_BYTES + 1));
+    const deps = fakeVideoDeps();
+    deps.derivativeCache = {
+      get: vi.fn(async () => ({
+        path: derivativePath,
+        bytes: INLINE_MEDIA_MAX_BYTES + 1,
+        mimeType: "image/jpeg",
+        width: 320,
+        height: 180,
+        frameCount: 1,
+        timestampsSeconds: [1],
+      })),
+      set: vi.fn(async () => undefined),
+    };
+    try {
+      const outcome = await getMedia(input({ mode: "frames" }), deps);
+      expect(outcome.result).toMatchObject({ status: "error", code: "INLINE_LIMIT_EXCEEDED" });
+      expect(deps.downloadToFile).not.toHaveBeenCalled();
+      expect(deps.contactSheet).not.toHaveBeenCalled();
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the downloaded video input when derivative processing fails", async () => {
+    const deps = fakeVideoDeps();
+    let inputPath = "";
+    deps.downloadToFile = vi.fn(async (
+      _client: TelegramLike,
+      _asset: MediaAsset,
+      options: {
+        path: string;
+        maxBytes: number;
+        deadlineMs: number;
+        signal?: AbortSignal;
+      },
+    ) => {
+      inputPath = options.path;
+      await writeFile(inputPath, "video");
+      return 5;
+    });
+    deps.contactSheet = vi.fn(async () => {
+      throw new Error("processor failed");
+    });
+
+    await expect(getMedia(input({ mode: "frames" }), deps)).rejects.toThrow("processor failed");
+    expect(inputPath).not.toBe("");
+    await expect(access(inputPath)).rejects.toThrow();
+  });
+
   it("auto uses eight frames and the 64 MiB/25 second budget", async () => {
     const deps = fakeVideoDeps();
     await getMedia(input(), deps);
