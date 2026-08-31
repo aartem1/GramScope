@@ -1,12 +1,10 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ffmpegPath from "ffmpeg-static";
-import sharp from "sharp";
 import { GramScopeError, mediaError } from "../errors/taxonomy";
 import { MAX_FRAMES } from "../schemas/media";
-import { normalizeImage, runSharpOperation } from "./image";
 import type {
   ContactSheetRequest,
   ContactSheetResult,
@@ -16,7 +14,9 @@ import type {
 const MAX_DIAGNOSTIC_BYTES = 8 * 1024;
 export const INTERMEDIATE_FRAME_MAX_LONG_EDGE = 1600;
 export const INTERMEDIATE_FRAME_MAX_BYTES = 4 * 1024 * 1024;
-const INTERMEDIATE_FRAME_MAX_PIXELS = INTERMEDIATE_FRAME_MAX_LONG_EDGE ** 2;
+// 4096×2304 admits UHD/DCI 4K with modest aspect-ratio headroom, while
+// rejecting dimensions that can amplify a tiny compressed input dangerously.
+export const DECODER_MAX_PIXELS = 4096 * 2304;
 
 export type FrameRunner = (
   args: string[],
@@ -38,6 +38,24 @@ export type SpawnFfmpeg = (
   args: string[],
   options: { stdio: ["ignore", "ignore", "pipe"]; shell: false },
 ) => FfmpegChild;
+
+export type ContactSheetChild = {
+  stdout: {
+    on(event: "data", listener: (value: Buffer | string) => void): unknown;
+  };
+  stderr: {
+    on(event: "data", listener: (value: Buffer | string) => void): unknown;
+  };
+  kill(signal: "SIGKILL"): boolean;
+  once(event: "error", listener: () => void): unknown;
+  once(event: "close", listener: (code: number | null) => void): unknown;
+};
+
+export type SpawnContactSheet = (
+  binary: string,
+  args: string[],
+  options: { stdio: ["ignore", "pipe", "pipe"]; shell: false },
+) => ContactSheetChild;
 
 export type FfmpegCommandRunner = (args: string[], signal: AbortSignal) => Promise<string>;
 
@@ -106,7 +124,14 @@ export function buildFfmpegArgs(
   timestamps: number[],
   outputDirectory: string,
 ): string[] {
-  const inputs = timestamps.flatMap((timestamp) => ["-ss", timestamp.toFixed(3), "-i", inputPath]);
+  const inputs = timestamps.flatMap((timestamp) => [
+    "-ss",
+    timestamp.toFixed(3),
+    "-max_pixels",
+    String(DECODER_MAX_PIXELS),
+    "-i",
+    inputPath,
+  ]);
   const outputs = timestamps.flatMap((_, index) => [
     "-map",
     `${index}:v:0`,
@@ -135,6 +160,9 @@ function throwIfAborted(signal: AbortSignal): void {
 
 const defaultSpawnFfmpeg: SpawnFfmpeg = (binary, args, options) =>
   spawn(binary, args, options) as unknown as FfmpegChild;
+
+const defaultSpawnContactSheet: SpawnContactSheet = (binary, args, options) =>
+  spawn(binary, args, options) as unknown as ContactSheetChild;
 
 export function createFfmpegCommandRunner(
   spawnProcess: SpawnFfmpeg = defaultSpawnFfmpeg,
@@ -192,148 +220,151 @@ export function createFfmpegCommandRunner(
   };
 }
 
-function timestampLabel(seconds: number, width: number): Buffer {
-  const minutes = Math.floor(seconds / 60);
-  const rest = (seconds % 60).toFixed(1).padStart(4, "0");
-  return Buffer.from(
-    `<svg width="${width}" height="28"><rect width="100%" height="28" fill="rgba(0,0,0,.65)"/><text x="8" y="20" fill="white" font-family="sans-serif" font-size="16">${minutes}:${rest}</text></svg>`,
-  );
+function collectBounded(
+  source: ContactSheetChild["stdout"] | ContactSheetChild["stderr"],
+): { chunks: Buffer[]; size: () => number } {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  source.on("data", (value: Buffer | string) => {
+    if (bytes >= MAX_DIAGNOSTIC_BYTES) return;
+    const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    const bounded = chunk.subarray(0, MAX_DIAGNOSTIC_BYTES - bytes);
+    chunks.push(bounded);
+    bytes += bounded.length;
+  });
+  return { chunks, size: () => bytes };
 }
 
-async function buildContactSheet(
-  directory: string,
-  request: ContactSheetRequest,
-): Promise<ContactSheetResult> {
-  const frameCount = request.timestampsSeconds.length;
-  if (frameCount < 1 || frameCount > MAX_FRAMES) {
-    throw new GramScopeError("INVALID_INPUT", `Frame count must be 1..${MAX_FRAMES}`);
-  }
-  const columns = Math.ceil(Math.sqrt(frameCount));
-  const rows = Math.ceil(frameCount / columns);
-  const cellSize = Math.max(1, Math.floor(request.maxLongEdge / Math.max(columns, rows)));
-  const width = columns * cellSize;
-  const height = rows * cellSize;
-  const overlays: Array<{ input: Buffer; left: number; top: number }> = [];
-
-  for (let index = 0; index < frameCount; index += 1) {
+export function createContactSheetAssembler(
+  spawnProcess: SpawnContactSheet = defaultSpawnContactSheet,
+): ContactSheetAssembler {
+  return async (directory, request) => {
     throwIfAborted(request.deadline);
-    const framePath = join(directory, `frame-${index}.jpg`);
-    const frameStats = await stat(framePath);
-    if (frameStats.size > INTERMEDIATE_FRAME_MAX_BYTES) {
-      throw mediaError("INLINE_LIMIT_EXCEEDED", "Decoded video frame exceeds its byte limit", false);
+    const frameCount = request.timestampsSeconds.length;
+    if (frameCount < 1 || frameCount > MAX_FRAMES) {
+      throw new GramScopeError("INVALID_INPUT", `Frame count must be 1..${MAX_FRAMES}`);
     }
-    const metadataPipeline = sharp(framePath, {
-      failOn: "warning",
-      limitInputPixels: INTERMEDIATE_FRAME_MAX_PIXELS,
+    const outputPath = join(directory, "contact-sheet.jpg");
+    const workerPath = join(process.cwd(), "src/media/contact-sheet-worker.mjs");
+    const child = spawnProcess(process.execPath, [
+      workerPath,
+      directory,
+      outputPath,
+      JSON.stringify({
+        timestampsSeconds: request.timestampsSeconds,
+        maxBytes: request.maxBytes,
+        maxLongEdge: request.maxLongEdge,
+        intermediateFrameMaxBytes: INTERMEDIATE_FRAME_MAX_BYTES,
+        intermediateFrameMaxLongEdge: INTERMEDIATE_FRAME_MAX_LONG_EDGE,
+      }),
+    ], {
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
     });
-    let metadata: Awaited<ReturnType<typeof metadataPipeline.metadata>>;
+    const output = collectBounded(child.stdout);
+    collectBounded(child.stderr);
+
+    await new Promise<void>((resolve, reject) => {
+      let aborted = false;
+      let spawnFailed = false;
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        request.deadline.removeEventListener("abort", abort);
+        if (error) reject(error);
+        else resolve();
+      };
+      const abort = () => {
+        aborted = true;
+        child.kill("SIGKILL");
+      };
+      request.deadline.addEventListener("abort", abort, { once: true });
+      child.once("error", () => {
+        spawnFailed = true;
+      });
+      child.once("close", (code) => {
+        if (aborted || request.deadline.aborted) {
+          finish(processingTimeout());
+        } else if (spawnFailed) {
+          finish(mediaError("UNSUPPORTED_MEDIA", "Contact-sheet processing is unavailable", false));
+        } else if (code !== 0) {
+          finish(mediaError("INLINE_LIMIT_EXCEEDED", "Contact sheet could not be encoded", false));
+        } else {
+          finish();
+        }
+      });
+      if (request.deadline.aborted) abort();
+    });
+
+    throwIfAborted(request.deadline);
+    const resultStats = await stat(outputPath);
+    if (resultStats.size > request.maxBytes) {
+      throw mediaError("INLINE_LIMIT_EXCEEDED", "Contact sheet exceeds its byte limit", false);
+    }
+    let data: Buffer;
     try {
-      metadata = await runSharpOperation(
-        metadataPipeline,
-        (pipeline) => pipeline.metadata(),
-        request.deadline,
-      );
+      data = await readFile(outputPath, { signal: request.deadline });
     } catch (error) {
-      if (error instanceof GramScopeError) throw error;
-      throw mediaError("INLINE_LIMIT_EXCEEDED", "Decoded video frame exceeds its dimension limit", false);
+      if (request.deadline.aborted) throw processingTimeout();
+      throw error;
+    }
+    throwIfAborted(request.deadline);
+    let metadata: { width?: unknown; height?: unknown };
+    try {
+      metadata = JSON.parse(Buffer.concat(output.chunks, output.size()).toString("utf8")) as {
+        width?: unknown;
+        height?: unknown;
+      };
+    } catch {
+      throw mediaError("INLINE_LIMIT_EXCEEDED", "Contact sheet metadata is invalid", false);
     }
     if (
-      !metadata.width ||
-      !metadata.height ||
-      Math.max(metadata.width, metadata.height) > INTERMEDIATE_FRAME_MAX_LONG_EDGE
+      typeof metadata.width !== "number" ||
+      typeof metadata.height !== "number" ||
+      metadata.width < 1 ||
+      metadata.height < 1 ||
+      Math.max(metadata.width, metadata.height) > request.maxLongEdge
     ) {
-      throw mediaError("INLINE_LIMIT_EXCEEDED", "Decoded video frame exceeds its dimension limit", false);
+      throw mediaError("INLINE_LIMIT_EXCEEDED", "Contact sheet dimensions are invalid", false);
     }
-    const framePipeline = sharp(framePath, {
-      failOn: "warning",
-      limitInputPixels: INTERMEDIATE_FRAME_MAX_PIXELS,
-    })
-      .rotate()
-      .resize({ width: cellSize, height: cellSize, fit: "cover" })
-      .jpeg({ quality: 90 });
-    const cell = await runSharpOperation(
-      framePipeline,
-      (pipeline) => pipeline.toBuffer(),
-      request.deadline,
-    );
-    const left = (index % columns) * cellSize;
-    const top = Math.floor(index / columns) * cellSize;
-    overlays.push({ input: cell, left, top });
-    overlays.push({
-      input: timestampLabel(request.timestampsSeconds[index]!, cellSize),
-      left,
-      top: top + Math.max(0, cellSize - 28),
-    });
-  }
-
-  throwIfAborted(request.deadline);
-  const compositePipeline = sharp({
-    create: { width, height, channels: 3, background: "black" },
-  }).composite(overlays).png();
-  const canvas = await runSharpOperation(
-    compositePipeline,
-    (pipeline) => pipeline.toBuffer(),
-    request.deadline,
-  );
-  throwIfAborted(request.deadline);
-  const result = await normalizeImage(canvas, {
-    maxBytes: request.maxBytes,
-    maxLongEdge: request.maxLongEdge,
-    sourceMimeType: "image/x-contact-sheet-source",
-    deadline: request.deadline,
-  });
-  throwIfAborted(request.deadline);
-  if (result.mimeType !== "image/jpeg") {
-    throw mediaError("INLINE_LIMIT_EXCEEDED", "Contact sheet could not be encoded as JPEG", false);
-  }
-  return {
-    ...result,
-    mimeType: "image/jpeg",
-    frameCount,
-    timestampsSeconds: [...request.timestampsSeconds],
-  };
-}
-
-async function raceWithDeadline<T>(start: () => Promise<T>, signal: AbortSignal): Promise<T> {
-  throwIfAborted(signal);
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const finish = (error: unknown, result?: T) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", abort);
-      if (error !== undefined) reject(error);
-      else resolve(result as T);
+    return {
+      data,
+      mimeType: "image/jpeg",
+      width: metadata.width,
+      height: metadata.height,
+      frameCount,
+      timestampsSeconds: [...request.timestampsSeconds],
     };
-    const abort = () => finish(processingTimeout());
-    signal.addEventListener("abort", abort, { once: true });
-    if (signal.aborted) abort();
-    if (settled) return;
-    try {
-      start().then(
-        (result) => finish(undefined, result),
-        (error: unknown) => finish(error),
-      );
-    } catch (error) {
-      finish(error);
-    }
-  });
+  };
 }
 
 export function createFfmpegProcessor(options: {
   run?: FrameRunner;
   spawn?: SpawnFfmpeg;
-  assemble?: ContactSheetAssembler;
+  spawnAssembly?: SpawnContactSheet;
 } = {}): MediaProcessor {
   const command = createFfmpegCommandRunner(options.spawn);
   const run = options.run ?? (async (args: string[], _directory: string, signal: AbortSignal) => {
     await command(args, signal);
   });
-  const assemble = options.assemble ?? buildContactSheet;
+  const assemble = createContactSheetAssembler(options.spawnAssembly);
   return {
     async probeDuration(inputPath, deadline) {
       const stderr = await command(
-        ["-hide_banner", "-nostdin", "-i", inputPath, "-t", "0", "-f", "null", "-"],
+        [
+          "-hide_banner",
+          "-nostdin",
+          "-max_pixels",
+          String(DECODER_MAX_PIXELS),
+          "-i",
+          inputPath,
+          "-t",
+          "0",
+          "-f",
+          "null",
+          "-",
+        ],
         deadline,
       );
       return parseFfmpegDuration(stderr);
@@ -345,7 +376,7 @@ export function createFfmpegProcessor(options: {
         const args = buildFfmpegArgs(inputPath, request.timestampsSeconds, directory);
         await run(args, directory, request.deadline);
         throwIfAborted(request.deadline);
-        return await raceWithDeadline(() => assemble(directory, request), request.deadline);
+        return await assemble(directory, request);
       } finally {
         await rm(directory, { recursive: true, force: true });
       }
