@@ -513,7 +513,7 @@ describe("getMedia", () => {
     }
   });
 
-  it("counts time waiting for the video permit against the derivative deadline", async () => {
+  it("expires a 25-second waiter behind a 45-second holder without poisoning FIFO", async () => {
     vi.useFakeTimers();
     const deps = fakeVideoDeps();
     deps.derivativeCache = undefined;
@@ -562,20 +562,32 @@ describe("getMedia", () => {
       };
     });
 
-    const first = getMedia(input({ message_id: 7 }), deps);
+    let holderSettled = false;
+    const first = getMedia(input({ message_id: 7, mode: "frames" }), deps);
+    void first.finally(() => { holderSettled = true; });
     await firstStarted;
     const queued = getMedia(input({ message_id: 8 }), deps);
+    let queuedOutcome: Awaited<ReturnType<typeof getMedia>> | undefined;
+    void queued.then((outcome) => { queuedOutcome = outcome; });
+    const liveAfterCancelled = getMedia(input({ message_id: 9, mode: "frames" }), deps);
     await vi.advanceTimersByTimeAsync(AUTO_VIDEO_DEADLINE_MS + 1);
-    releaseFirst();
+    try {
+      expect(queuedOutcome).toMatchObject({
+        result: { status: "fallback", code: "PROCESSING_TIMEOUT", retryable: true },
+      });
+      expect(holderSettled).toBe(false);
+      expect(downloadSignals).toHaveLength(1);
+      expect(deps.contactSheet).toHaveBeenCalledTimes(1);
 
-    await expect(first).resolves.toMatchObject({
-      result: { status: "fallback", code: "PROCESSING_TIMEOUT", retryable: true },
-    });
-    await expect(queued).resolves.toMatchObject({
-      result: { status: "fallback", code: "PROCESSING_TIMEOUT", retryable: true },
-    });
-    expect(downloadSignals).toHaveLength(1);
-    expect(deps.contactSheet).toHaveBeenCalledTimes(1);
+      releaseFirst();
+      await expect(first).resolves.toMatchObject({ result: { status: "ready" } });
+      await expect(liveAfterCancelled).resolves.toMatchObject({ result: { status: "ready" } });
+      expect(downloadSignals).toHaveLength(2);
+      expect(deps.contactSheet).toHaveBeenCalledTimes(2);
+    } finally {
+      releaseFirst();
+      await Promise.allSettled([first, queued, liveAfterCancelled]);
+    }
   });
 
   it("caches only thumbnail derivative metadata and issues a fresh link after each hit", async () => {

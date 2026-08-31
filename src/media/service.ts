@@ -308,7 +308,7 @@ async function videoContactSheet(
         deadlineMs,
         controller.signal,
       );
-    }, deps, true);
+    }, deps, true, controller.signal);
     if (controller.signal.aborted) {
       throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
     }
@@ -604,22 +604,25 @@ async function derivativeResult(
   generate: () => Promise<GeneratedDerivative>,
   deps: MediaDependencies,
   video: boolean,
+  signal?: AbortSignal,
 ): Promise<GeneratedDerivative>;
 async function derivativeResult(
   key: string,
   generate: () => Promise<GeneratedDerivative | undefined>,
   deps: MediaDependencies,
   video: boolean,
+  signal?: AbortSignal,
 ): Promise<GeneratedDerivative | undefined>;
 async function derivativeResult(
   key: string,
   generate: () => Promise<GeneratedDerivative | undefined>,
   deps: MediaDependencies,
   video: boolean,
+  signal?: AbortSignal,
 ): Promise<GeneratedDerivative | undefined> {
   const cache = deps.derivativeCache;
   if (!cache) {
-    return video ? withVideoPermit(generate) : generate();
+    return video ? withVideoPermit(generate, signal) : generate();
   }
 
   const cached = await cache.get(key);
@@ -632,7 +635,7 @@ async function derivativeResult(
     const raced = await cache.get(key);
     if (raced) return raced;
 
-    const generated = await (video ? withVideoPermit(generate) : generate());
+    const generated = await (video ? withVideoPermit(generate, signal) : generate());
     if (!generated) return undefined;
     if (generated.data.length > INLINE_MEDIA_MAX_BYTES) {
       throw mediaError("INLINE_LIMIT_EXCEEDED", "Derivative exceeds the inline media limit", false);

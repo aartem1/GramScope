@@ -1,4 +1,4 @@
-import { access, mkdtemp, stat, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -116,6 +116,89 @@ describe("DerivativeCache", () => {
     await expect(access(file)).rejects.toThrow();
   });
 
+  it("keeps byte accounting correct after two concurrent misses of one removed file", async () => {
+    const cache = new DerivativeCache({ maxBytes: 200, ttlMs: 1_000_000 });
+    const missing = await tempFile(100);
+    await cache.set("missing", derivative(missing, 100));
+    await rm(missing);
+
+    await Promise.all([cache.get("missing"), cache.get("missing")]);
+
+    const b = await tempFile(100);
+    const c = await tempFile(100);
+    const d = await tempFile(100);
+    await cache.set("b", derivative(b, 100));
+    await cache.set("c", derivative(c, 100));
+    await cache.set("d", derivative(d, 100));
+    const remaining = await Promise.all([cache.get("b"), cache.get("c"), cache.get("d")]);
+    expect(remaining.filter((value) => value !== undefined)).toHaveLength(2);
+    expect(await cache.get("b")).toBeUndefined();
+    await cache.clear();
+  });
+
+  it("linearizes concurrent same-key replacement and deletes the losing file exactly once", async () => {
+    const deleted: string[] = [];
+    const cache = new DerivativeCache({
+      maxBytes: 200,
+      ttlMs: 1_000_000,
+      remove: async (path: string) => {
+        deleted.push(path);
+        await rm(path, { force: true });
+      },
+    });
+    const loser = await tempFile(100);
+    const winner = await tempFile(100);
+
+    await Promise.all([
+      cache.set("same", derivative(loser, 100)),
+      cache.set("same", derivative(winner, 100)),
+    ]);
+
+    expect(await cache.get("same")).toMatchObject({ path: winner });
+    expect(deleted.filter((path) => path === loser)).toHaveLength(1);
+    expect(deleted.filter((path) => path === winner)).toHaveLength(0);
+    await expect(access(loser)).rejects.toThrow();
+    await expect(access(winner)).resolves.toBeUndefined();
+
+    await cache.clear();
+    expect(deleted.filter((path) => path === loser)).toHaveLength(1);
+    expect(deleted.filter((path) => path === winner)).toHaveLength(1);
+  });
+
+  it("orders clear before a concurrent set and never lets clear delete the newer entry", async () => {
+    let releaseOld!: () => void;
+    let markOldRemoval!: () => void;
+    const oldRemovalStarted = new Promise<void>((resolve) => { markOldRemoval = resolve; });
+    const oldRemovalGate = new Promise<void>((resolve) => { releaseOld = resolve; });
+    const removed: string[] = [];
+    const old = await tempFile(100);
+    const fresh = await tempFile(100);
+    const cache = new DerivativeCache({
+      maxBytes: 200,
+      ttlMs: 1_000_000,
+      remove: async (path: string) => {
+        removed.push(path);
+        if (path === old) {
+          markOldRemoval();
+          await oldRemovalGate;
+        }
+        await rm(path, { force: true });
+      },
+    });
+    await cache.set("same", derivative(old, 100));
+
+    const clearing = cache.clear();
+    await oldRemovalStarted;
+    const setting = cache.set("same", derivative(fresh, 100));
+    releaseOld();
+    await Promise.all([clearing, setting]);
+
+    expect(await cache.get("same")).toMatchObject({ path: fresh });
+    expect(removed.filter((path) => path === old)).toHaveLength(1);
+    expect(removed.filter((path) => path === fresh)).toHaveLength(0);
+    await cache.clear();
+  });
+
   it("returns metadata copies so callers cannot mutate cached timestamps", async () => {
     const cache = new DerivativeCache({ maxBytes: 256, ttlMs: 1_000_000 });
     const file = await tempFile(100);
@@ -229,5 +312,13 @@ describe("derivative work coordination", () => {
 
     await expect(Promise.all([first, second, third])).resolves.toEqual([1, 2, 3]);
     expect(peak).toBe(1);
+  });
+
+  it("releases the video permit after work rejects", async () => {
+    await expect(withVideoPermit(async () => {
+      throw new Error("processor failed");
+    })).rejects.toThrow("processor failed");
+
+    await expect(withVideoPermit(async () => 42)).resolves.toBe(42);
   });
 });
