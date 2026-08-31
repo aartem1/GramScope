@@ -49,6 +49,15 @@ describe("get_media contract", () => {
     })).toThrow();
   });
 
+  it("rejects original mode when timestamps imply frames", () => {
+    expect(() => getMediaInputSchema.parse({
+      source_id: "-1001",
+      message_id: 7,
+      mode: "original",
+      timestamps_seconds: [1],
+    })).toThrow();
+  });
+
   it("keeps binary out of structuredContent", () => {
     const bytes = Buffer.from("image-bytes");
     const result = mediaToolResult({
@@ -162,6 +171,12 @@ function fakeMediaDeps(options: {
     withClient: async <T>(run: (value: TelegramLike) => Promise<T>) => run(client),
     resolveAsset: vi.fn(async () => options.asset ?? fakeAsset()),
     readBytes: vi.fn(async () => options.bytes ?? Buffer.from("abcde")),
+    normalizeImage: async (data, sourceOptions) => ({
+      data,
+      mimeType: (sourceOptions?.sourceMimeType ?? "image/jpeg") as "image/jpeg",
+      width: 1,
+      height: 1,
+    }),
   };
 }
 
@@ -280,6 +295,52 @@ describe("getMedia", () => {
     });
   });
 
+  it.each([
+    ["photo", "image/jpeg", "image"],
+    ["document", "image/png", "image"],
+    ["voice", "audio/ogg", "audio"],
+    ["audio", "audio/mpeg", "audio"],
+  ] as const)("auto returns one direct artifact for %s", async (type, mimeType, expectedType) => {
+    const outcome = await getMedia(
+      input(),
+      fakeMediaDeps({ asset: fakeAsset({ type, mime_type: mimeType, size: 128 }), bytes: Buffer.alloc(128) }),
+    );
+    expect(outcome.result.status).toBe("ready");
+    expect(outcome.artifact?.type).toBe(expectedType);
+    expect(outcome.result.representation?.file_name).toBeTruthy();
+  });
+
+  it("does not download audio declared above the inline cap", async () => {
+    const deps = fakeMediaDeps({
+      asset: fakeAsset({ type: "voice", size: INLINE_MEDIA_MAX_BYTES + 1 }),
+    });
+    const outcome = await getMedia(input(), deps);
+    expect(deps.readBytes).not.toHaveBeenCalled();
+    expect(outcome.result).toMatchObject({ status: "fallback", code: "INLINE_LIMIT_EXCEEDED" });
+  });
+
+  it("classifies unsupported oversized media before considering its size", async () => {
+    const deps = fakeMediaDeps({
+      asset: fakeAsset({ type: "archive", size: INLINE_MEDIA_MAX_BYTES + 1 }),
+    });
+    const outcome = await getMedia(input(), deps);
+    expect(deps.readBytes).not.toHaveBeenCalled();
+    expect(outcome.result).toMatchObject({ status: "error", code: "UNSUPPORTED_MEDIA" });
+  });
+
+  it("preserves bounded source audio bytes exactly", async () => {
+    const bytes = Buffer.from([0x4f, 0x67, 0x67, 0x53, 0, 0xff, 0x10]);
+    const outcome = await getMedia(
+      input(),
+      fakeMediaDeps({
+        asset: fakeAsset({ type: "voice", mime_type: "audio/ogg", size: bytes.length }),
+        bytes,
+      }),
+    );
+    expect(outcome.artifact?.data.equals(bytes)).toBe(true);
+    expect(outcome.artifact?.mimeType).toBe("audio/ogg");
+  });
+
   it("returns metadata-only fallback before downloading oversized media", async () => {
     const deps = fakeMediaDeps({
       asset: fakeAsset({ size: INLINE_MEDIA_MAX_BYTES + 1 }),
@@ -299,10 +360,12 @@ describe("getMedia", () => {
     const asset = fakeAsset();
     asset.rawMessage.fileReference = "MESSAGE_REFERENCE_SENTINEL";
     asset.rawMedia.accessHash = "MEDIA_ACCESS_HASH_SENTINEL";
+    asset.thumbnailLocation = "THUMBNAIL_LOCATION_SENTINEL";
     const deps = fakeMediaDeps({ asset });
 
     const outcome = await getMedia(input(), deps);
     expect(JSON.stringify(outcome)).not.toContain("MESSAGE_REFERENCE_SENTINEL");
     expect(JSON.stringify(outcome)).not.toContain("MEDIA_ACCESS_HASH_SENTINEL");
+    expect(JSON.stringify(outcome)).not.toContain("THUMBNAIL_LOCATION_SENTINEL");
   });
 });

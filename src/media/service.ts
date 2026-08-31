@@ -4,9 +4,13 @@ import type {
   MediaResultCode,
 } from "../schemas/media";
 import { INLINE_MEDIA_MAX_BYTES } from "../schemas/media";
+import { GramScopeError } from "../errors/taxonomy";
+import { normalizeImage } from "./image";
+import { safeMediaFilename } from "./names";
 import { withTelegram, type TelegramLike } from "../telegram/client";
 import {
   readAssetBytes,
+  readAssetThumbnail,
   resolveMediaAsset,
   type MediaAsset,
 } from "../telegram/media";
@@ -67,10 +71,17 @@ const productionMediaDependencies: MediaDependencies = {
   withClient: withTelegram,
   resolveAsset: resolveMediaAsset,
   readBytes: readAssetBytes,
+  readThumbnail: readAssetThumbnail,
+  normalizeImage,
 };
 
 function readyOutcome(asset: MediaAsset, artifact: MediaArtifact): MediaOutcome {
-  const fileName = asset.descriptor.file_name;
+  const fileName = safeMediaFilename({
+    supplied: asset.descriptor.file_name,
+    kind: asset.descriptor.type,
+    messageId: asset.messageId,
+    mimeType: artifact.mimeType,
+  });
   return {
     result: {
       status: "ready",
@@ -117,17 +128,183 @@ export async function getMedia(
       sourceId: input.source_id,
       messageId: input.message_id,
     });
-    if ((asset.descriptor.size ?? INLINE_MEDIA_MAX_BYTES + 1) > INLINE_MEDIA_MAX_BYTES) {
-      return fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false);
-    }
-    if (!["photo", "voice", "audio"].includes(asset.descriptor.type)) {
-      return fallbackOutcome(asset, "UNSUPPORTED_MEDIA", false);
-    }
-    const data = await deps.readBytes(client, asset, INLINE_MEDIA_MAX_BYTES);
-    return readyOutcome(asset, {
-      type: asset.descriptor.type === "photo" ? "image" : "audio",
-      data,
-      mimeType: asset.descriptor.mime_type ?? (asset.descriptor.type === "photo" ? "image/jpeg" : "audio/ogg"),
-    });
+    return represent(client, asset, input, deps);
   });
+}
+
+async function represent(
+  client: TelegramLike,
+  asset: MediaAsset,
+  input: GetMediaInput,
+  deps: MediaDependencies,
+): Promise<MediaOutcome> {
+  const mode = input.timestamps_seconds?.length ? "frames" : input.mode;
+  if (mode === "original") {
+    const base = asset.descriptor.size !== undefined &&
+        asset.descriptor.size <= INLINE_MEDIA_MAX_BYTES &&
+        (isDirectImage(asset) || isDirectAudio(asset))
+      ? await directOriginal(client, asset, deps)
+      : fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false);
+    return deps.attachOriginalLink ? deps.attachOriginalLink(asset, base) : base;
+  }
+  if (mode === "preview") {
+    return isDirectImage(asset)
+      ? directImage(client, asset, deps)
+      : thumbnailFallback(client, asset, deps);
+  }
+  if (mode === "frames") {
+    if (!["video", "gif", "video_note"].includes(asset.descriptor.type)) {
+      return errorOutcome(asset, "UNSUPPORTED_MEDIA", false);
+    }
+    return thumbnailFallback(client, asset, deps);
+  }
+
+  switch (asset.descriptor.type) {
+    case "photo":
+      return directImage(client, asset, deps);
+    case "voice":
+    case "audio":
+      return directAudioOrFallback(client, asset, deps);
+    case "video":
+    case "gif":
+    case "video_note":
+      return thumbnailFallback(client, asset, deps);
+    case "sticker":
+    case "document":
+      return asset.descriptor.mime_type?.startsWith("image/")
+        ? directImage(client, asset, deps)
+        : thumbnailFallback(client, asset, deps);
+    default:
+      return errorOutcome(asset, "UNSUPPORTED_MEDIA", false);
+  }
+}
+
+function isDirectImage(asset: MediaAsset): boolean {
+  return asset.descriptor.type === "photo" ||
+    (["sticker", "document"].includes(asset.descriptor.type) &&
+      asset.descriptor.mime_type?.startsWith("image/") === true);
+}
+
+function isDirectAudio(asset: MediaAsset): boolean {
+  return ["voice", "audio"].includes(asset.descriptor.type);
+}
+
+async function directOriginal(
+  client: TelegramLike,
+  asset: MediaAsset,
+  deps: MediaDependencies,
+): Promise<MediaOutcome> {
+  if (isDirectImage(asset)) return directImage(client, asset, deps);
+  const data = await deps.readBytes(client, asset, INLINE_MEDIA_MAX_BYTES);
+  return readyOutcome(asset, {
+    type: "audio",
+    data,
+    mimeType: asset.descriptor.mime_type ?? "audio/ogg",
+  });
+}
+
+async function directAudioOrFallback(
+  client: TelegramLike,
+  asset: MediaAsset,
+  deps: MediaDependencies,
+): Promise<MediaOutcome> {
+  if ((asset.descriptor.size ?? INLINE_MEDIA_MAX_BYTES + 1) > INLINE_MEDIA_MAX_BYTES) {
+    return withOriginalLink(asset, fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false), deps);
+  }
+  try {
+    return await directOriginal(client, asset, deps);
+  } catch (error) {
+    if (!(error instanceof GramScopeError) || error.code !== "INLINE_LIMIT_EXCEEDED") throw error;
+    return withOriginalLink(asset, fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false), deps);
+  }
+}
+
+async function directImage(
+  client: TelegramLike,
+  asset: MediaAsset,
+  deps: MediaDependencies,
+): Promise<MediaOutcome> {
+  try {
+    return await directImageOnce(client, asset, deps);
+  } catch (error) {
+    if (!(error instanceof GramScopeError) || error.code !== "INLINE_LIMIT_EXCEEDED") throw error;
+    return withOriginalLink(asset, fallbackOutcome(asset, "INLINE_LIMIT_EXCEEDED", false), deps);
+  }
+}
+
+async function directImageOnce(
+  client: TelegramLike,
+  asset: MediaAsset,
+  deps: MediaDependencies,
+): Promise<MediaOutcome> {
+  const thumbnail = await deps.readThumbnail?.(client, asset, INLINE_MEDIA_MAX_BYTES);
+  if (!thumbnail && (asset.descriptor.size ?? INLINE_MEDIA_MAX_BYTES + 1) > INLINE_MEDIA_MAX_BYTES) {
+    throw new GramScopeError(
+      "INLINE_LIMIT_EXCEEDED",
+      "Image source exceeds the inline media limit and has no bounded thumbnail",
+    );
+  }
+  const source = thumbnail?.data ?? await deps.readBytes(client, asset, INLINE_MEDIA_MAX_BYTES);
+  const processed = deps.normalizeImage
+    ? await deps.normalizeImage(source, {
+      preserveTransparency: asset.descriptor.mime_type === "image/png" ||
+        asset.descriptor.mime_type === "image/webp",
+      sourceMimeType: thumbnail?.mimeType ?? asset.descriptor.mime_type,
+    })
+    : {
+      data: source,
+      mimeType: (thumbnail?.mimeType ?? asset.descriptor.mime_type ?? "image/jpeg") as "image/jpeg",
+      width: asset.descriptor.width ?? 1,
+      height: asset.descriptor.height ?? 1,
+    };
+  const outcome = readyOutcome(asset, {
+    type: "image",
+    data: processed.data,
+    mimeType: processed.mimeType,
+  });
+  outcome.result.representation = {
+    ...outcome.result.representation!,
+    width: processed.width,
+    height: processed.height,
+  };
+  return outcome;
+}
+
+async function thumbnailFallback(
+  client: TelegramLike,
+  asset: MediaAsset,
+  deps: MediaDependencies,
+): Promise<MediaOutcome> {
+  const thumbnail = await deps.readThumbnail?.(client, asset, INLINE_MEDIA_MAX_BYTES);
+  const base = fallbackOutcome(asset, "UNSUPPORTED_MEDIA", false);
+  if (thumbnail) {
+    base.artifact = thumbnail;
+    base.result.representation = {
+      kind: "image",
+      mime_type: thumbnail.mimeType,
+      byte_size: thumbnail.data.length,
+    };
+  }
+  return withOriginalLink(asset, base, deps);
+}
+
+async function withOriginalLink(
+  asset: MediaAsset,
+  outcome: MediaOutcome,
+  deps: MediaDependencies,
+): Promise<MediaOutcome> {
+  return deps.attachOriginalLink ? deps.attachOriginalLink(asset, outcome) : outcome;
+}
+
+function errorOutcome(
+  asset: MediaAsset,
+  code: MediaResultCode,
+  retryable: boolean,
+): MediaOutcome {
+  return {
+    result: {
+      ...fallbackOutcome(asset, code, retryable).result,
+      status: "error",
+    },
+  };
 }

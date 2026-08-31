@@ -2,7 +2,7 @@ import { mediaId, type MediaDescriptor } from "../schemas/media";
 import { mediaOf } from "../schemas/message";
 import { mediaError } from "../errors/taxonomy";
 import { fetchDialogIndex } from "./dialog-index";
-import type { TelegramLike } from "./client";
+import { getApi, type TelegramLike } from "./client";
 import { resolveSource, type ResolvedSource } from "./peer-resolve";
 
 export type MediaAsset = {
@@ -118,7 +118,76 @@ export async function resolveMediaAsset(
   if (!rawMedia) {
     throw mediaError("NO_MEDIA", "The message has no downloadable media");
   }
-  return normalizeMediaAsset(source, rawMessage, rawMedia);
+  const asset = normalizeMediaAsset(source, rawMessage, rawMedia);
+  const location = await thumbnailLocation(rawMedia);
+  return {
+    ...asset,
+    ...(location !== undefined ? { thumbnailLocation: location } : {}),
+  };
+}
+
+async function thumbnailLocation(rawMedia: Record<string, unknown>): Promise<unknown | undefined> {
+  const photo = record(rawMedia.photo);
+  if (photo) {
+    const selected = selectThumbnail(photo.sizes, 1280);
+    if (!selected) return undefined;
+    const Api = await getApi();
+    return new Api.InputPhotoFileLocation({
+      id: photo.id as never,
+      accessHash: photo.accessHash as never,
+      fileReference: photo.fileReference as never,
+      thumbSize: String(selected.type ?? "y"),
+    });
+  }
+  const document = record(rawMedia.document);
+  if (document) {
+    const selected = selectThumbnail(document.thumbs, 1280);
+    if (!selected) return undefined;
+    const Api = await getApi();
+    return new Api.InputDocumentFileLocation({
+      id: document.id as never,
+      accessHash: document.accessHash as never,
+      fileReference: document.fileReference as never,
+      thumbSize: String(selected.type ?? "y"),
+    });
+  }
+  return undefined;
+}
+
+function selectThumbnail(raw: unknown, targetLongEdge: number): Record<string, unknown> | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const sizes = raw
+    .map(record)
+    .filter((size): size is Record<string, unknown> => size !== undefined)
+    .filter((size) =>
+      !["PhotoStrippedSize", "PhotoCachedSize"].includes(String(size.className)) &&
+      typeof size.w === "number" && typeof size.h === "number")
+    .sort((a, b) => Math.max(Number(a.w), Number(a.h)) - Math.max(Number(b.w), Number(b.h)));
+  return sizes.find((size) => Math.max(Number(size.w), Number(size.h)) >= targetLongEdge)
+    ?? sizes.at(-1);
+}
+
+export async function readAssetThumbnail(
+  client: TelegramLike,
+  asset: MediaAsset,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<{ type: "image"; data: Buffer; mimeType: string } | undefined> {
+  if (asset.thumbnailLocation === undefined) return undefined;
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of iterAssetBytes(client, asset, {
+    file: asset.thumbnailLocation,
+    limit: limit + 1,
+    signal,
+  })) {
+    total += chunk.length;
+    if (total > limit) {
+      throw mediaError("INLINE_LIMIT_EXCEEDED", `Media exceeds the ${limit}-byte inline limit`);
+    }
+    chunks.push(chunk);
+  }
+  return { type: "image", data: Buffer.concat(chunks, total), mimeType: "image/jpeg" };
 }
 
 export async function readAssetBytes(
