@@ -179,10 +179,13 @@ GRAMSCOPE_LIVE=1 npm run test:live  # explicit real-account run
 
 Live test files run sequentially because they share one real Telegram account.
 They require the Telegram variables in `.env.local` and may encounter Telegram
-rate limits. Media acceptance additionally requires every explicit
-`GRAMSCOPE_LIVE_MEDIA_SOURCE` / `GRAMSCOPE_LIVE_*_MESSAGE_ID` selector shown in
-`.env.example`; the suite never guesses messages or scans the account for
-fixtures. Never run live tests against a personal account.
+rate limits. For media acceptance, configure at least one
+`GRAMSCOPE_LIVE_*_MESSAGE_ID` with either its matching
+`GRAMSCOPE_LIVE_*_SOURCE` or the shared `GRAMSCOPE_LIVE_MEDIA_SOURCE` fallback.
+Partial runs skip unconfigured media kinds; `GRAMSCOPE_LIVE_STRICT=1` requires
+the shared source and all eleven message IDs. The suite never guesses messages
+or scans the account for fixtures. Never run live tests against a personal
+account.
 
 The MCP endpoint is `app/api/mcp/route.ts`. Tool registration is centralized in
 `src/mcp/server.ts`; Telegram operations live under `src/telegram/`.

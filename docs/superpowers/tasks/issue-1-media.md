@@ -45,6 +45,8 @@ created: 2026-08-30
 - 2026-08-31 — Task 7 adds explicit live selectors and never scans Telegram for fixtures. Real Telegram, ordinary ChatGPT, large-original Range, cancellation, cold/warm latency, and deployed log-redaction evidence remain release blockers and are tracked in `docs/media-chatgpt-acceptance.md`.
 - 2026-08-31 — Task 7 local gate: 620/620 fast tests passed; typecheck, lint, and production build passed; the no-opt-in live harness discovered and skipped 57/57 tests without contacting Telegram.
 - 2026-08-31 — implementation commit sequence through hardening: `6bb4ab5`, `07af415`, `028d807`, `a514cab`, `1f8e1f3`, `2eca510`, `b09e8d2`, `5b2a970`, `dc72456`, `56ddef9`, `eca7099`, and `a18317d`. Task 7 is a preparation commit until the external gates pass.
+- 2026-09-01 — read-only fixture discovery found useful media candidates across different Telegram sources; no single source covered the eleven required kinds and no sticker fixture was found. The live harness therefore accepts explicit per-kind source overrides, runs only complete pairs by default, and retains `GRAMSCOPE_LIVE_STRICT=1` for the full legacy-shaped gate. It still never scans or guesses fixtures, and no pending acceptance gate is closed by a partial run.
+- 2026-09-01 — selector-adaptation gate: 629/629 fast tests, typecheck, lint, production build, and shell syntax validation passed. The unconfigured media harness skipped all 18 tests without Telegram access; a partial photo selector ran only its configuration test under a safe name filter and skipped the other 17.
 
 # Links
 

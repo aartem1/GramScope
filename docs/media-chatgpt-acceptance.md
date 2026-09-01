@@ -21,20 +21,26 @@ private messages, `file_reference`, `access_hash`, or media bytes here.
 
 Record the final command results here only after they have completed:
 
-- Fast tests: 620/620 passed on 2026-08-31.
-- TypeScript: passed on 2026-08-31 after the production build completed.
-- Lint: passed on 2026-08-31.
-- Production build: passed on 2026-08-31 and included `/api/mcp` and
+- Fast tests: 629/629 passed on 2026-09-01.
+- TypeScript: passed on 2026-09-01 after the production build completed.
+- Lint: passed on 2026-09-01.
+- Production build: passed on 2026-09-01 and included `/api/mcp` and
   `/api/media/[token]`.
 - Live harness without opt-in selectors: 57/57 skipped across eight files on
-  2026-08-31; no Telegram connection was attempted.
-- Explicit real-account media suite: pending owner-provided selectors.
+  2026-09-01; no Telegram connection was attempted.
+- Explicit real-account media suite: pending deliberate selectors; read-only
+  discovery found candidates distributed across sources and no sticker fixture.
 
 ## Real Telegram and deployed Vercel acceptance
 
-Pending. The operator must populate all `GRAMSCOPE_LIVE_*` selectors from
-`.env.example` with deliberately chosen messages in the dedicated account, then
-run `GRAMSCOPE_LIVE=1 npm run test:live`.
+Pending. For each deliberately chosen message, set its
+`GRAMSCOPE_LIVE_*_MESSAGE_ID` and either the matching
+`GRAMSCOPE_LIVE_*_SOURCE` or the shared `GRAMSCOPE_LIVE_MEDIA_SOURCE` fallback,
+then run `GRAMSCOPE_LIVE=1 npm run test:live`. Partial runs execute only
+complete source/ID pairs and explicitly skip missing kinds. Use
+`GRAMSCOPE_LIVE_STRICT=1` when the complete eleven-kind fixture set exists; it
+requires the shared fallback and all message IDs. The suite never searches the
+account for fixtures. Partial evidence does not close any release gate below.
 
 The deployed gate must additionally record, without retaining capability URLs:
 
@@ -59,9 +65,9 @@ deployment, select GramScope for each message, replace the placeholders with the
 actual non-secret source and message values, and send:
 
 ```text
-Inspect the Telegram photo identified by GRAMSCOPE_LIVE_MEDIA_SOURCE and GRAMSCOPE_LIVE_PHOTO_MESSAGE_ID in the acceptance setup, and describe what is visible.
-Inspect the Telegram video identified by GRAMSCOPE_LIVE_MEDIA_SOURCE and GRAMSCOPE_LIVE_VIDEO_MESSAGE_ID in the acceptance setup, and summarize only what the returned frames establish.
-Inspect the Telegram voice message identified by GRAMSCOPE_LIVE_MEDIA_SOURCE and GRAMSCOPE_LIVE_VOICE_MESSAGE_ID in the acceptance setup. Tell me whether usable audio was delivered; do not infer content from filename or metadata.
+Inspect the Telegram photo identified by its effective GRAMSCOPE_LIVE_PHOTO_SOURCE (or GRAMSCOPE_LIVE_MEDIA_SOURCE fallback) and GRAMSCOPE_LIVE_PHOTO_MESSAGE_ID in the acceptance setup, and describe what is visible.
+Inspect the Telegram video identified by its effective GRAMSCOPE_LIVE_VIDEO_SOURCE (or GRAMSCOPE_LIVE_MEDIA_SOURCE fallback) and GRAMSCOPE_LIVE_VIDEO_MESSAGE_ID in the acceptance setup, and summarize only what the returned frames establish.
+Inspect the Telegram voice message identified by its effective GRAMSCOPE_LIVE_VOICE_SOURCE (or GRAMSCOPE_LIVE_MEDIA_SOURCE fallback) and GRAMSCOPE_LIVE_VOICE_MESSAGE_ID in the acceptance setup. Tell me whether usable audio was delivered; do not infer content from filename or metadata.
 ```
 
 For each prompt, append a dated entry containing:

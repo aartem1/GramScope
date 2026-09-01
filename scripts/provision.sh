@@ -320,10 +320,13 @@ Run the live tests against the real account:
 
   GRAMSCOPE_LIVE=1 npm run test:live
 
-The media suite also requires GRAMSCOPE_LIVE_MEDIA_SOURCE and every explicit
-GRAMSCOPE_LIVE_*_MESSAGE_ID listed in .env.example. Keep those selectors only
-in .env.local; the wizard does not publish them to Vercel. Without the explicit
-GRAMSCOPE_LIVE=1 flag, npm run test:live performs no Telegram calls.
+For each media kind you want to test, set its GRAMSCOPE_LIVE_*_MESSAGE_ID and
+either GRAMSCOPE_LIVE_*_SOURCE or the shared GRAMSCOPE_LIVE_MEDIA_SOURCE
+fallback from .env.example. Partial runs execute configured kinds and report
+the rest as skipped. Set GRAMSCOPE_LIVE_STRICT=1 to require the shared source
+and all eleven message ids. Keep selectors only in .env.local; the wizard does
+not publish them to Vercel. The suite never scans for fixtures, and without the
+explicit GRAMSCOPE_LIVE=1 flag it performs no Telegram calls.
 
 Then in ChatGPT: Settings -> Connectors -> add a custom connector at
 
