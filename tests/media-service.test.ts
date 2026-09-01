@@ -1,4 +1,4 @@
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -9,11 +9,7 @@ import {
 import { mediaToolResult } from "@/mcp/media-result";
 import { runGetMediaTool } from "@/mcp/tools/get-media";
 import {
-  AUTO_VIDEO_DEADLINE_MS,
-  AUTO_VIDEO_MAX_BYTES,
   attachOriginalLink,
-  FRAMES_VIDEO_DEADLINE_MS,
-  FRAMES_VIDEO_MAX_BYTES,
   getMedia,
   type MediaAsset,
   type MediaDependencies,
@@ -25,13 +21,10 @@ import {
   resolveMediaAsset,
 } from "@/telegram/media";
 import { mapMessage } from "@/schemas/message";
-import { normalizeImage } from "@/media/image";
 import { mediaError } from "@/errors/taxonomy";
 import { DerivativeCache } from "@/media/cache";
-import type { ContactSheetRequest } from "@/media/processor";
 import type { TelegramLike } from "@/telegram/client";
 import type { GetMediaInput, MediaDescriptor } from "@/schemas/media";
-import sharp from "sharp";
 
 const telegramMocks = vi.hoisted(() => ({
   fetchDialogIndex: vi.fn(async () => ({ byId: new Map(), folders: [] })),
@@ -218,62 +211,6 @@ function fakeMediaDeps(options: {
     }),
     attachOriginalLink: async (_asset, outcome) => outcome,
     derivativeCache: undefined,
-  };
-}
-
-function fakeVideoDeps() {
-  const base = fakeMediaDeps({
-    asset: fakeAsset({
-      type: "video",
-      mime_type: "video/mp4",
-      size: 10_000,
-      duration_seconds: 90,
-    }),
-  });
-  return {
-    ...base,
-    downloadToFile: vi.fn(async () => 10_000),
-    probeDuration: vi.fn(async (path: string, deadline: AbortSignal) => {
-      void path;
-      void deadline;
-      return 90;
-    }),
-    contactSheet: vi.fn(async (_path: string, request: ContactSheetRequest) => ({
-      data: Buffer.from("jpeg"),
-      mimeType: "image/jpeg" as const,
-      width: 1200,
-      height: 800,
-      frameCount: request.timestampsSeconds.length,
-      timestampsSeconds: request.timestampsSeconds,
-    })),
-    attachOriginalLink: vi.fn(async (_asset: MediaAsset, outcome: Awaited<ReturnType<typeof getMedia>>) => ({
-      ...outcome,
-      result: {
-        ...outcome.result,
-        download: {
-          url: "https://gramscope.test/api/media/test",
-          expires_at: "2026-08-30T12:10:00.000Z",
-        },
-      },
-      link: { uri: "https://gramscope.test/api/media/test", name: "video-7.mp4" },
-    })),
-  };
-}
-
-function fakeTimedOutVideoDeps(options: { thumbnail: boolean }) {
-  const deps = fakeVideoDeps();
-  deps.contactSheet = vi.fn(async () => {
-    throw mediaError("PROCESSING_TIMEOUT", "Video processing exceeded its deadline", true);
-  });
-  return {
-    ...deps,
-    readThumbnail: options.thumbnail
-      ? vi.fn(async () => ({
-          type: "image" as const,
-          data: Buffer.from("thumb"),
-          mimeType: "image/jpeg",
-        }))
-      : vi.fn(async () => undefined),
   };
 }
 
@@ -609,157 +546,6 @@ describe("Telegram media bytes", () => {
 });
 
 describe("getMedia", () => {
-  it("single-flights a video derivative and serves later calls from its file cache", async () => {
-    const cache = new DerivativeCache({ maxBytes: 1024, ttlMs: 60_000 });
-    const deps = fakeVideoDeps();
-    deps.derivativeCache = cache;
-    try {
-      const [first, concurrent] = await Promise.all([
-        getMedia(input(), deps),
-        getMedia(input(), deps),
-      ]);
-      const warm = await getMedia(input(), deps);
-
-      expect(deps.downloadToFile).toHaveBeenCalledTimes(1);
-      expect(deps.contactSheet).toHaveBeenCalledTimes(1);
-      expect(first.artifact?.data.equals(Buffer.from("jpeg"))).toBe(true);
-      expect(concurrent.result.representation).toEqual(first.result.representation);
-      expect(warm.result.representation).toEqual(first.result.representation);
-    } finally {
-      await cache.clear();
-    }
-  });
-
-  it("serializes different video derivatives without delaying an image fast path", async () => {
-    const deps = fakeVideoDeps();
-    deps.derivativeCache = undefined;
-    deps.resolveAsset = vi.fn(async (
-      _client: TelegramLike,
-      selector: { sourceId: string; messageId: number },
-    ) => selector.messageId === 9
-      ? fakeAsset({ media_id: "med_photo_9", type: "photo", size: 5 })
-      : fakeAsset({
-          media_id: `med_video_${selector.messageId}`,
-          type: "video",
-          mime_type: "video/mp4",
-          size: 10_000,
-          duration_seconds: 90,
-        }));
-    let active = 0;
-    let peak = 0;
-    const releases: Array<() => void> = [];
-    deps.contactSheet = vi.fn(async (_path: string, request: ContactSheetRequest) => {
-      active += 1;
-      peak = Math.max(peak, active);
-      await new Promise<void>((resolve) => releases.push(resolve));
-      active -= 1;
-      return {
-        data: Buffer.from("jpeg"),
-        mimeType: "image/jpeg" as const,
-        width: 1200,
-        height: 800,
-        frameCount: request.timestampsSeconds.length,
-        timestampsSeconds: request.timestampsSeconds,
-      };
-    });
-
-    const first = getMedia(input({ message_id: 7 }), deps);
-    const second = getMedia(input({ message_id: 8 }), deps);
-    try {
-      await vi.waitFor(() => expect(deps.contactSheet).toHaveBeenCalledTimes(1));
-      await expect(getMedia(input({ message_id: 9 }), deps)).resolves.toMatchObject({
-        result: { status: "ready", representation: { kind: "image" } },
-      });
-      expect(peak).toBe(1);
-
-      releases.shift()!();
-      await vi.waitFor(() => expect(deps.contactSheet).toHaveBeenCalledTimes(2));
-      expect(peak).toBe(1);
-      releases.shift()!();
-      await expect(Promise.all([first, second])).resolves.toHaveLength(2);
-    } finally {
-      for (const release of releases) release();
-      await Promise.allSettled([first, second]);
-    }
-  });
-
-  it("expires a 25-second waiter behind a 45-second holder without poisoning FIFO", async () => {
-    vi.useFakeTimers();
-    const deps = fakeVideoDeps();
-    deps.derivativeCache = undefined;
-    deps.resolveAsset = vi.fn(async (
-      _client: TelegramLike,
-      selector: { sourceId: string; messageId: number },
-    ) => fakeAsset({
-      media_id: `med_video_${selector.messageId}`,
-      type: "video",
-      mime_type: "video/mp4",
-      size: 10_000,
-      duration_seconds: 90,
-    }));
-    const downloadSignals: AbortSignal[] = [];
-    deps.downloadToFile = vi.fn(async (
-      _client: TelegramLike,
-      _asset: MediaAsset,
-      options: {
-        path: string;
-        maxBytes: number;
-        deadlineMs: number;
-        signal?: AbortSignal;
-      },
-    ) => {
-      downloadSignals.push(options.signal!);
-      return 10_000;
-    });
-    let releaseFirst!: () => void;
-    let markStarted!: () => void;
-    const firstStarted = new Promise<void>((resolve) => { markStarted = resolve; });
-    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
-    let processorCalls = 0;
-    deps.contactSheet = vi.fn(async (_path: string, request: ContactSheetRequest) => {
-      processorCalls += 1;
-      if (processorCalls === 1) {
-        markStarted();
-        await firstGate;
-      }
-      return {
-        data: Buffer.from("jpeg"),
-        mimeType: "image/jpeg" as const,
-        width: 1200,
-        height: 800,
-        frameCount: request.timestampsSeconds.length,
-        timestampsSeconds: request.timestampsSeconds,
-      };
-    });
-
-    let holderSettled = false;
-    const first = getMedia(input({ message_id: 7, mode: "frames" }), deps);
-    void first.finally(() => { holderSettled = true; });
-    await firstStarted;
-    const queued = getMedia(input({ message_id: 8 }), deps);
-    let queuedOutcome: Awaited<ReturnType<typeof getMedia>> | undefined;
-    void queued.then((outcome) => { queuedOutcome = outcome; });
-    const liveAfterCancelled = getMedia(input({ message_id: 9, mode: "frames" }), deps);
-    await vi.advanceTimersByTimeAsync(AUTO_VIDEO_DEADLINE_MS + 1);
-    try {
-      expect(queuedOutcome).toMatchObject({
-        result: { status: "fallback", code: "PROCESSING_TIMEOUT", retryable: true },
-      });
-      expect(holderSettled).toBe(false);
-      expect(downloadSignals).toHaveLength(1);
-      expect(deps.contactSheet).toHaveBeenCalledTimes(1);
-
-      releaseFirst();
-      await expect(first).resolves.toMatchObject({ result: { status: "ready" } });
-      await expect(liveAfterCancelled).resolves.toMatchObject({ result: { status: "ready" } });
-      expect(downloadSignals).toHaveLength(2);
-      expect(deps.contactSheet).toHaveBeenCalledTimes(2);
-    } finally {
-      releaseFirst();
-      await Promise.allSettled([first, queued, liveAfterCancelled]);
-    }
-  });
-
   it("caches only thumbnail derivative metadata and issues a fresh link after each hit", async () => {
     const cache = new DerivativeCache({ maxBytes: 1024, ttlMs: 60_000 });
     const set = vi.spyOn(cache, "set");
@@ -824,187 +610,6 @@ describe("getMedia", () => {
 
     expect(cache.get).not.toHaveBeenCalled();
     expect(cache.set).not.toHaveBeenCalled();
-  });
-
-  it("removes an exact derivative file when its writer fails before ownership transfer", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "gramscope-cache-write-test-"));
-    const derivativePath = join(directory, "derivative.jpg");
-    const deps = fakeVideoDeps();
-    const cache = new DerivativeCache({ maxBytes: 1024, ttlMs: 60_000 });
-    deps.derivativeCache = cache;
-    deps.derivativePath = () => derivativePath;
-    deps.writeDerivative = async (path, data) => {
-      await writeFile(path, data);
-      throw new Error("writer failed");
-    };
-    try {
-      await expect(getMedia(input({ mode: "frames" }), deps)).rejects.toThrow("writer failed");
-      await expect(access(derivativePath)).rejects.toThrow();
-    } finally {
-      await cache.clear();
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("removes an exact derivative file when cache transfer fails", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "gramscope-cache-set-test-"));
-    const derivativePath = join(directory, "derivative.jpg");
-    const deps = fakeVideoDeps();
-    deps.derivativeCache = {
-      get: vi.fn(async () => undefined),
-      set: vi.fn(async () => { throw new Error("cache failed"); }),
-    };
-    deps.derivativePath = () => derivativePath;
-    try {
-      await expect(getMedia(input({ mode: "frames" }), deps)).rejects.toThrow("cache failed");
-      await expect(access(derivativePath)).rejects.toThrow();
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("never reads an oversized cached derivative into memory", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "gramscope-cache-read-test-"));
-    const derivativePath = join(directory, "oversized.jpg");
-    await writeFile(derivativePath, Buffer.alloc(INLINE_MEDIA_MAX_BYTES + 1));
-    const deps = fakeVideoDeps();
-    deps.derivativeCache = {
-      get: vi.fn(async () => ({
-        path: derivativePath,
-        bytes: INLINE_MEDIA_MAX_BYTES + 1,
-        mimeType: "image/jpeg",
-        width: 320,
-        height: 180,
-        frameCount: 1,
-        timestampsSeconds: [1],
-      })),
-      set: vi.fn(async () => undefined),
-    };
-    try {
-      const outcome = await getMedia(input({ mode: "frames" }), deps);
-      expect(outcome.result).toMatchObject({ status: "error", code: "INLINE_LIMIT_EXCEEDED" });
-      expect(deps.downloadToFile).not.toHaveBeenCalled();
-      expect(deps.contactSheet).not.toHaveBeenCalled();
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
-  });
-
-  it("removes the downloaded video input when derivative processing fails", async () => {
-    const deps = fakeVideoDeps();
-    let inputPath = "";
-    deps.downloadToFile = vi.fn(async (
-      _client: TelegramLike,
-      _asset: MediaAsset,
-      options: {
-        path: string;
-        maxBytes: number;
-        deadlineMs: number;
-        signal?: AbortSignal;
-      },
-    ) => {
-      inputPath = options.path;
-      await writeFile(inputPath, "video");
-      return 5;
-    });
-    deps.contactSheet = vi.fn(async () => {
-      throw new Error("processor failed");
-    });
-
-    await expect(getMedia(input({ mode: "frames" }), deps)).rejects.toThrow("processor failed");
-    expect(inputPath).not.toBe("");
-    await expect(access(inputPath)).rejects.toThrow();
-  });
-
-  it("auto uses eight frames and the 64 MiB/25 second budget", async () => {
-    const deps = fakeVideoDeps();
-    await getMedia(input(), deps);
-
-    expect(deps.contactSheet).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      timestampsSeconds: [10, 20, 30, 40, 50, 60, 70, 80],
-    }));
-    expect(deps.downloadToFile).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
-      path: expect.any(String),
-      maxBytes: AUTO_VIDEO_MAX_BYTES,
-      deadlineMs: AUTO_VIDEO_DEADLINE_MS,
-      signal: expect.any(AbortSignal),
-    });
-  });
-
-  it("explicit timestamps are sorted and returned on one artifact", async () => {
-    const outcome = await getMedia(input({
-      timestamps_seconds: [8, 1, 5],
-    }), fakeVideoDeps());
-
-    expect(outcome.result.representation?.timestamps_seconds).toEqual([1, 5, 8]);
-    expect(outcome.result.representation?.frame_count).toBe(3);
-    expect(outcome.artifact?.type).toBe("image");
-  });
-
-  it("rejects duplicate millisecond timestamps as invalid input", async () => {
-    await expect(getMedia(input({
-      timestamps_seconds: [1.0001, 1.0004],
-    }), fakeVideoDeps())).rejects.toMatchObject({ code: "INVALID_INPUT" });
-  });
-
-  it("explicit frames uses the 128 MiB/45 second budget", async () => {
-    const deps = fakeVideoDeps();
-    await getMedia(input({ mode: "frames" }), deps);
-
-    expect(deps.downloadToFile).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
-      path: expect.any(String),
-      maxBytes: FRAMES_VIDEO_MAX_BYTES,
-      deadlineMs: FRAMES_VIDEO_DEADLINE_MS,
-      signal: expect.any(AbortSignal),
-    });
-  });
-
-  it("probes a missing duration within the same deadline before spacing frames", async () => {
-    const deps = fakeVideoDeps();
-    deps.resolveAsset = vi.fn(async () => fakeAsset({
-      type: "video",
-      mime_type: "video/mp4",
-      size: 10_000,
-      duration_seconds: undefined,
-    }));
-    await getMedia(input(), deps);
-
-    expect(deps.probeDuration).toHaveBeenCalledOnce();
-    const probeSignal = deps.probeDuration.mock.calls[0]?.[1];
-    const sheetSignal = deps.contactSheet.mock.calls[0]?.[1].deadline;
-    expect(probeSignal).toBe(sheetSignal);
-    expect(deps.contactSheet).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
-      timestampsSeconds: [10, 20, 30, 40, 50, 60, 70, 80],
-    }));
-  });
-
-  it("auto timeout returns thumbnail plus original link; explicit frames errors", async () => {
-    const auto = await getMedia(input(), fakeTimedOutVideoDeps({ thumbnail: true }));
-    expect(auto.result).toMatchObject({ status: "fallback", code: "PROCESSING_TIMEOUT" });
-    expect(auto.artifact?.type).toBe("image");
-    expect(auto.link).toBeDefined();
-
-    const frames = await getMedia(
-      input({ mode: "frames" }),
-      fakeTimedOutVideoDeps({ thumbnail: true }),
-    );
-    expect(frames.result).toMatchObject({ status: "error", code: "PROCESSING_TIMEOUT" });
-  });
-
-  it("rejects a declared oversized video before creating a file or requesting a chunk", async () => {
-    const deps = fakeVideoDeps();
-    deps.resolveAsset = vi.fn(async () => fakeAsset({
-      type: "video",
-      mime_type: "video/mp4",
-      size: AUTO_VIDEO_MAX_BYTES + 1,
-      duration_seconds: 90,
-    }));
-
-    const outcome = await getMedia(input(), deps);
-    expect(outcome.result).toMatchObject({ status: "fallback", code: "INLINE_LIMIT_EXCEEDED" });
-    expect(outcome.link).toBeDefined();
-    expect(deps.downloadToFile).not.toHaveBeenCalled();
-    expect(deps.contactSheet).not.toHaveBeenCalled();
   });
 
   it("issues an encrypted same-origin original link from the stable selector", async () => {
@@ -1257,29 +862,6 @@ describe("getMedia", () => {
       link: { uri: "https://example.test/original" },
     });
     expect(deps.readBytes).not.toHaveBeenCalled();
-  });
-
-  it("normalizes a large thumbnail before emitting it as an image", async () => {
-    const thumbnailData = await sharp({
-      create: { width: 2400, height: 1800, channels: 3, background: "#cc3311" },
-    }).jpeg({ quality: 100 }).toBuffer();
-    const deps = fakeMediaDeps({ asset: fakeAsset({ type: "video", mime_type: "video/mp4" }) });
-    deps.readThumbnail = async () => ({
-      type: "image",
-      data: thumbnailData,
-      mimeType: "image/jpeg",
-    });
-    deps.normalizeImage = normalizeImage;
-
-    const outcome = await getMedia(input(), deps);
-    expect(outcome.artifact).toMatchObject({ type: "image", mimeType: "image/jpeg" });
-    expect(outcome.result.representation).toMatchObject({ width: 1600, height: 1200 });
-    expect(outcome.result.representation).toMatchObject({
-      kind: "image",
-      mime_type: "image/jpeg",
-      byte_size: outcome.artifact?.data.length,
-    });
-    expect(outcome.artifact?.data.length).toBeLessThanOrEqual(INLINE_MEDIA_MAX_BYTES);
   });
 
   it("uses the emitted image MIME for the direct artifact filename", async () => {

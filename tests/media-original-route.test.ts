@@ -9,7 +9,7 @@ import {
   parseSingleRange,
   RangeNotSatisfiableError,
 } from "@/media/range";
-import type { MediaTokenClaims } from "@/media/token";
+import type { MediaCapabilityClaims, MediaTokenClaims } from "@/media/token";
 import type { MediaAsset } from "@/telegram/media";
 import type { TelegramLike } from "@/telegram/client";
 
@@ -19,6 +19,15 @@ const claims: MediaTokenClaims = {
   sourceId: "-1001",
   messageId: 7,
   ownerId: "owner-1",
+};
+
+const capabilityOriginalClaims: MediaCapabilityClaims = {
+  v: 2,
+  purpose: "telegram-media",
+  sourceId: "-1001",
+  messageId: 7,
+  ownerId: "owner-1",
+  representation: { kind: "original" },
 };
 
 function routeAsset(size = 10): MediaAsset {
@@ -123,6 +132,43 @@ describe("original media route", () => {
     expect(response.headers.get("cache-control")).toBe("private, no-store");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await response.text()).toBe("0123456789");
+  });
+
+  it("streams original capabilities from both token versions", async () => {
+    const legacy = await handleOriginalRequest(
+      new Request("https://gramscope.test/api/media/token"),
+      "token",
+      fakeOriginalDeps(),
+    );
+    const v2 = fakeOriginalDeps();
+    v2.verifyToken = vi.fn(async () => capabilityOriginalClaims);
+    const capability = await handleOriginalRequest(
+      new Request("https://gramscope.test/api/media/token"),
+      "token",
+      v2,
+    );
+
+    expect(legacy.status).toBe(200);
+    expect(capability.status).toBe(200);
+    expect(await capability.text()).toBe("0123456789");
+  });
+
+  it.each([
+    { kind: "image", source: "auto" } as const,
+    { kind: "contact_sheet", mode: "auto", maxFrames: 8 } as const,
+  ])("rejects a v2 $kind capability before resolving media", async (representation) => {
+    const deps = fakeOriginalDeps();
+    deps.verifyToken = vi.fn(async () => ({
+      ...capabilityOriginalClaims,
+      representation,
+    }));
+
+    const response = await handleOriginalRequest(
+      new Request("https://gramscope.test/api/media/token"), "token", deps,
+    );
+
+    expect(response.status).toBe(401);
+    expect(deps.resolveAsset).not.toHaveBeenCalled();
   });
 
   it("sanitizes Cyrillic, quotes, and CR/LF in attachment filenames", () => {

@@ -12,12 +12,12 @@ import {
   RangeNotSatisfiableError,
 } from "./range";
 import {
-  verifyMediaToken,
-  type MediaTokenClaims,
+  verifyMediaCapability,
+  type VerifiedMediaCapability,
 } from "./token";
 
 export type OriginalRouteDependencies = {
-  verifyToken(token: string): Promise<MediaTokenClaims>;
+  verifyToken(token: string): Promise<VerifiedMediaCapability>;
   withClient<T>(run: (client: TelegramLike) => Promise<T>): Promise<T>;
   resolveAsset(
     client: TelegramLike,
@@ -35,7 +35,7 @@ function productionOriginalRouteDependencies(): OriginalRouteDependencies {
   const config = loadConfig();
   return {
     verifyToken: (token) =>
-      verifyMediaToken(token, new Date(), config.mediaTokenSecret),
+      verifyMediaCapability(token, new Date(), config.mediaTokenSecret),
     withClient: withTelegram,
     resolveAsset: resolveMediaAsset,
     iterBytes: iterAssetBytes,
@@ -75,7 +75,10 @@ export async function handleOriginalRequest(
 
   try {
     const claims = await deps.verifyToken(token);
-    if (claims.ownerId !== deps.ownerId) {
+    if (
+      claims.ownerId !== deps.ownerId ||
+      (claims.v === 2 && claims.representation.kind !== "original")
+    ) {
       return new Response("Unauthorized", { status: 401 });
     }
 
