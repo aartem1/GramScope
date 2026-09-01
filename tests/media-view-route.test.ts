@@ -225,6 +225,42 @@ describe("media view materialization", () => {
     expect(deps.readThumbnail).toHaveBeenCalledOnce();
   });
 
+  it("maps an aborted five-second fallback thumbnail to HTTP 504", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(AbortSignal.abort(
+      new DOMException("fallback timed out", "TimeoutError"),
+    ));
+    const materializerDeps = fakeMaterializerDeps({
+      contactError: mediaError("PROCESSING_TIMEOUT", "video timed out", true),
+    });
+    materializerDeps.readThumbnail = vi.fn(async (_client, _asset, _limit, signal) => {
+      signal?.throwIfAborted();
+      return undefined;
+    });
+    const routeDeps = fakeViewDeps({
+      claims: {
+        ...baseClaims,
+        representation: { kind: "contact_sheet", mode: "auto", maxFrames: 8 },
+      },
+      asset: asset({ type: "video", mime_type: "video/mp4" }),
+    });
+    routeDeps.materialize = vi.fn((telegram, media, plan) =>
+      materializeMediaView(telegram, media, plan, materializerDeps));
+
+    try {
+      const response = await handleViewRequest(
+        new Request("https://gramscope.test/api/media/view/token"),
+        "token",
+        routeDeps,
+      );
+
+      expect(timeout).toHaveBeenCalledWith(5_000);
+      expect(response.status).toBe(504);
+      expect(await response.text()).toBe("Media processing timed out");
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
   it("normalizes a large automatic fallback thumbnail before returning it", async () => {
     const thumbnail = await sharp({
       create: { width: 2400, height: 1800, channels: 3, background: "#cc3311" },

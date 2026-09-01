@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GramScopeError, mediaError } from "../errors/taxonomy";
+import { GramScopeError, mediaError, type ErrorCode } from "../errors/taxonomy";
 import { INLINE_MEDIA_MAX_BYTES } from "../schemas/media";
 import { type TelegramLike } from "../telegram/client";
 import {
@@ -39,6 +39,7 @@ export type GeneratedMediaView = {
   height: number;
   frameCount?: number;
   timestampsSeconds?: number[];
+  fallback?: { code: ErrorCode; retryable: boolean };
 };
 
 type Thumbnail = {
@@ -123,18 +124,37 @@ async function materializeImageView(
   plan: Extract<MediaRepresentationPlan, { kind: "image" }>,
   deps: MaterializerDependencies,
 ): Promise<GeneratedMediaView> {
-  const thumbnail = await deps.readThumbnail(client, asset, INLINE_MEDIA_MAX_BYTES);
-  if (plan.source === "thumbnail" && !thumbnail) {
-    throw mediaError("UNSUPPORTED_MEDIA", "No image preview is available", false);
-  }
-  const data = thumbnail?.data ?? await deps.readBytes(client, asset, INLINE_MEDIA_MAX_BYTES);
-  return deps.normalizeImage(data, {
-    preserveTransparency: asset.descriptor.mime_type === "image/png" ||
-      asset.descriptor.mime_type === "image/webp",
-    sourceMimeType: thumbnail?.mimeType ?? asset.descriptor.mime_type,
-    maxBytes: INLINE_MEDIA_MAX_BYTES,
-    maxLongEdge: 1600,
+  const key = derivativeKey({
+    mediaId: asset.descriptor.media_id,
+    mode: plan.source === "thumbnail" ? "thumbnail" : "image",
+    maxFrames: 1,
+    processorVersion: "normalized-image-v1",
   });
+  return derivativeResult(key, async () => {
+    const thumbnail = await deps.readThumbnail(client, asset, INLINE_MEDIA_MAX_BYTES);
+    if (plan.source === "thumbnail" && !thumbnail) {
+      throw mediaError("UNSUPPORTED_MEDIA", "No image preview is available", false);
+    }
+    if (
+      !thumbnail &&
+      asset.descriptor.size !== undefined &&
+      asset.descriptor.size > INLINE_MEDIA_MAX_BYTES
+    ) {
+      throw mediaError(
+        "INLINE_LIMIT_EXCEEDED",
+        "Image source exceeds the generated representation limit",
+        false,
+      );
+    }
+    const data = thumbnail?.data ?? await deps.readBytes(client, asset, INLINE_MEDIA_MAX_BYTES);
+    return deps.normalizeImage(data, {
+      preserveTransparency: asset.descriptor.mime_type === "image/png" ||
+        asset.descriptor.mime_type === "image/webp",
+      sourceMimeType: thumbnail?.mimeType ?? asset.descriptor.mime_type,
+      maxBytes: INLINE_MEDIA_MAX_BYTES,
+      maxLongEdge: 1600,
+    });
+  }, deps, false);
 }
 
 async function materializeContactSheetView(
@@ -168,19 +188,38 @@ async function materializeContactSheetView(
   } catch (error) {
     if (plan.mode === "auto" && error instanceof GramScopeError) {
       const fallbackDeadline = AbortSignal.timeout(FALLBACK_IMAGE_DEADLINE_MS);
-      const thumbnail = await deps.readThumbnail(
-        client,
-        asset,
-        INLINE_MEDIA_MAX_BYTES,
-        fallbackDeadline,
-      );
-      if (thumbnail) {
-        return deps.normalizeImage(thumbnail.data, {
-          sourceMimeType: thumbnail.mimeType,
-          maxBytes: INLINE_MEDIA_MAX_BYTES,
-          maxLongEdge: 1600,
-          deadline: fallbackDeadline,
-        });
+      try {
+        const thumbnail = await deps.readThumbnail(
+          client,
+          asset,
+          INLINE_MEDIA_MAX_BYTES,
+          fallbackDeadline,
+        );
+        if (thumbnail) {
+          const generated = await deps.normalizeImage(thumbnail.data, {
+            sourceMimeType: thumbnail.mimeType,
+            maxBytes: INLINE_MEDIA_MAX_BYTES,
+            maxLongEdge: 1600,
+            deadline: fallbackDeadline,
+          });
+          return {
+            ...generated,
+            fallback: { code: error.code, retryable: error.retryable },
+          };
+        }
+      } catch (fallbackError) {
+        if (
+          fallbackDeadline.aborted ||
+          (fallbackError instanceof DOMException &&
+            ["AbortError", "TimeoutError"].includes(fallbackError.name))
+        ) {
+          throw mediaError(
+            "PROCESSING_TIMEOUT",
+            "Fallback image processing exceeded its deadline",
+            true,
+          );
+        }
+        throw fallbackError;
       }
     }
     throw error;

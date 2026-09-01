@@ -14,6 +14,7 @@ import {
   type MediaAsset,
   type MediaDependencies,
 } from "@/media/service";
+import { materializeMediaView } from "@/media/materializer";
 import {
   downloadAssetToFile,
   iterAssetBytes,
@@ -203,6 +204,8 @@ function fakeMediaDeps(options: {
     withClient: async <T>(run: (value: TelegramLike) => Promise<T>) => run(client),
     resolveAsset: vi.fn(async () => options.asset ?? fakeAsset()),
     readBytes: vi.fn(async () => options.bytes ?? Buffer.from("abcde")),
+    materialize: materializeMediaView,
+    readThumbnail: vi.fn(async () => undefined),
     normalizeImage: async (data, sourceOptions) => ({
       data,
       mimeType: (sourceOptions?.sourceMimeType ?? "image/jpeg") as "image/jpeg",
@@ -546,6 +549,81 @@ describe("Telegram media bytes", () => {
 });
 
 describe("getMedia", () => {
+  it("keeps legacy direct-image output while delegating materialization", async () => {
+    const deps = fakeMediaDeps();
+    deps.readBytes.mockRejectedValue(new Error("legacy image pipeline was used"));
+    const materialize = vi.fn<MediaDependencies["materialize"]>(async () => ({
+      data: Buffer.from("delegated-image"),
+      mimeType: "image/jpeg" as const,
+      width: 320,
+      height: 180,
+    }));
+
+    const outcome = await getMedia(input(), { ...deps, materialize });
+
+    expect(outcome).toMatchObject({
+      result: {
+        status: "ready",
+        representation: {
+          kind: "image",
+          mime_type: "image/jpeg",
+          byte_size: 15,
+          width: 320,
+          height: 180,
+        },
+      },
+      artifact: {
+        type: "image",
+        data: Buffer.from("delegated-image"),
+        mimeType: "image/jpeg",
+      },
+    });
+    expect(materialize).toHaveBeenCalledOnce();
+    expect(materialize.mock.calls[0]?.[2]).toEqual({ kind: "image", source: "auto" });
+  });
+
+  it("keeps legacy contact-sheet output while delegating materialization", async () => {
+    const deps = fakeMediaDeps({
+      asset: fakeAsset({
+        type: "video",
+        mime_type: "video/mp4",
+        size: 10_000,
+        duration_seconds: 90,
+      }),
+    });
+    const materialize = vi.fn<MediaDependencies["materialize"]>(async () => ({
+      data: Buffer.from("delegated-sheet"),
+      mimeType: "image/jpeg" as const,
+      width: 1200,
+      height: 800,
+      frameCount: 8,
+      timestampsSeconds: [10, 20, 30, 40, 50, 60, 70, 80],
+    }));
+
+    const outcome = await getMedia(input(), { ...deps, materialize });
+
+    expect(outcome).toMatchObject({
+      result: {
+        status: "ready",
+        representation: {
+          kind: "image",
+          byte_size: 15,
+          width: 1200,
+          height: 800,
+          frame_count: 8,
+          timestamps_seconds: [10, 20, 30, 40, 50, 60, 70, 80],
+        },
+      },
+      artifact: { type: "image", data: Buffer.from("delegated-sheet") },
+    });
+    expect(materialize).toHaveBeenCalledOnce();
+    expect(materialize.mock.calls[0]?.[2]).toEqual({
+      kind: "contact_sheet",
+      mode: "auto",
+      maxFrames: 8,
+    });
+  });
+
   it("caches only thumbnail derivative metadata and issues a fresh link after each hit", async () => {
     const cache = new DerivativeCache({ maxBytes: 1024, ttlMs: 60_000 });
     const set = vi.spyOn(cache, "set");
