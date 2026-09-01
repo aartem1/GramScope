@@ -289,6 +289,23 @@ describe("Telegram media bytes", () => {
       });
   });
 
+  it.each([
+    ["photo", photoMessage({ id: 7, bytes: 5, photoId: "" })],
+    ["document", documentMessage({
+      id: 7,
+      documentId: Number.NaN,
+      attributes: [{ className: "DocumentAttributeVideo", w: 1280, h: 720, duration: 4 }],
+    })],
+  ])("rejects a malformed %s id without creating a stable media identity", async (_name, raw) => {
+    const client = fakeMediaClient({ getMessages: async () => [raw] });
+
+    const outcome = await resolveMediaAsset(client, { sourceId: "@news", messageId: 7 })
+      .catch((error: unknown) => error);
+
+    expect(outcome).toMatchObject({ code: "NO_MEDIA" });
+    expect(outcome).not.toHaveProperty("descriptor.media_id");
+  });
+
   it("streams a bounded asset to an exclusively created file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "gramscope-download-test-"));
     const outputPath = join(directory, "asset.bin");

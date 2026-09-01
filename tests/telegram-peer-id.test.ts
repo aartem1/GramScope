@@ -18,6 +18,20 @@ describe("readBigId", () => {
     expect(readBigId({ value: 42n })).toBe("42");
     expect(readBigId(undefined)).toBeUndefined();
   });
+
+  it.each([
+    ["an empty string", ""],
+    ["a non-decimal string", "12x"],
+    ["a whitespace-padded string", " 42"],
+    ["NaN", Number.NaN],
+    ["positive infinity", Number.POSITIVE_INFINITY],
+    ["negative infinity", Number.NEGATIVE_INFINITY],
+    ["a fractional number", 42.5],
+    ["an unsafe integer", Number.MAX_SAFE_INTEGER + 1],
+  ])("rejects %s directly and inside a BigInteger-like wrapper", (_name, value) => {
+    expect(readBigId(value)).toBeUndefined();
+    expect(readBigId({ value })).toBeUndefined();
+  });
 });
 
 describe("marking", () => {

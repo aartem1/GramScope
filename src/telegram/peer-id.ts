@@ -25,8 +25,8 @@
  */
 export function readBigId(value: unknown): string | undefined {
   if (typeof value === "bigint") return value.toString();
-  if (typeof value === "number") return String(value);
-  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+  if (typeof value === "string" && /^-?\d+$/.test(value)) return value;
   if (typeof value === "object" && value !== null && "value" in value) {
     return readBigId((value as { value: unknown }).value);
   }
