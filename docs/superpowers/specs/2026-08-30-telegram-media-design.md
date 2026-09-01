@@ -5,6 +5,13 @@ Issue [#1](https://github.com/aartem1/GramScope/issues/1). Task card:
 owner's repository-wide decision to work directly on `main`. Target release:
 `1.5.0`.
 
+Amended on 2026-09-01 after ordinary-ChatGPT acceptance. The link-only
+delivery contract below supersedes every earlier direct `image`/`audio` or
+inline-binary decision in this document. The measured trigger was one fresh
+ChatGPT chat receiving three media calls whose MCP payload contained about
+3.08 million base64 characters; the 1,877,990-byte voice note alone expanded
+to 2,503,988 characters and immediately exhausted the conversation.
+
 ## 1. Problem
 
 GramScope's nineteen existing MCP tools can discover, read, and search Telegram
@@ -18,8 +25,9 @@ call could unexpectedly fan out into many large Telegram downloads.
 
 The primary client is an ordinary ChatGPT Project chat with the GramScope MCP
 app selected, not Codex, CLI, or a workspace agent. The common path therefore
-optimizes for one obvious tool, one call, one bounded media artifact, and no
-model-side transport decisions.
+optimizes for one obvious tool, one call, one compact result, and one
+model-inspectable file link. No media bytes enter the MCP result or the
+conversation transcript.
 
 ## 2. Required outcome
 
@@ -31,11 +39,12 @@ get_media(source_id, message_id, mode?)
 
 When `mode` is omitted, the tool chooses the best inspectable representation:
 
-- a bounded image for photos and image documents;
-- one timestamp-labelled contact sheet for videos, GIFs, and video notes;
-- the source bytes for bounded voice notes and audio files;
-- a Telegram thumbnail for other documents when one exists;
-- otherwise metadata and a short-lived original-download link.
+- a short-lived image link for photos, image documents, and static stickers;
+- a short-lived link to one timestamp-labelled JPEG contact sheet for videos,
+  GIFs, and video notes;
+- a short-lived original-file link for voice notes and audio files;
+- a short-lived original or preview link for other documents;
+- otherwise metadata and a stable sanitized error.
 
 The tool count rises from nineteen to twenty. The complete issue ships in one
 release but is implemented as the ordered subtasks in §18.
@@ -46,7 +55,7 @@ In scope:
 
 - richer, download-free media metadata on every existing message result;
 - stable media identity without exposing Telegram capabilities;
-- direct bounded MCP image and audio results;
+- compact, link-only MCP media results with no inline binary content;
 - video/GIF/video-note contact sheets and exact timestamp frames;
 - original photo, video, voice, audio, sticker, and document delivery;
 - short-lived secure HTTP streaming with Range support;
@@ -64,9 +73,11 @@ Out of scope:
 
 ## 4. Design principles
 
-**One-call happy path.** Bounded media is returned in the `get_media` tool
-result itself. Resource links and signed HTTPS exist only for oversized media,
-client compatibility, or an explicitly requested original.
+**One-call happy path.** Inspectable media is exposed by the `get_media` tool
+result as exactly one `resource_link`. The tool result contains no direct
+`image`, `audio`, base64 blob, or other media bytes. ChatGPT may ask the user
+to approve file materialization; GramScope must never respond to a denial or
+expiry by silently repeating `get_media`.
 
 **The server chooses the representation.** The model normally omits `mode`.
 The tool description tells it to call `get_media` whenever media content may
@@ -75,15 +86,17 @@ affect the answer and to leave representation selection to GramScope.
 **Selectors are stable; Telegram capabilities are not.** Every retrieval starts
 from `(source_id, message_id)`, resolves the peer through the existing resolver,
 and refetches the raw message. `file_reference`, `access_hash`, session data,
-and download locations never appear in MCP output, URLs, cache keys, or logs.
+and Telegram download locations never appear in MCP output, URLs, cache keys,
+or logs.
 
-**Bound failure before work.** Declared sizes are checked before downloading;
-unknown sizes are enforced while streaming. Large or slow `auto` work degrades
-to a thumbnail/link rather than consuming the whole MCP request budget.
+**Plan in MCP; materialize over HTTPS.** `get_media` resolves only message
+metadata, chooses a representation, and issues a capability. Original bytes
+and derivative processing happen only when ChatGPT opens the returned link.
+The serialized MCP result must remain below 32 KiB.
 
-**No hidden interpretation.** GramScope provides bytes and metadata. ChatGPT
-does the visual or audio interpretation if its MCP client supports the media
-content type.
+**No hidden interpretation.** GramScope provides one model-friendly file and
+metadata. ChatGPT does the visual, audio, or document interpretation after
+materializing that file.
 
 ## 5. Message media metadata
 
@@ -166,29 +179,30 @@ Rules:
 
 `auto` uses a deterministic media-kind switch:
 
-- **Photo or image document:** best available Telegram size that can become a
-  direct image within the inline budget. Prefer using the source thumbnail as
-  is; resize only when necessary.
-- **Video, GIF, video note, or video sticker:** one contact sheet of eight
-  evenly spaced frames. Samples avoid the exact first and last instants by
-  using `duration × (index + 1) / (count + 1)`.
-- **Voice or audio:** source bytes as direct audio when the declared or measured
-  file is at most 2 MiB; otherwise a signed original link without transcoding.
-- **Static image sticker:** direct image preview when its source format is
-  supported by ChatGPT; otherwise a thumbnail or original link.
+- **Photo or image document:** a signed link to a supported source image or to
+  a normalized JPEG/PNG representation. Prefer a suitable Telegram size and
+  avoid processing when the source is already model-friendly.
+- **Video, GIF, video note, or video sticker:** a signed link to one contact
+  sheet of eight evenly spaced frames. Samples avoid the exact first and last
+  instants by using `duration × (index + 1) / (count + 1)`.
+- **Voice or audio:** a signed link to the exact source bytes without
+  transcoding or transcription.
+- **Static image sticker:** a signed link to a supported source image or
+  normalized preview.
 - **TGS animated sticker:** Telegram thumbnail when present, otherwise an
-  original link. Rendering TGS is not part of this release.
-- **Generic document:** Telegram thumbnail when present, otherwise metadata and
-  an original link. `auto` never downloads a generic document merely to inspect
-  its contents.
+  original-file link. Rendering TGS is not part of this release.
+- **Generic document:** an original-file link for PDF, `text/*`, CSV, JSON,
+  Microsoft Office, or OpenXML document MIME types; otherwise a preview link
+  when Telegram supplies a thumbnail, falling back to the original-file link.
+  `auto` classifies only from Telegram metadata and never downloads the
+  document during the MCP call.
 - **URL or service media:** `NO_MEDIA` when there is no downloadable Telegram
   media object.
 
-`preview` requests the image/thumbnail path without decoding a video.
+`preview` returns a link to the image/thumbnail path without decoding a video.
 `frames` explicitly requests the video contact sheet and uses the larger
-processing budget. `original` always supplies a signed download link; for a
-supported image or audio file within 2 MiB it may additionally return the
-direct original content in the same call.
+processing budget. `original` always returns one signed original-file link and
+never adds a second representation.
 
 If video duration is unavailable and a bounded probe cannot obtain it, `auto`
 falls back to the Telegram thumbnail. Explicit `frames` returns a sanitized
@@ -205,7 +219,8 @@ type GetMediaResult = {
   message_id: number
   media?: MessageMedia
   representation?: {
-    kind: "image" | "audio" | "download" | "metadata"
+    kind: "image" | "audio" | "document" | "download" | "metadata"
+    delivery?: "resource_link"
     mime_type?: string
     file_name?: string
     byte_size?: number
@@ -224,16 +239,18 @@ type GetMediaResult = {
 }
 ```
 
-Binary data is never duplicated into `structuredContent` or the text manifest.
-The MCP `content` array contains:
+Binary data is never present in `structuredContent`, the text manifest, or any
+other MCP content part. The complete serialized tool result is capped at 32
+KiB. The MCP `content` array contains exactly:
 
-1. one short text summary of the chosen representation;
-2. at most one direct `image` or `audio` block; and
-3. only when needed, one `resource_link` whose URI is the signed HTTPS URL.
+1. one short text summary of the chosen representation; and
+2. for `ready` or `fallback`, one `resource_link` whose URI is the signed HTTPS
+   capability.
 
-The direct block uses the actual output MIME type. The structured representation
-preserves the stable filename, source MIME, and original size for voice/audio
-even though MCP's audio content block itself has no filename field.
+It contains no direct `image`, `audio`, embedded resource, base64 blob, or
+duplicate media artifact. `download.url` remains temporarily source-compatible
+with the 1.5.0 schema and carries the same URI; it may be removed only in a
+later versioned schema change.
 
 The existing text-only `ToolResult` type is widened to MCP content types and a
 media-specific result builder is added. Logging receives only tool name,
@@ -244,7 +261,9 @@ tokens, filenames, captions, or Telegram request objects.
 
 > Retrieve the media attached to one Telegram message when its contents may
 > affect the answer. Pass `source_id` and `message_id`; normally omit `mode`
-> because GramScope returns the best bounded representation automatically.
+> because GramScope returns one short-lived link to the best representation
+> automatically. Open that link once; do not retry automatically if file
+> materialization is denied or expires.
 
 ## 9. Internal resolver
 
@@ -254,35 +273,45 @@ The public tool calls a single media service through `withTelegram`:
 get_media
   -> resolve source and refetch raw message
   -> normalize internal MediaAsset
-  -> choose representation
-  -> cache lookup or bounded download/processing
-  -> rich MCP result
+  -> choose a representation plan without downloading bytes
+  -> issue one encrypted capability
+  -> compact text + metadata + resource_link result
 ```
+
+Representation planning lives in a lightweight module that does not import
+FFmpeg, `sharp`, or derivative materialization. The MCP function therefore no
+longer bundles the native video worker. A separate view route owns heavy image
+and contact-sheet processing; the existing original route remains small and
+streaming-only.
 
 `MediaAsset` is internal and may hold the current raw Telegram media/location,
 but it cannot be serialized. Refetching the message on every tool call and every
 original request refreshes expired file references. `media_id` is identity and
 a cache namespace only; it is never accepted as a retrieval selector.
 
-`TelegramLike` gains the narrow chunked-download operation needed by the
-service. Production adapts teleproto's `iterDownload`; tests provide an async
-iterable fake. No feature code imports teleproto outside `src/telegram/client.ts`.
+`TelegramLike` supplies the narrow chunked-download operation needed by the
+materializers. Production adapts teleproto's `iterDownload`; tests provide an
+async iterable fake. No feature code imports teleproto outside
+`src/telegram/client.ts`.
 
-The service stops reading immediately when a byte budget, deadline, or abort
-signal fires. A declared file larger than the applicable limit is rejected or
-degraded before the first download chunk.
+The materialization routes stop reading immediately when a byte budget,
+deadline, or abort signal fires. A declared derivative input larger than the
+applicable limit is rejected or degraded before the first download chunk;
+original streaming remains bounded by backpressure rather than an inline-size
+ceiling.
 
 ## 10. Images
 
 Photo and thumbnail selection prefers a Telegram-provided size near a 1280 px
-long edge. A source image already within 2 MiB is returned without a lossy
-round trip. When resizing is required, output is JPEG for opaque images and PNG
-or WebP only when transparency materially matters.
+long edge. A supported source image is served directly by capability URL when
+it already satisfies the representation bounds. When normalization is
+required, output is JPEG for opaque images and PNG or WebP only when
+transparency materially matters.
 
 The processor starts with a maximum 1600 px long edge and reduces JPEG quality,
-then dimensions, until the output is at most 2 MiB. Failure to meet the cap is a
-fallback to a smaller Telegram size or an original link, never an oversized MCP
-response.
+then dimensions, until the output is at most 2 MiB for fast materialization.
+Failure to meet the derivative cap falls back to a smaller Telegram size or an
+original-file link; it never changes the size of the MCP response.
 
 ## 11. Video contact sheets
 
@@ -311,69 +340,74 @@ Budgets:
   deadline;
 - explicit `frames`: at most 128 MiB and a 45-second derivative deadline;
 - ten decoded frames and one output image in either mode;
-- raw inline result at most 2 MiB.
+- generated contact sheet at most 2 MiB.
 
 The derivative deadline starts after the raw message is resolved and includes
 the Telegram download, duration probe, frame decoding, labelling, and contact
 sheet encoding. It is not merely an FFmpeg subprocess timeout.
 
-If `auto` exceeds its budget, the tool returns `fallback`, a Telegram thumbnail
-when available, an original link, and `PROCESSING_TIMEOUT` or
-`INLINE_LIMIT_EXCEEDED`. Explicit `frames` returns `error` for the same
-condition because the caller explicitly required frames.
+Derivative generation happens when the view link is opened. If `auto` exceeds
+its budget, the view route serves a Telegram thumbnail when available;
+otherwise it returns a sanitized HTTP error. Explicit `frames` does not silently
+substitute an original video because the advertised resource is an image.
 
 ## 12. Voice and audio
 
 Voice and audio originals preserve Telegram's exact source bytes and encoding.
 GramScope does not transcode or transcribe them.
 
-When the source is at most 2 MiB, it is collected into a bounded buffer for the
-single MCP audio block. Missing filenames are derived deterministically from
-the media kind, message id, and MIME extension, for example
+Audio bytes are never read by `get_media` and never enter an MCP result. The
+returned capability streams the original on materialization, regardless of
+size. Missing filenames are derived deterministically from the media kind,
+message id, and MIME extension, for example
 `voice-1234.ogg`. User-provided filenames are sanitized but otherwise
 preserved. MIME and size remain in structured content.
 
-Larger audio skips inline collection and returns the signed streaming link in
-the same tool call. Originals, including small inline audio, are not entered in
-the derivative cache.
+## 13. Capability-linked delivery
 
-## 13. Original streaming
-
-`get_media` constructs original URLs from the origin of `MCP_RESOURCE_URL`:
+`get_media` constructs capability URLs from the origin of `MCP_RESOURCE_URL`.
+Originals retain the current route; generated or normalized representations use
+a separate heavy route:
 
 ```text
-GET /api/media/{encrypted-token}
+GET /api/media/{encrypted-token}       # original streaming
+GET /api/media/view/{encrypted-token}  # normalized image/contact sheet
 ```
 
 The path token is a compact JWE encrypted and authenticated with a dedicated
 32-byte `MEDIA_TOKEN_SECRET`. It contains only a version, purpose, source
-selector, message id, issued-at time, expiry, and owner subject. It is valid for
-ten minutes. Telegram file references, access hashes, filenames, MIME types,
-and session material are not token claims.
+selector, message id, normalized representation mode and parameters, issued-at
+time, expiry, and owner subject. It is valid for ten minutes. Telegram file
+references, access hashes, filenames, source MIME types, and session material
+are not token claims. Original v1 claims remain accepted until their natural
+expiry; representation claims use a new exact, versioned claim set.
 
-The route validates algorithm, version, purpose, owner, and expiry, then
-refetches the message and streams the current media through `iterDownload`.
+Each route validates algorithm, version, purpose, owner, representation, and
+expiry, then refetches the message. The original route streams current media
+through `iterDownload`; the view route obtains only the bounded source required
+to normalize an image or produce a contact sheet.
 Expiry is checked when a request starts; a stream already in progress may
 finish. Stateless tokens may be replayed during their lifetime. One-use tokens
 are rejected because they require durable coordination across serverless
 instances and break legitimate Range requests.
 
-The route supports one valid byte range, returning `206`, `Content-Range`, and
-the corresponding chunk interval. Unsatisfiable or multiple ranges return the
-appropriate HTTP error without downloading Telegram bytes. A client disconnect
-aborts iteration and cleanup.
+The original route supports one valid byte range, returning `206`,
+`Content-Range`, and the corresponding chunk interval. Unsatisfiable or
+multiple ranges return the appropriate HTTP error without downloading Telegram
+bytes. A client disconnect aborts iteration and cleanup.
 
-Headers include accurate `Content-Type`, safe RFC-compatible
-`Content-Disposition`, known `Content-Length`, `Accept-Ranges: bytes`,
-`Cache-Control: private, no-store`, and `X-Content-Type-Options: nosniff`.
-Content is served as an attachment unless a narrowly supported player requires
-inline delivery.
+Both routes include accurate `Content-Type`, safe RFC-compatible
+`Content-Disposition`, known `Content-Length`, `Cache-Control: private,
+no-store`, and `X-Content-Type-Options: nosniff`. The original route also sends
+`Accept-Ranges: bytes`; generated representations may return 200 to a Range
+request. Content is served as an attachment for ChatGPT file materialization.
 
 Neither middleware nor application logging may record the media route path or
 query, because the path contains a bearer capability. Application logs use a
 fixed route name and coarse status only.
 
-Direct large-file streaming is validated on the deployed Vercel plan. If the
+Direct large-file streaming is validated on the deployed Vercel plan. No
+external object store is introduced for the link-only amendment. If the
 plan's duration or response behaviour makes it unreliable, the same delivery
 stages the source into private object storage with a ten-minute download URL.
 The tool's `download` contract and security properties remain unchanged;
@@ -381,7 +415,8 @@ durable originals remain prohibited.
 
 ## 14. Cache, temporary storage, and concurrency
 
-Only generated derivatives are cached. Cache keys contain `media_id`, normalized
+Only generated derivatives are cached, now inside the view-route function.
+Cache keys contain `media_id`, normalized
 representation parameters, output format, and a processor-version constant.
 Values are temporary file paths plus non-sensitive output metadata, never raw
 Telegram locations or signed URLs.
@@ -394,7 +429,8 @@ The warm-instance cache has:
 - file deletion on expiry and eviction;
 - no correctness requirement across cold starts.
 
-An in-memory single-flight map deduplicates identical derivative work. Video
+An in-memory single-flight map deduplicates identical derivative work within a
+warm view-route instance. Video
 processing uses a per-instance semaphore of one initially; image/audio fast
 paths do not wait behind video. Every temporary file is created with a unique
 name and removed in `finally` unless it is intentionally transferred into the
@@ -404,14 +440,15 @@ derivative cache.
 
 Expected media outcomes use the result envelope rather than raw exceptions.
 `fallback` is a successful tool call: it means the requested message was found
-and GramScope supplied the best bounded alternative.
+and GramScope supplied a link to the best available alternative.
 
 Stable media codes are:
 
 - `MEDIA_NOT_FOUND` — the selected message no longer exists;
 - `NO_MEDIA` — the message has no downloadable Telegram media;
 - `UNSUPPORTED_MEDIA` — the explicit representation is unsupported;
-- `INLINE_LIMIT_EXCEEDED` — direct content could not fit 2 MiB;
+- `INLINE_LIMIT_EXCEEDED` — legacy result retained for schema compatibility;
+  new link-only paths do not emit it;
 - `PROCESSING_TIMEOUT` — the applicable processing deadline elapsed;
 - `TELEGRAM_DOWNLOAD_FAILED` — Telegram or transport failed during retrieval.
 
@@ -420,31 +457,26 @@ reused. Results state whether retrying the same call can help. Unknown errors
 remain `INTERNAL_ERROR`; exception messages and Telegram request data are never
 echoed.
 
-Invalid or expired download tokens return a generic unauthorized/expired HTTP
-response without distinguishing which claim failed. Missing media after a
-valid token returns not found. No response reveals whether another owner's
-selector exists.
+The MCP envelope covers planning failures before a link is issued. Failures
+after ChatGPT opens a link use sanitized HTTP statuses instead: invalid or
+expired tokens return a generic unauthorized response, missing media returns
+not found, derivative deadline/limit failures return an appropriate 4xx/5xx,
+and no response reveals whether another owner's selector exists. The tool
+description explicitly tells the model not to retry automatically.
 
 ## 16. ChatGPT compatibility gate
 
-Protocol support alone does not prove that the ordinary ChatGPT MCP client will
-place direct image/audio content into the model's usable context. The first
-implementation subtask therefore deploys the smallest vertical slice and tests
-a real Telegram photo and voice note in a normal Project chat.
+Ordinary-ChatGPT acceptance demonstrated that protocol-valid inline media is
+not a safe client contract: three calls produced about 3.08 million base64
+characters, the 1.88 MiB voice note dominated the payload, file materialization
+repeated, and a fresh conversation immediately reached its maximum length.
 
-The gate compares, in order:
-
-1. direct MCP `image` / `audio` content;
-2. a same-call HTTPS `resource_link`;
-3. a user-download link as the last fallback.
-
-The accepted bounded path must take exactly one `get_media` call. If neither
-direct audio nor a resource link is consumable by ChatGPT, GramScope still
-delivers the original voice/audio payload, but documents the client limitation.
-It does not silently add server transcription, because that would violate the
-issue's privacy and scope decision. An Apps SDK player is considered only in a
-future explicitly approved scope; playback UI cannot by itself make the model
-understand the audio.
+The replacement gate requires exactly one `get_media` call and exactly one
+`resource_link` per selected message. ChatGPT may show one file-materialization
+approval; GramScope cannot bypass that client security boundary. After approval
+the model must actually use the linked photo, contact sheet, and audio file.
+Denial, expiry, or a fetch error must not cause an automatic tool-call loop.
+Server transcription and an Apps SDK player remain out of scope.
 
 ## 17. Verification and acceptance
 
@@ -455,8 +487,8 @@ Unit coverage includes:
 - metadata dimensions/duration and stable `media_id` behaviour;
 - deterministic `auto` selection and input validation;
 - filename and MIME preservation/sanitization;
-- inline byte enforcement before and during download;
-- contact-sheet timestamps, labelling, frame count, and one-artifact output;
+- zero binary MCP content and a serialized media result below 32 KiB;
+- contact-sheet timestamps, labelling, frame count, and one-file output;
 - token encryption, tampering, expiry, owner binding, and non-disclosure;
 - Range parsing, partial streaming, cancellation, and no whole-file buffer;
 - cache TTL, byte LRU, single-flight, semaphore, and temporary cleanup;
@@ -465,9 +497,9 @@ Unit coverage includes:
 - the exact twenty-tool registry and MCP handler listing.
 
 Integration tests use a fake `TelegramLike` async chunk stream and an
-instrumented processor. They assert that large inputs stop at the configured
-limit, originals are not cached, structured content contains no base64, and a
-tool result contains at most one direct media artifact.
+instrumented processor. They assert that `get_media` performs no byte download,
+structured content contains no base64, the MCP result contains exactly one
+`resource_link`, and only opening that link starts original or derivative work.
 
 Live Telegram acceptance covers a photo, image document, short and oversized
 video, GIF, video note, voice note below and above 2 MiB, music/audio document,
@@ -478,16 +510,21 @@ Deployed acceptance covers FFmpeg/`sharp` bundle size and cold start, the 25/45
 second processing budgets, large-original streaming on the actual Vercel plan,
 and log inspection for capability leakage.
 
-Ordinary ChatGPT Project-chat acceptance asks the model to inspect a real
-photo, describe a short video through its contact sheet, and use a voice/audio
-payload. Bounded media must require one `get_media` call with omitted `mode`.
-The final report records which media blocks the client actually consumed rather
-than inferring support from protocol conformance.
+Ordinary ChatGPT Project-chat acceptance asks the model to inspect three real
+links in one fresh conversation: a photo, a short-video contact sheet, and a
+voice/audio file. The conversation must remain usable, materialization must not
+loop, and every media item must require one `get_media` call with omitted
+`mode`. The final report records what the client actually consumed rather than
+inferring support from protocol conformance.
 
 The usual `typecheck`, lint, unit suite, production build, live suite, and
 deployed smoke tests must all pass before release.
 
 ## 18. Ordered implementation subtasks
+
+Items 1–7 record the original implementation sequence. Item 8 is the accepted
+follow-up that supersedes their inline-delivery details without rewriting
+completed history.
 
 1. **ChatGPT vertical slice:** widen rich MCP results; add minimal metadata,
    resolver, and photo/voice `get_media`; deploy and measure direct content
@@ -505,6 +542,10 @@ deployed smoke tests must all pass before release.
 7. **End-to-end release:** run real Telegram and ChatGPT acceptance, update
    README/deployment documentation and environment examples, set package and
    MCP server versions to `1.5.0`, and verify exactly twenty tools.
+8. **Link-only ChatGPT amendment:** move all binary materialization out of MCP,
+   split lightweight planning from the heavy view route, return exactly one
+   resource link, update compatibility documentation, and repeat deployed
+   ordinary-ChatGPT acceptance without conversation exhaustion.
 
 Each subtask is part of issue #1 and the same release. They are not separate
 GitHub issues or independently shipped slices.
@@ -523,23 +564,36 @@ cache limits are code constants for the initial release so deployment cannot
 silently change the user-visible contract. A private-object-store fallback may
 add provider credentials only if the deployed streaming gate fails.
 
-The existing MCP server stack already supports rich content and resource
-links. `TelegramLike` is extended rather than bypassed, and all production
-Telegram access remains within `withTelegram`. Existing tool result callers
-remain source-compatible when the common result type is widened.
+The existing MCP server stack already supports resource links. `TelegramLike`
+is extended rather than bypassed, and all production Telegram access remains
+within `withTelegram`. The input schema and twenty-tool registry stay stable;
+the media output contract deliberately changes from inline binary content to
+link-only delivery before issue #1 is closed.
 
 ## 20. Rejected alternatives
 
 **One tool per media type.** Rejected because ChatGPT would have to classify
 media and choose among several tools before retrieving it.
 
-**Resource-first MCP workflow.** Rejected as the default because it can require
-a second resource read and relies on undocumented ordinary-ChatGPT behaviour.
-It remains a compatibility fallback.
+**MCP `resources/read` workflow.** Rejected because it adds a model-selected
+second MCP round trip and returns binary resources as base64, recreating the
+conversation-size problem. A direct HTTPS `resource_link` is the accepted
+delivery boundary instead.
 
 **Always return originals inline.** Rejected because MCP binary content is
 base64 encoded, the hosting response is bounded, and video has no direct MCP
 content type.
+
+**Return direct bounded media plus a fallback link.** Rejected after measured
+ordinary-ChatGPT acceptance: a 1,877,990-byte voice note expanded to 2,503,988
+base64 characters, and three ordinary media calls exhausted a fresh
+conversation. Duplicating direct audio and its link also caused repeated file
+materialization prompts.
+
+**Link every original without choosing a representation.** Rejected because an
+original video, animated sticker, or unknown document is not reliably the best
+model input. `auto` links one model-friendly representation; `original` remains
+an explicit option.
 
 **Expose Telegram file references or access hashes.** Rejected because they
 expire, are capability-bearing internals, and create a security and caching
