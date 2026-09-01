@@ -10,7 +10,7 @@ created: 2026-08-30
 
 - [ ] 2026-08-30 → implementation: in an ordinary ChatGPT Project chat, verify direct MCP `ImageContent` and `AudioContent` consumption and compare it with `resource_link`; the accepted happy path must require only one `get_media` call for bounded media. Pending owner-run ordinary-ChatGPT acceptance; no client result has been inferred from protocol support.
 - [ ] 2026-08-30 → implementation: choose a Vercel-compatible video frame decoder after measuring bundle size, cold start, and processing time. Native `ffmpeg-static` plus `sharp` is selected in code and the deployed `api/mcp` bundle is 38.04 MiB, but cold/warm real-video timings for MP4, GIF, and video note remain pending.
-- [ ] 2026-08-30 → implementation: validate large-original streaming on the deployed Vercel plan before considering short-TTL private object storage. The route is deployed, but a real original larger than 2 MiB, one-MiB Range response, cancellation, and platform-log redaction remain pending.
+- [x] 2026-09-01 → implementation: direct streaming is accepted on deployment `dpl_GR8C7aQ1NqcFwJxz3WcfEqPfZv1h`. A 79,872,693-byte original completed twice with exact length, a one-MiB Range returned 206 with a valid `Content-Range`, deployed cancellation returned control in 5 ms, the real Telegram iterator closed on cancellation, and sampled raw deployment logs retained none of the tested capabilities, selectors, filenames, media fingerprints, `file_reference`, or `access_hash`. Private staging is not needed for the measured deployment.
 
 # Changes and findings
 
@@ -47,6 +47,8 @@ created: 2026-08-30
 - 2026-08-31 — implementation commit sequence through hardening: `6bb4ab5`, `07af415`, `028d807`, `a514cab`, `1f8e1f3`, `2eca510`, `b09e8d2`, `5b2a970`, `dc72456`, `56ddef9`, `eca7099`, and `a18317d`. Task 7 is a preparation commit until the external gates pass.
 - 2026-09-01 — read-only fixture discovery found useful media candidates across different Telegram sources; no single source covered the eleven required kinds and no sticker fixture was found. The live harness therefore accepts explicit per-kind source overrides, runs only complete pairs by default, and retains `GRAMSCOPE_LIVE_STRICT=1` for the full legacy-shaped gate. It still never scans or guesses fixtures, and no pending acceptance gate is closed by a partial run.
 - 2026-09-01 — selector-adaptation gate: 629/629 fast tests, typecheck, lint, production build, and shell syntax validation passed. The unconfigured media harness skipped all 18 tests without Telegram access; a partial photo selector ran only its configuration test under a safe name filter and skipped the other 17.
+- 2026-09-01 — real-account gate: all 17 runnable cases passed after hardening teleproto bigint media IDs and progressive photo byte sizing; the sticker case is the sole missing fixture. The current fast gate is 649/649 with typecheck, lint, and production build passing.
+- 2026-09-01 — direct-original production gate: the current Ready deployment streamed a 79,872,693-byte original with exact length, served an exact one-MiB Range with status 206, propagated client cancellation, rejected tampered/expired capabilities with 401, and exposed none of the tested capability, selector, filename, sampled-media, `file_reference`, or `access_hash` values in raw deployment logs. See the acceptance journal for timings.
 
 # Links
 

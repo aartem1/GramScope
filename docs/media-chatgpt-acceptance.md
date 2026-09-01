@@ -8,7 +8,7 @@ private messages, `file_reference`, `access_hash`, or media bytes here.
 ## Recorded evidence
 
 - Date recorded: 2026-08-31.
-- Production deployment: `dpl_2oojoxMHUiwVUTH7g9B2sXF7mp1j`, status `Ready`.
+- Production deployment: `dpl_GR8C7aQ1NqcFwJxz3WcfEqPfZv1h`, status `Ready`.
 - Measured deployment bundles: `api/mcp` 38.04 MiB and `api/media` 1.28 MiB.
 - Historical local run before Task 7: 591 passing tests out of 620 collected;
   the remaining tests were skipped live tests.
@@ -21,42 +21,60 @@ private messages, `file_reference`, `access_hash`, or media bytes here.
 
 Record the final command results here only after they have completed:
 
-- Fast tests: 629/629 passed on 2026-09-01.
+- Fast tests: 649/649 passed on 2026-09-01 after the real-Telegram ID and
+  progressive-photo fixes.
 - TypeScript: passed on 2026-09-01 after the production build completed.
 - Lint: passed on 2026-09-01.
 - Production build: passed on 2026-09-01 and included `/api/mcp` and
   `/api/media/[token]`.
 - Live harness without opt-in selectors: 57/57 skipped across eight files on
   2026-09-01; no Telegram connection was attempted.
-- Explicit real-account media suite: pending deliberate selectors; read-only
-  discovery found candidates distributed across sources and no sticker fixture.
+- Explicit real-account media suite: all 17 runnable cases passed on
+  2026-09-01 using ten deliberate per-kind selector pairs distributed across
+  sources. The sticker case remains explicitly skipped because bounded
+  read-only discovery found no sticker fixture.
 
 ## Real Telegram and deployed Vercel acceptance
 
-Pending. For each deliberately chosen message, set its
+For each deliberately chosen message, set its
 `GRAMSCOPE_LIVE_*_MESSAGE_ID` and either the matching
 `GRAMSCOPE_LIVE_*_SOURCE` or the shared `GRAMSCOPE_LIVE_MEDIA_SOURCE` fallback,
 then run `GRAMSCOPE_LIVE=1 npm run test:live`. Partial runs execute only
 complete source/ID pairs and explicitly skip missing kinds. Use
 `GRAMSCOPE_LIVE_STRICT=1` when the complete eleven-kind fixture set exists; it
 requires the shared fallback and all message IDs. The suite never searches the
-account for fixtures. Partial evidence does not close any release gate below.
+account for fixtures.
 
-The deployed gate must additionally record, without retaining capability URLs:
+Recorded real-account results on 2026-09-01:
 
-- bounded photo, image document, video, GIF, video note, voice, audio, document,
-  and sticker outcomes;
-- cold and warm duration, input bytes, and output bytes for one short MP4, one
-  GIF, and one video note;
-- one full original larger than 2 MiB and one `bytes=0-1048575` response;
-- cancellation evidence showing Telegram iteration stopped;
-- application and platform log inspection confirming that no signed URL, JWE,
-  filename, media bytes, `file_reference`, or `access_hash` was retained.
+- all 17 runnable photo, image-document, video, oversized-video, video-note,
+  GIF, voice, large-voice, audio, document, original, Range, token-integrity,
+  expiry, and cancellation checks passed;
+- the full-photo response returned 171,114 bytes matching `Content-Length`;
+- the cancellation check observed the real Telegram iterator's `finally`
+  path after the response reader was cancelled;
+- the sticker case is the only missing fixture and remains a release gate.
 
-The direct-original route is not accepted until the large-file and log checks
-above pass. If platform access logs retain the bearer path, release 1.5.0 is
-blocked pending an approved private-staging design; an unnamed storage fallback
-is not acceptable.
+Recorded production-route results against
+`dpl_GR8C7aQ1NqcFwJxz3WcfEqPfZv1h` on 2026-09-01:
+
+- a 79,872,693-byte original streamed with status 200 and exact
+  `Content-Length`; two measured complete transfers took 36.4 and 53.4
+  seconds;
+- `bytes=0-1048575` returned status 206, exactly 1,048,576 bytes, and a valid
+  `Content-Range`; measured response times were 1.43 and 1.36 seconds;
+- cancelling after the first streamed chunk returned control in 5 ms; together
+  with the real-account iterator-closure check above, this confirms propagation
+  through both the deployed HTTP boundary and the Telegram iterator;
+- tampered and expired capabilities both returned 401 before media delivery;
+- five raw deployment-log lines retained none of the exact issued
+  capabilities, selected source/message identifiers, response
+  `Content-Disposition`, filenames, sampled binary fingerprints,
+  `file_reference`, or `access_hash`.
+
+The direct-original route is accepted for this deployment. The remaining
+deployed MCP checks are the ordinary-ChatGPT photo/video/voice calls below,
+which also provide the client-visible cold/warm video timings.
 
 ## Ordinary ChatGPT Project-chat acceptance
 
