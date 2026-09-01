@@ -30,6 +30,17 @@ function positiveNumber(value: unknown): number | undefined {
     : undefined;
 }
 
+function photoBytes(size: Record<string, unknown>): number | undefined {
+  const bytes = positiveNumber(size.size);
+  if (bytes !== undefined) return bytes;
+  if (!Array.isArray(size.sizes)) return undefined;
+  return size.sizes.reduce<number | undefined>((largest, candidate) =>
+    typeof candidate === "number" && Number.isFinite(candidate) &&
+      Number.isInteger(candidate) && candidate > 0 && (largest === undefined || candidate > largest)
+      ? candidate
+      : largest, undefined);
+}
+
 function photoSize(photo: Record<string, unknown>): Record<string, unknown> | undefined {
   const sizes = Array.isArray(photo.sizes) ? photo.sizes : [];
   let largest: Record<string, unknown> | undefined;
@@ -37,7 +48,7 @@ function photoSize(photo: Record<string, unknown>): Record<string, unknown> | un
   for (const candidate of sizes) {
     const size = record(candidate);
     if (!size) continue;
-    const bytes = positiveNumber(size.size) ?? 0;
+    const bytes = photoBytes(size) ?? 0;
     if (bytes > largestBytes) {
       largest = size;
       largestBytes = bytes;
@@ -50,11 +61,12 @@ function descriptorOf(rawMedia: Record<string, unknown>): MediaDescriptor | unde
   const photo = record(rawMedia.photo);
   if (photo) {
     const size = photoSize(photo);
+    const bytes = size ? photoBytes(size) : undefined;
     return {
       media_id: "med_pending",
       type: "photo",
       mime_type: "image/jpeg",
-      ...(positiveNumber(size?.size) !== undefined ? { size: positiveNumber(size?.size) } : {}),
+      ...(bytes !== undefined ? { size: bytes } : {}),
       ...(positiveNumber(size?.w) !== undefined ? { width: positiveNumber(size?.w) } : {}),
       ...(positiveNumber(size?.h) !== undefined ? { height: positiveNumber(size?.h) } : {}),
       ...(Array.isArray(photo.sizes) && photo.sizes.length > 1 ? { has_thumbnail: true } : {}),

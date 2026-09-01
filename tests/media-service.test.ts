@@ -306,6 +306,54 @@ describe("Telegram media bytes", () => {
     expect(outcome).not.toHaveProperty("descriptor.media_id");
   });
 
+  it("uses the final progressive photo byte size when resolving the downloadable photo", async () => {
+    const raw = {
+      className: "Message",
+      id: 7,
+      media: {
+        className: "MessageMediaPhoto",
+        photo: {
+          className: "Photo",
+          flags: 0,
+          hasStickers: false,
+          id: 11n,
+          accessHash: 22n,
+          fileReference: Buffer.from([1, 2, 3]),
+          date: 1_777_593_600,
+          sizes: [
+            {
+              className: "PhotoSize",
+              type: "x",
+              w: 800,
+              h: 640,
+              size: 104_757,
+            },
+            {
+              className: "PhotoSizeProgressive",
+              type: "y",
+              w: 1280,
+              h: 1024,
+              sizes: [21_978, 60_772, 87_261, 144_257, 171_114],
+            },
+          ],
+          videoSizes: [],
+          dcId: 2,
+        },
+      },
+    };
+    const client = fakeMediaClient({ getMessages: async () => [raw] });
+
+    const asset = await resolveMediaAsset(client, { sourceId: "@news", messageId: 7 });
+
+    expect(asset.descriptor).toMatchObject({
+      type: "photo",
+      mime_type: "image/jpeg",
+      size: 171_114,
+      width: 1280,
+      height: 1024,
+    });
+  });
+
   it("streams a bounded asset to an exclusively created file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "gramscope-download-test-"));
     const outputPath = join(directory, "asset.bin");
