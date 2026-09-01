@@ -1,5 +1,5 @@
 import { mediaError } from "../errors/taxonomy";
-import type { GetMediaInput } from "../schemas/media";
+import { DEFAULT_MAX_FRAMES, type GetMediaInput } from "../schemas/media";
 import type { MediaAsset } from "../telegram/media";
 
 export type MediaRepresentationPlan =
@@ -56,7 +56,7 @@ export function planMediaRepresentation(
     case "video":
     case "gif":
     case "video_note":
-      return { kind: "contact_sheet", mode: "auto", maxFrames: input.max_frames };
+      return { kind: "contact_sheet", mode: "auto", maxFrames: DEFAULT_MAX_FRAMES };
     case "voice":
     case "audio":
       return { kind: "original" };

@@ -36,6 +36,19 @@ describe("media representation planning", () => {
     })).toMatchObject(expected);
   });
 
+  it("uses eight frames for automatic video contact sheets", () => {
+    expect(planMediaRepresentation(asset("video", "video/mp4"), {
+      source_id: "-1001",
+      message_id: 7,
+      mode: "auto",
+      max_frames: 1,
+    })).toEqual({
+      kind: "contact_sheet",
+      mode: "auto",
+      maxFrames: 8,
+    });
+  });
+
   it("keeps explicit frame timestamps in the capability plan", () => {
     expect(planMediaRepresentation(asset("video", "video/mp4"), {
       source_id: "-1001",
