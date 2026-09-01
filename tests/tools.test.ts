@@ -69,6 +69,15 @@ describe("registerTools", () => {
     );
   });
 
+  it("describes get_media as a one-link operation that must not be retried", () => {
+    const server = fakeServer();
+    registerTools(server as never);
+    const tool = server.tools.find((t) => t.name === "get_media")!;
+    const description = String(tool.config.description);
+    expect(description).toContain("one short-lived resource link");
+    expect(description).toContain("Do not retry");
+  });
+
   it("registers set_source_note as a writer and advertises every input cap", () => {
     const server = fakeServer();
     registerTools(server as never);

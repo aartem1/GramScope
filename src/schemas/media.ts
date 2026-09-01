@@ -57,7 +57,8 @@ export type MediaDescriptor = z.infer<typeof mediaDescriptorSchema>;
 export type MediaResultCode = (typeof MEDIA_RESULT_CODES)[number];
 
 export const mediaRepresentationSchema = z.object({
-  kind: z.enum(["image", "audio", "download", "metadata"]),
+  kind: z.enum(["image", "audio", "document", "download", "metadata"]),
+  delivery: z.literal("resource_link").optional(),
   mime_type: z.string().optional(),
   file_name: z.string().optional(),
   byte_size: z.number().int().nonnegative().optional(),

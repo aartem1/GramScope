@@ -9,12 +9,10 @@ import {
 import { mediaToolResult } from "@/mcp/media-result";
 import { runGetMediaTool } from "@/mcp/tools/get-media";
 import {
-  attachOriginalLink,
   getMedia,
   type MediaAsset,
   type MediaDependencies,
 } from "@/media/service";
-import { materializeMediaView } from "@/media/materializer";
 import {
   downloadAssetToFile,
   iterAssetBytes,
@@ -22,8 +20,6 @@ import {
   resolveMediaAsset,
 } from "@/telegram/media";
 import { mapMessage } from "@/schemas/message";
-import { mediaError } from "@/errors/taxonomy";
-import { DerivativeCache } from "@/media/cache";
 import type { TelegramLike } from "@/telegram/client";
 import type { GetMediaInput, MediaDescriptor } from "@/schemas/media";
 
@@ -66,8 +62,7 @@ describe("get_media contract", () => {
     })).toThrow();
   });
 
-  it("keeps binary out of structuredContent", () => {
-    const bytes = Buffer.from("image-bytes");
+  it("builds link-only MCP content", () => {
     const result = mediaToolResult({
       result: {
         status: "ready",
@@ -76,14 +71,17 @@ describe("get_media contract", () => {
         representation: {
           kind: "image",
           mime_type: "image/jpeg",
-          byte_size: bytes.length,
+          delivery: "resource_link",
         },
       },
-      artifact: { type: "image", data: bytes, mimeType: "image/jpeg" },
+      link: {
+        uri: "https://gramscope.test/api/media/view/capability",
+        name: "photo-7.jpg",
+        mimeType: "image/jpeg",
+      },
     });
-    expect(result.content.map((part) => part.type)).toEqual(["text", "image"]);
-    expect(JSON.stringify(result.structuredContent)).not.toContain(bytes.toString("base64"));
-    expect(bytes.length).toBeLessThan(INLINE_MEDIA_MAX_BYTES);
+    expect(result.content.map((part) => part.type)).toEqual(["text", "resource_link"]);
+    expect(JSON.stringify(result)).not.toMatch(/"data"\s*:/);
   });
 });
 
@@ -192,28 +190,30 @@ function input(overrides: Partial<GetMediaInput> = {}): GetMediaInput {
   };
 }
 
-function fakeMediaDeps(options: {
-  asset?: MediaAsset;
-  bytes?: Buffer;
-} = {}): MediaDependencies & {
+type PlannerTestDependencies = MediaDependencies & {
   resolveAsset: ReturnType<typeof vi.fn>;
   readBytes: ReturnType<typeof vi.fn>;
-} {
+  readThumbnail: ReturnType<typeof vi.fn>;
+  downloadToFile: ReturnType<typeof vi.fn>;
+};
+
+function fakePlannerDeps(options: {
+  asset?: MediaAsset;
+} = {}): PlannerTestDependencies {
   const client = fakeMediaClient();
   return {
     withClient: async <T>(run: (value: TelegramLike) => Promise<T>) => run(client),
     resolveAsset: vi.fn(async () => options.asset ?? fakeAsset()),
-    readBytes: vi.fn(async () => options.bytes ?? Buffer.from("abcde")),
-    materialize: materializeMediaView,
+    issueCapability: vi.fn(async () => ({
+      token: "capability-token",
+      expiresAt: new Date("2026-08-30T12:10:00.000Z"),
+    })),
+    mediaOrigin: "https://gramscope.test",
+    ownerId: "owner-1",
+    // Test-only sentinels: production dependencies deliberately omit byte readers.
+    readBytes: vi.fn(),
     readThumbnail: vi.fn(async () => undefined),
-    normalizeImage: async (data, sourceOptions) => ({
-      data,
-      mimeType: (sourceOptions?.sourceMimeType ?? "image/jpeg") as "image/jpeg",
-      width: 1,
-      height: 1,
-    }),
-    attachOriginalLink: async (_asset, outcome) => outcome,
-    derivativeCache: undefined,
+    downloadToFile: vi.fn(),
   };
 }
 
@@ -549,200 +549,78 @@ describe("Telegram media bytes", () => {
 });
 
 describe("getMedia", () => {
-  it("keeps legacy direct-image output while delegating materialization", async () => {
-    const deps = fakeMediaDeps();
-    deps.readBytes.mockRejectedValue(new Error("legacy image pipeline was used"));
-    const materialize = vi.fn<MediaDependencies["materialize"]>(async () => ({
-      data: Buffer.from("delegated-image"),
-      mimeType: "image/jpeg" as const,
-      width: 320,
-      height: 180,
+  it.each([
+    ["photo", "image/jpeg", "/api/media/view/"],
+    ["video", "video/mp4", "/api/media/view/"],
+    ["voice", "audio/ogg", "/api/media/"],
+    ["document", "application/pdf", "/api/media/"],
+  ] as const)("returns one compact link for %s without reading bytes", async (type, mime, path) => {
+    const deps = fakePlannerDeps({ asset: fakeAsset({ type, mime_type: mime }) });
+    const outcome = await getMedia(input(), deps);
+    const tool = mediaToolResult(outcome);
+
+    expect(tool.content.map((part) => part.type)).toEqual(["text", "resource_link"]);
+    expect(JSON.stringify(tool)).not.toMatch(/"data"\s*:/);
+    expect(JSON.stringify(tool).length).toBeLessThan(32 * 1024);
+    expect((tool.content[1] as { uri: string }).uri).toContain(path);
+    expect(deps.readBytes).not.toHaveBeenCalled();
+    expect(deps.readThumbnail).not.toHaveBeenCalled();
+    expect(deps.downloadToFile).not.toHaveBeenCalled();
+  });
+
+  it("does not attach a resource link to a planning error", async () => {
+    const outcome = await getMedia(input({ mode: "frames" }), fakePlannerDeps({
+      asset: fakeAsset({ type: "voice", mime_type: "audio/ogg" }),
     }));
-
-    const outcome = await getMedia(input(), { ...deps, materialize });
-
-    expect(outcome).toMatchObject({
-      result: {
-        status: "ready",
-        representation: {
-          kind: "image",
-          mime_type: "image/jpeg",
-          byte_size: 15,
-          width: 320,
-          height: 180,
-        },
-      },
-      artifact: {
-        type: "image",
-        data: Buffer.from("delegated-image"),
-        mimeType: "image/jpeg",
-      },
-    });
-    expect(materialize).toHaveBeenCalledOnce();
-    expect(materialize.mock.calls[0]?.[2]).toEqual({ kind: "image", source: "auto" });
+    expect(mediaToolResult(outcome).content.map((part) => part.type)).toEqual(["text"]);
+    expect(outcome.result).toMatchObject({ status: "error", code: "UNSUPPORTED_MEDIA" });
   });
 
-  it("keeps legacy contact-sheet output while delegating materialization", async () => {
-    const deps = fakeMediaDeps({
-      asset: fakeAsset({
-        type: "video",
-        mime_type: "video/mp4",
-        size: 10_000,
-        duration_seconds: 90,
-      }),
-    });
-    const materialize = vi.fn<MediaDependencies["materialize"]>(async () => ({
-      data: Buffer.from("delegated-sheet"),
-      mimeType: "image/jpeg" as const,
-      width: 1200,
-      height: 800,
-      frameCount: 8,
-      timestampsSeconds: [10, 20, 30, 40, 50, 60, 70, 80],
+  it("returns a bounded voice as one link with no audio block", async () => {
+    const outcome = await getMedia(input(), fakePlannerDeps({
+      asset: fakeAsset({ type: "voice", mime_type: "audio/ogg", size: 128 }),
     }));
+    const tool = mediaToolResult(outcome);
 
-    const outcome = await getMedia(input(), { ...deps, materialize });
-
-    expect(outcome).toMatchObject({
-      result: {
-        status: "ready",
-        representation: {
-          kind: "image",
-          byte_size: 15,
-          width: 1200,
-          height: 800,
-          frame_count: 8,
-          timestamps_seconds: [10, 20, 30, 40, 50, 60, 70, 80],
-        },
-      },
-      artifact: { type: "image", data: Buffer.from("delegated-sheet") },
-    });
-    expect(materialize).toHaveBeenCalledOnce();
-    expect(materialize.mock.calls[0]?.[2]).toEqual({
-      kind: "contact_sheet",
-      mode: "auto",
-      maxFrames: 8,
-    });
+    expect(tool.content.map((part) => part.type)).toEqual(["text", "resource_link"]);
+    expect(tool.content.filter((part) => part.type === "audio")).toHaveLength(0);
+    expect(outcome.result.download?.url).toBe((tool.content[1] as { uri: string }).uri);
   });
 
-  it("caches only thumbnail derivative metadata and issues a fresh link after each hit", async () => {
-    const cache = new DerivativeCache({ maxBytes: 1024, ttlMs: 60_000 });
-    const set = vi.spyOn(cache, "set");
-    const deps = fakeMediaDeps({
-      asset: fakeAsset({ type: "document", mime_type: "application/pdf", has_thumbnail: true }),
-    });
-    deps.derivativeCache = cache;
-    deps.readThumbnail = vi.fn(async () => ({
-      type: "image" as const,
-      data: Buffer.from("thumb"),
-      mimeType: "image/jpeg",
+  it("keeps repeated photo, video, and voice results below the aggregate limit", async () => {
+    const tools = await Promise.all([
+      getMedia(input(), fakePlannerDeps({ asset: fakeAsset({ type: "photo" }) })),
+      getMedia(input(), fakePlannerDeps({ asset: fakeAsset({ type: "video", mime_type: "video/mp4" }) })),
+      getMedia(input(), fakePlannerDeps({ asset: fakeAsset({ type: "voice", mime_type: "audio/ogg" }) })),
+    ]);
+    const serialized = tools.flatMap((outcome) => [
+      JSON.stringify(mediaToolResult(outcome)),
+      JSON.stringify(mediaToolResult(outcome)),
+    ]);
+
+    expect(serialized.join("").length).toBeLessThan(96 * 1024);
+  });
+
+  it("issues the planned capability and avoids Telegram transport serialization", async () => {
+    const asset = fakeAsset({ type: "document", mime_type: "application/pdf", file_name: "report.pdf" });
+    asset.rawMessage.fileReference = "MESSAGE_REFERENCE_SENTINEL";
+    asset.rawMedia.accessHash = "MEDIA_ACCESS_HASH_SENTINEL";
+    const deps = fakePlannerDeps({ asset });
+
+    const outcome = await getMedia(input(), deps);
+
+    expect(deps.issueCapability).toHaveBeenCalledWith(expect.objectContaining({
+      v: 2,
+      purpose: "telegram-media",
+      ownerId: "owner-1",
+      representation: { kind: "original" },
     }));
-    deps.normalizeImage = vi.fn(async (data) => ({
-      data,
-      mimeType: "image/jpeg" as const,
-      width: 320,
-      height: 180,
-    }));
-    let linkNumber = 0;
-    deps.attachOriginalLink = vi.fn(async (_asset, outcome) => {
-      linkNumber += 1;
-      const uri = `https://gramscope.test/api/media/fresh-${linkNumber}`;
-      return {
-        ...outcome,
-        result: {
-          ...outcome.result,
-          download: { url: uri, expires_at: "2026-08-30T12:10:00.000Z" },
-        },
-        link: { uri, name: "report.pdf" },
-      };
+    expect(outcome.result).toMatchObject({
+      status: "ready",
+      representation: { kind: "document", delivery: "resource_link" },
     });
-    try {
-      const first = await getMedia(input({ mode: "preview" }), deps);
-      const warm = await getMedia(input({ mode: "preview" }), deps);
-
-      expect(deps.readThumbnail).toHaveBeenCalledTimes(1);
-      expect(deps.normalizeImage).toHaveBeenCalledTimes(1);
-      expect(first.result.download?.url).not.toBe(warm.result.download?.url);
-      expect(set).toHaveBeenCalledTimes(1);
-      const cached = set.mock.calls[0]![1];
-      expect(cached).toMatchObject({ mimeType: "image/jpeg", bytes: 5, width: 320, height: 180 });
-      expect(JSON.stringify(cached)).not.toMatch(/url|token|expires_at/i);
-    } finally {
-      await cache.clear();
-    }
-  });
-
-  it("never consults or writes the derivative cache for originals and source audio", async () => {
-    const cache = {
-      get: vi.fn(async () => undefined),
-      set: vi.fn(async () => undefined),
-    };
-    const originalDeps = fakeMediaDeps();
-    originalDeps.derivativeCache = cache;
-    const audioDeps = fakeMediaDeps({
-      asset: fakeAsset({ type: "voice", mime_type: "audio/ogg", size: 5 }),
-    });
-    audioDeps.derivativeCache = cache;
-
-    await getMedia(input({ mode: "original" }), originalDeps);
-    await getMedia(input(), audioDeps);
-
-    expect(cache.get).not.toHaveBeenCalled();
-    expect(cache.set).not.toHaveBeenCalled();
-  });
-
-  it("issues an encrypted same-origin original link from the stable selector", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-08-30T12:00:00Z"));
-    const key = Buffer.alloc(32, 7).toString("base64url");
-    const environment = {
-      TELEGRAM_API_ID: "12345",
-      TELEGRAM_API_HASH: "hash",
-      TELEGRAM_SESSION: "session",
-      WORKOS_ISSUER: "https://auth.example.test",
-      WORKOS_JWKS_URL: "https://auth.example.test/jwks",
-      OWNER_USER_ID: "owner-1",
-      MCP_RESOURCE_URL: "https://gramscope.test/api/mcp",
-      MEDIA_TOKEN_SECRET: key,
-    };
-    for (const [name, value] of Object.entries(environment)) vi.stubEnv(name, value);
-    const asset = fakeAsset({
-      type: "document",
-      file_name: "report.pdf",
-      mime_type: "application/pdf",
-      size: 123,
-    });
-    const outcome = await attachOriginalLink(asset, {
-      result: {
-        status: "fallback",
-        source_id: asset.sourceId,
-        message_id: asset.messageId,
-        media: asset.descriptor,
-        representation: { kind: "metadata" },
-        code: "UNSUPPORTED_MEDIA",
-        retryable: false,
-        message: "fallback",
-      },
-    });
-
-    expect(outcome.result.download?.expires_at).toBe("2026-08-30T12:10:00.000Z");
-    expect(outcome.link).toMatchObject({
-      name: "report.pdf",
-      mimeType: "application/pdf",
-      size: 123,
-    });
-    const link = new URL(outcome.link!.uri);
-    expect(link.origin).toBe("https://gramscope.test");
-    expect(link.pathname).toMatch(/^\/api\/media\/[^/]+$/);
-    expect(link.pathname).not.toContain(asset.sourceId);
-  });
-
-  it("returns a direct image for a bounded photo", async () => {
-    const deps = fakeMediaDeps();
-
-    await expect(getMedia(input(), deps)).resolves.toMatchObject({
-      result: { status: "ready", representation: { kind: "image", byte_size: 5 } },
-      artifact: { type: "image", data: Buffer.from("abcde"), mimeType: "image/jpeg" },
-    });
+    expect(JSON.stringify(outcome)).not.toContain("MESSAGE_REFERENCE_SENTINEL");
+    expect(JSON.stringify(outcome)).not.toContain("MEDIA_ACCESS_HASH_SENTINEL");
   });
 
   it("logs only the safe media summary fields", async () => {
@@ -754,12 +632,8 @@ describe("getMedia", () => {
           status: "ready",
           source_id: "-1001",
           message_id: 7,
-          media: {
-            media_id: "med_test",
-            type: "photo",
-            size: 5,
-          },
-          representation: { kind: "image", byte_size: 5 },
+          media: { media_id: "med_test", type: "photo", size: 5 },
+          representation: { kind: "image", byte_size: 5, delivery: "resource_link" },
         },
       }),
       (line) => lines.push(line),
@@ -768,227 +642,5 @@ describe("getMedia", () => {
     expect(lines).toEqual([expect.stringContaining("media_kind=photo")]);
     expect(lines[0]).toContain("bytes=5");
     expect(lines[0]).not.toContain("-1001");
-  });
-
-  it("returns a direct audio artifact for a bounded voice message", async () => {
-    const deps = fakeMediaDeps({
-      asset: fakeAsset({ type: "voice", mime_type: "audio/ogg" }),
-    });
-
-    await expect(getMedia(input(), deps)).resolves.toMatchObject({
-      result: { status: "ready", representation: { kind: "audio" } },
-      artifact: { type: "audio", mimeType: "audio/ogg" },
-    });
-  });
-
-  it("adds one same-call original link to one bounded source-audio block", async () => {
-    const bytes = Buffer.from("source-ogg");
-    const deps = fakeMediaDeps({
-      asset: fakeAsset({
-        type: "voice",
-        mime_type: "audio/ogg",
-        file_name: "voice.ogg",
-        size: bytes.length,
-      }),
-      bytes,
-    });
-    deps.attachOriginalLink = async (_asset, outcome) => ({
-      ...outcome,
-      result: {
-        ...outcome.result,
-        download: {
-          url: "https://gramscope.test/api/media/encrypted",
-          expires_at: "2026-08-30T12:10:00.000Z",
-        },
-      },
-      link: {
-        uri: "https://gramscope.test/api/media/encrypted",
-        name: "voice.ogg",
-        mimeType: "audio/ogg",
-        size: bytes.length,
-      },
-    });
-
-    const outcome = await getMedia(input(), deps);
-    const toolResult = mediaToolResult(outcome);
-    expect(toolResult.content.filter((part) => part.type === "audio")).toHaveLength(1);
-    expect(toolResult.content.filter((part) => part.type === "resource_link")).toEqual([{
-      type: "resource_link",
-      uri: "https://gramscope.test/api/media/encrypted",
-      name: "voice.ogg",
-      mimeType: "audio/ogg",
-      size: bytes.length,
-    }]);
-    expect(outcome.artifact).toMatchObject({ type: "audio", mimeType: "audio/ogg" });
-    expect(outcome.artifact?.data.equals(bytes)).toBe(true);
-  });
-
-  it.each([
-    ["voice", "explicit frames", { mode: "frames" }],
-    ["voice", "timestamps", { timestamps_seconds: [1] as number[] }],
-    ["audio", "explicit frames", { mode: "frames" }],
-    ["audio", "timestamps", { timestamps_seconds: [1] as number[] }],
-  ] as const)(
-    "adds exactly one original link to %s rejected by %s representation",
-    async (type, _case, inputOverrides) => {
-      const deps = fakeMediaDeps({
-        asset: fakeAsset({ type, mime_type: "audio/ogg", size: 128 }),
-      });
-      deps.attachOriginalLink = async (_asset, outcome) => ({
-        ...outcome,
-        result: {
-          ...outcome.result,
-          download: {
-            url: "https://gramscope.test/api/media/encrypted",
-            expires_at: "2026-08-30T12:10:00.000Z",
-          },
-        },
-        link: {
-          uri: "https://gramscope.test/api/media/encrypted",
-          name: `${type}-7.ogg`,
-          mimeType: "audio/ogg",
-          size: 128,
-        },
-      });
-
-      const outcome = await getMedia(input(inputOverrides), deps);
-      const content = mediaToolResult(outcome).content;
-      expect(outcome.result).toMatchObject({
-        status: "error",
-        code: "UNSUPPORTED_MEDIA",
-        representation: { kind: "metadata" },
-      });
-      expect(content.filter((part) => part.type === "resource_link")).toHaveLength(1);
-      expect(content.filter((part) => part.type === "audio" || part.type === "image"))
-        .toHaveLength(0);
-      expect(deps.readBytes).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each([
-    ["photo", "image/jpeg", "image"],
-    ["document", "image/png", "image"],
-    ["voice", "audio/ogg", "audio"],
-    ["audio", "audio/mpeg", "audio"],
-  ] as const)("auto returns one direct artifact for %s", async (type, mimeType, expectedType) => {
-    const outcome = await getMedia(
-      input(),
-      fakeMediaDeps({ asset: fakeAsset({ type, mime_type: mimeType, size: 128 }), bytes: Buffer.alloc(128) }),
-    );
-    expect(outcome.result.status).toBe("ready");
-    expect(outcome.artifact?.type).toBe(expectedType);
-    expect(outcome.result.representation?.file_name).toBeTruthy();
-  });
-
-  it("does not download audio declared above the inline cap", async () => {
-    const deps = fakeMediaDeps({
-      asset: fakeAsset({ type: "voice", size: INLINE_MEDIA_MAX_BYTES + 1 }),
-    });
-    const outcome = await getMedia(input(), deps);
-    expect(deps.readBytes).not.toHaveBeenCalled();
-    expect(outcome.result).toMatchObject({ status: "fallback", code: "INLINE_LIMIT_EXCEEDED" });
-  });
-
-  it("classifies unsupported oversized media before considering its size", async () => {
-    const deps = fakeMediaDeps({
-      asset: fakeAsset({ type: "archive", size: INLINE_MEDIA_MAX_BYTES + 1 }),
-    });
-    const outcome = await getMedia(input(), deps);
-    expect(deps.readBytes).not.toHaveBeenCalled();
-    expect(outcome.result).toMatchObject({ status: "error", code: "UNSUPPORTED_MEDIA" });
-  });
-
-  it("preserves bounded source audio bytes exactly", async () => {
-    const bytes = Buffer.from([0x4f, 0x67, 0x67, 0x53, 0, 0xff, 0x10]);
-    const outcome = await getMedia(
-      input(),
-      fakeMediaDeps({
-        asset: fakeAsset({ type: "voice", mime_type: "audio/ogg", size: bytes.length }),
-        bytes,
-      }),
-    );
-    expect(outcome.artifact?.data.equals(bytes)).toBe(true);
-    expect(outcome.artifact?.mimeType).toBe("audio/ogg");
-  });
-
-  it("falls back when original-mode audio exceeds the measured limit", async () => {
-    const deps = fakeMediaDeps({
-      asset: fakeAsset({ type: "voice", mime_type: "audio/ogg", size: 128 }),
-    });
-    deps.readBytes.mockRejectedValue(mediaError(
-      "INLINE_LIMIT_EXCEEDED",
-      "Media exceeds the inline media limit",
-    ));
-
-    await expect(getMedia(input({ mode: "original" }), deps)).resolves.toMatchObject({
-      result: { status: "fallback", code: "INLINE_LIMIT_EXCEEDED" },
-    });
-  });
-
-  it("classifies unsupported original-mode media before the size fallback", async () => {
-    const deps = fakeMediaDeps({
-      asset: fakeAsset({ type: "archive", size: 128 }),
-      bytes: Buffer.alloc(128),
-    });
-    deps.attachOriginalLink = async (_asset, outcome) => ({
-      ...outcome,
-      link: { uri: "https://example.test/original", name: "original" },
-    });
-
-    await expect(getMedia(input({ mode: "original" }), deps)).resolves.toMatchObject({
-      result: { status: "error", code: "UNSUPPORTED_MEDIA" },
-      link: { uri: "https://example.test/original" },
-    });
-    expect(deps.readBytes).not.toHaveBeenCalled();
-  });
-
-  it("uses the emitted image MIME for the direct artifact filename", async () => {
-    const deps = fakeMediaDeps({
-      asset: fakeAsset({
-        type: "document",
-        mime_type: "image/png",
-        file_name: "cover.png",
-        size: 128,
-      }),
-      bytes: Buffer.alloc(128),
-    });
-    deps.normalizeImage = async (data) => ({
-      data,
-      mimeType: "image/jpeg",
-      width: 320,
-      height: 180,
-    });
-
-    await expect(getMedia(input(), deps)).resolves.toMatchObject({
-      result: { representation: { file_name: "cover.jpg", mime_type: "image/jpeg" } },
-    });
-  });
-
-  it("returns metadata-only fallback before downloading oversized media", async () => {
-    const deps = fakeMediaDeps({
-      asset: fakeAsset({ size: INLINE_MEDIA_MAX_BYTES + 1 }),
-    });
-
-    await expect(getMedia(input(), deps)).resolves.toMatchObject({
-      result: {
-        status: "fallback",
-        representation: { kind: "metadata" },
-        code: "INLINE_LIMIT_EXCEEDED",
-      },
-    });
-    expect(deps.readBytes).not.toHaveBeenCalled();
-  });
-
-  it("does not serialize Telegram transport fields", async () => {
-    const asset = fakeAsset();
-    asset.rawMessage.fileReference = "MESSAGE_REFERENCE_SENTINEL";
-    asset.rawMedia.accessHash = "MEDIA_ACCESS_HASH_SENTINEL";
-    asset.thumbnailLocation = "THUMBNAIL_LOCATION_SENTINEL";
-    const deps = fakeMediaDeps({ asset });
-
-    const outcome = await getMedia(input(), deps);
-    expect(JSON.stringify(outcome)).not.toContain("MESSAGE_REFERENCE_SENTINEL");
-    expect(JSON.stringify(outcome)).not.toContain("MEDIA_ACCESS_HASH_SENTINEL");
-    expect(JSON.stringify(outcome)).not.toContain("THUMBNAIL_LOCATION_SENTINEL");
   });
 });

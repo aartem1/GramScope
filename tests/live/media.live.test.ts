@@ -1,18 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { createHash } from "node:crypto";
 import { loadConfig } from "@/config";
-import { getMedia } from "@/media/service";
+import { getMedia, type MediaDependencies } from "@/media/service";
 import { handleOriginalRequest } from "@/media/original-route";
-import { issueMediaToken, verifyMediaToken } from "@/media/token";
+import { handleViewRequest } from "@/media/view-route";
 import {
-  INLINE_MEDIA_MAX_BYTES,
-  type GetMediaInput,
-} from "@/schemas/media";
+  issueMediaCapability,
+  verifyMediaCapability,
+} from "@/media/token";
+import type { GetMediaInput } from "@/schemas/media";
 import { withTelegram } from "@/telegram/client";
-import {
-  iterAssetBytes,
-  resolveMediaAsset,
-} from "@/telegram/media";
+import { iterAssetBytes, resolveMediaAsset } from "@/telegram/media";
+import { materializeMediaView } from "@/media/materializer";
 import {
   loadMediaLiveSelection,
   type MediaLiveSelection,
@@ -60,11 +58,44 @@ function liveInput(
   };
 }
 
-function liveRouteDependencies(now = new Date()) {
+function livePlanner() {
+  const config = loadConfig();
+  let resolveCalls = 0;
+  const dependencies: MediaDependencies = {
+    withClient: withTelegram,
+    resolveAsset: async (client, input) => {
+      resolveCalls += 1;
+      return resolveMediaAsset(client, input);
+    },
+    issueCapability: (claims) =>
+      issueMediaCapability(claims, new Date(), config.mediaTokenSecret),
+    mediaOrigin: new URL(config.mcpResourceUrl).origin,
+    ownerId: config.ownerUserId,
+  };
+  return { dependencies, resolveCalls: () => resolveCalls };
+}
+
+async function planned(kind: MediaMessageKind, overrides: Partial<GetMediaInput> = {}) {
+  const planner = livePlanner();
+  const outcome = await getMedia(liveInput(kind, overrides), planner.dependencies);
+  // Planning is intentionally only the one Telegram message refetch. Opening
+  // the capability performs the materialization or streaming work separately.
+  expect(planner.resolveCalls()).toBe(1);
+  expect(outcome.link).toBeDefined();
+  return outcome;
+}
+
+function capabilityToken(uri: string): string {
+  const token = new URL(uri).pathname.split("/").at(-1);
+  if (!token) throw new Error("Media link has no capability token");
+  return token;
+}
+
+function liveOriginalDependencies(now = new Date()) {
   const config = loadConfig();
   return {
     verifyToken: (token: string) =>
-      verifyMediaToken(token, now, config.mediaTokenSecret),
+      verifyMediaCapability(token, now, config.mediaTokenSecret),
     withClient: withTelegram,
     resolveAsset: resolveMediaAsset,
     iterBytes: iterAssetBytes,
@@ -72,17 +103,26 @@ function liveRouteDependencies(now = new Date()) {
   };
 }
 
-async function issuedToken(kind: MediaMessageKind, now = new Date()) {
-  const selector = selectorFor(kind);
-  if (!selector) throw new Error(`No live selector configured for ${kind}`);
+function liveViewDependencies(now = new Date()) {
   const config = loadConfig();
-  return issueMediaToken({
-    v: 1,
-    purpose: "telegram-original",
-    sourceId: selector.sourceId,
-    messageId: selector.messageId,
+  return {
+    verifyToken: (token: string) =>
+      verifyMediaCapability(token, now, config.mediaTokenSecret),
+    withClient: withTelegram,
+    resolveAsset: resolveMediaAsset,
+    materialize: materializeMediaView,
     ownerId: config.ownerUserId,
-  }, now, config.mediaTokenSecret);
+  };
+}
+
+async function openPlanned(outcome: Awaited<ReturnType<typeof getMedia>>) {
+  const link = outcome.link;
+  if (!link) throw new Error("Expected a media link");
+  const token = capabilityToken(link.uri);
+  const request = new Request(link.uri);
+  return new URL(link.uri).pathname.startsWith("/api/media/view/")
+    ? handleViewRequest(request, token, liveViewDependencies())
+    : handleOriginalRequest(request, token, liveOriginalDependencies());
 }
 
 configurationSuite("Telegram media live selector contract", () => {
@@ -94,240 +134,104 @@ configurationSuite("Telegram media live selector contract", () => {
 
 suite("Telegram media against explicit real-account selectors", () => {
   it.runIf(hasSelector("PHOTO"))(
-    "returns one bounded photo artifact without a follow-up",
+    "plans a photo link and materializes it only through the view handler",
     async () => {
-      const outcome = await getMedia(liveInput("PHOTO"));
-      expect(outcome.result.status).toBe("ready");
-      expect(outcome.result.media?.type).toBe("photo");
-      expect(outcome.artifact?.type).toBe("image");
-      expect(outcome.artifact!.data.length).toBeLessThanOrEqual(
-        INLINE_MEDIA_MAX_BYTES,
-      );
+      const outcome = await planned("PHOTO");
+      expect(outcome.link!.uri).toContain("/api/media/view/");
+      const response = await openPlanned(outcome);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/jpeg");
+      expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
     },
   );
 
   it.runIf(hasSelector("IMAGE_DOCUMENT"))(
-    "returns a bounded image-document artifact",
+    "plans an image document link and materializes it through the view handler",
     async () => {
-      const outcome = await getMedia(liveInput("IMAGE_DOCUMENT"));
-      expect(outcome.result.status).toBe("ready");
-      expect(outcome.result.media?.type).toBe("document");
-      expect(outcome.artifact?.type).toBe("image");
-      expect(outcome.artifact!.data.length).toBeLessThanOrEqual(
-        INLINE_MEDIA_MAX_BYTES,
-      );
+      const outcome = await planned("IMAGE_DOCUMENT");
+      expect(outcome.link!.uri).toContain("/api/media/view/");
+      const response = await openPlanned(outcome);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("image/jpeg");
+      expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
     },
   );
 
   for (const kind of ["VIDEO", "VIDEO_NOTE", "GIF"] as const) {
     it.runIf(hasSelector(kind))(
-      `builds one labelled sheet for ${kind} within the automatic deadline`,
+      `plans a contact-sheet link for ${kind} and materializes it through the view handler`,
       async () => {
-        const started = Date.now();
-        const outcome = await getMedia(liveInput(kind));
-        expect(outcome.result.status).toBe("ready");
-        expect(outcome.artifact?.type).toBe("image");
-        expect(outcome.result.representation?.frame_count).toBe(8);
-        expect(outcome.artifact!.data.length).toBeLessThanOrEqual(
-          INLINE_MEDIA_MAX_BYTES,
-        );
-        expect(Date.now() - started).toBeLessThan(25_000);
+        const outcome = await planned(kind);
+        expect(outcome.link!.uri).toContain("/api/media/view/");
+        const response = await openPlanned(outcome);
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe("image/jpeg");
+        expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
       },
     );
   }
 
-  it.runIf(hasSelector("OVERSIZED_VIDEO"))(
-    "degrades an oversized video before frame decoding",
-    async () => {
-      const outcome = await getMedia(liveInput("OVERSIZED_VIDEO"));
-      expect(outcome.result.status).toBe("fallback");
-      expect(outcome.result.code).toBe("INLINE_LIMIT_EXCEEDED");
-      expect(outcome.link).toBeDefined();
-    },
-  );
-
-  it.runIf(hasSelector("VOICE"))(
-    "preserves bounded voice bytes and source metadata",
-    async () => {
-      const outcome = await getMedia(liveInput("VOICE"));
-      expect(outcome.result.status).toBe("ready");
-      expect(outcome.result.media?.type).toBe("voice");
-      expect(outcome.artifact?.type).toBe("audio");
-      expect(outcome.result.representation?.file_name)
-        .toMatch(/^(voice-\d+\.[A-Za-z0-9]+|[^/]+\.[A-Za-z0-9]+)$/);
-      expect(outcome.result.representation?.mime_type).toBeTruthy();
-
-      const issued = await issuedToken("VOICE");
-      const response = await handleOriginalRequest(
-        new Request("https://gramscope.invalid/api/media/redacted"),
-        issued.token,
-        liveRouteDependencies(),
-      );
-      expect(response.status).toBe(200);
-      const originalHash = createHash("sha256")
-        .update(Buffer.from(await response.arrayBuffer()))
-        .digest("hex");
-      const artifactHash = createHash("sha256")
-        .update(outcome.artifact!.data)
-        .digest("hex");
-      expect(artifactHash).toBe(originalHash);
-    },
-  );
-
-  it.runIf(hasSelector("LARGE_VOICE"))(
-    "returns a link instead of collecting an oversized voice note",
-    async () => {
-      const outcome = await getMedia(liveInput("LARGE_VOICE"));
-      expect(outcome.result.status).toBe("fallback");
-      expect(outcome.result.media?.type).toBe("voice");
-      expect(outcome.artifact).toBeUndefined();
-      expect(outcome.link).toBeDefined();
-    },
-  );
-
-  it.runIf(hasSelector("AUDIO"))(
-    "returns bounded source bytes for music audio",
-    async () => {
-      const outcome = await getMedia(liveInput("AUDIO"));
-      expect(outcome.result.status).toBe("ready");
-      expect(outcome.result.media?.type).toBe("audio");
-      expect(outcome.artifact?.type).toBe("audio");
-      expect(outcome.artifact!.data.length).toBeLessThanOrEqual(
-        INLINE_MEDIA_MAX_BYTES,
-      );
-    },
-  );
+  for (const kind of ["VOICE", "LARGE_VOICE", "AUDIO"] as const) {
+    it.runIf(hasSelector(kind))(
+      `plans ${kind} as an original stream without fetching audio bytes`,
+      async () => {
+        const outcome = await planned(kind);
+        expect(outcome.link!.uri).toContain("/api/media/");
+        expect(outcome.link!.uri).not.toContain("/api/media/view/");
+        const response = await openPlanned(outcome);
+        expect(response.status).toBe(200);
+        expect(response.headers.get("content-type")).toBe(outcome.result.media?.mime_type);
+        expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
+      },
+    );
+  }
 
   it.runIf(hasSelector("DOCUMENT"))(
-    "returns a generic document thumbnail when available and an original link",
+    "opens a planned document link through its matching handler",
     async () => {
-      const outcome = await getMedia(liveInput("DOCUMENT"));
-      expect(outcome.result.media?.type).toBe("document");
-      expect(outcome.link).toBeDefined();
-      if (outcome.result.media?.has_thumbnail) {
-        expect(outcome.artifact?.type).toBe("image");
-      }
+      const outcome = await planned("DOCUMENT");
+      const response = await openPlanned(outcome);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBeTruthy();
+      expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
     },
   );
 
   it.runIf(hasSelector("STICKER"))(
-    "returns a bounded sticker preview or its original link",
+    "opens a planned sticker link through its matching handler",
     async () => {
-      const outcome = await getMedia(liveInput("STICKER"));
-      expect(
-        outcome.artifact !== undefined || outcome.link !== undefined,
-      ).toBe(true);
-      expect(outcome.result.media?.type).toBe("sticker");
-      if (outcome.artifact) {
-        expect(outcome.artifact.data.length).toBeLessThanOrEqual(
-          INLINE_MEDIA_MAX_BYTES,
-        );
-      }
+      const outcome = await planned("STICKER");
+      const response = await openPlanned(outcome);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBeTruthy();
+      expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
     },
   );
 
   it.runIf(hasSelector("VIDEO"))(
-    "builds one chronological sheet for exact timestamps",
+    "keeps explicit video timestamps in a link-only contact-sheet request",
     async () => {
-      const outcome = await getMedia(liveInput("VIDEO", {
+      const outcome = await planned("VIDEO", {
         timestamps_seconds: [8, 1, 5],
-      }));
-      expect(outcome.result.status).toBe("ready");
-      expect(outcome.artifact?.type).toBe("image");
-      expect(outcome.result.representation?.frame_count).toBe(3);
-      expect(outcome.result.representation?.timestamps_seconds).toEqual([
-        1,
-        5,
-        8,
-      ]);
-    },
-  );
-
-  it.runIf(hasSelector("PHOTO"))(
-    "streams one full original through the authenticated handler",
-    async () => {
-      const issued = await issuedToken("PHOTO");
-      const response = await handleOriginalRequest(
-        new Request("https://gramscope.invalid/api/media/redacted"),
-        issued.token,
-        liveRouteDependencies(),
-      );
+      });
+      expect(outcome.link!.uri).toContain("/api/media/view/");
+      const response = await openPlanned(outcome);
       expect(response.status).toBe(200);
-      const expected = Number(response.headers.get("content-length"));
-      expect(expected).toBeGreaterThan(0);
-      expect((await response.arrayBuffer()).byteLength).toBe(expected);
-    },
-  );
-
-  it.runIf(hasSelector("OVERSIZED_VIDEO"))(
-    "streams exactly the first one MiB of a large original",
-    async () => {
-      const issued = await issuedToken("OVERSIZED_VIDEO");
-      const response = await handleOriginalRequest(
-        new Request("https://gramscope.invalid/api/media/redacted", {
-          headers: { range: "bytes=0-1048575" },
-        }),
-        issued.token,
-        liveRouteDependencies(),
-      );
-      expect(response.status).toBe(206);
-      expect(response.headers.get("content-length")).toBe("1048576");
-      expect((await response.arrayBuffer()).byteLength).toBe(1_048_576);
+      expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
     },
   );
 
   it.runIf(hasSelector("PHOTO"))(
-    "rejects a tampered capability before Telegram access",
+    "rejects a tampered planned capability before Telegram access",
     async () => {
-      const issued = await issuedToken("PHOTO");
-      const response = await handleOriginalRequest(
-        new Request("https://gramscope.invalid/api/media/redacted"),
-        `${issued.token}x`,
-        liveRouteDependencies(),
+      const outcome = await planned("PHOTO");
+      const link = outcome.link!;
+      const response = await handleViewRequest(
+        new Request(link.uri),
+        `${capabilityToken(link.uri)}x`,
+        liveViewDependencies(),
       );
       expect(response.status).toBe(401);
-    },
-  );
-
-  it.runIf(hasSelector("PHOTO"))(
-    "rejects an expired capability through an injected clock",
-    async () => {
-      const issuedAt = new Date("2026-08-30T12:00:00.000Z");
-      const issued = await issuedToken("PHOTO", issuedAt);
-      const response = await handleOriginalRequest(
-        new Request("https://gramscope.invalid/api/media/redacted"),
-        issued.token,
-        liveRouteDependencies(new Date("2026-08-30T12:10:01.000Z")),
-      );
-      expect(response.status).toBe(401);
-    },
-  );
-
-  it.runIf(hasSelector("OVERSIZED_VIDEO"))(
-    "closes Telegram iteration when the client aborts",
-    async () => {
-      const issued = await issuedToken("OVERSIZED_VIDEO");
-      let stopped = false;
-      const dependencies = liveRouteDependencies();
-      const response = await handleOriginalRequest(
-        new Request("https://gramscope.invalid/api/media/redacted"),
-        issued.token,
-        {
-          ...dependencies,
-          iterBytes: async function* (client, asset, options) {
-            try {
-              yield* iterAssetBytes(client, asset, options);
-            } finally {
-              stopped = true;
-            }
-          },
-        },
-      );
-      const reader = response.body!.getReader();
-      const first = await reader.read();
-      expect(first.done).toBe(false);
-      await reader.cancel();
-      expect(stopped).toBe(true);
     },
   );
 });

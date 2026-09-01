@@ -61,7 +61,6 @@ describe("runTool logging", () => {
           code: "UNSUPPORTED_MEDIA",
           message: "safe fallback",
         },
-        artifact: { type: "image", data: Buffer.alloc(321), mimeType: "image/jpeg" },
         link: {
           uri: "https://media.example/token=secret-value",
           name: "secret-file-name.pdf",

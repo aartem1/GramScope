@@ -45,7 +45,7 @@ export async function runGetMediaTool(
 export function registerGetMedia(server: McpServer): void {
   server.registerTool("get_media", {
     title: "Inspect Telegram media",
-    description: "Retrieve the media attached to one Telegram message when its contents may affect the answer. Pass source_id and message_id; normally omit mode because GramScope returns the best bounded representation automatically.",
+    description: "Retrieve media attached to one Telegram message when its contents may affect the answer. Pass source_id and message_id and normally omit mode. GramScope returns one short-lived resource link to the best representation. Open it once. Do not retry get_media automatically if file materialization is denied, fails, or the link expires.",
     inputSchema: getMediaInputSchema,
     outputSchema: getMediaResultSchema,
     annotations: { readOnlyHint: true },
