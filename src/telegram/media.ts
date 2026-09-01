@@ -5,6 +5,7 @@ import { mediaOf } from "../schemas/message";
 import { mediaError } from "../errors/taxonomy";
 import { fetchDialogIndex } from "./dialog-index";
 import { getApi, type TelegramLike } from "./client";
+import { readBigId } from "./peer-id";
 import { resolveSource, type ResolvedSource } from "./peer-resolve";
 
 export type MediaAsset = {
@@ -21,13 +22,6 @@ function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null
     ? value as Record<string, unknown>
     : undefined;
-}
-
-function readBigId(value: unknown): string | undefined {
-  if (typeof value === "bigint") return value.toString();
-  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
-  if (typeof value === "string" && value.length > 0) return value;
-  return undefined;
 }
 
 function positiveNumber(value: unknown): number | undefined {

@@ -93,13 +93,13 @@ describe("get_media contract", () => {
   });
 });
 
-function photoMessage(input: { id: number; bytes: number }) {
+function photoMessage(input: { id: number; bytes: number; photoId?: unknown }) {
   return {
     className: "Message",
     id: input.id,
     media: {
       className: "MessageMediaPhoto",
-      photo: { className: "Photo", id: 11n, sizes: [], dcId: 2 },
+      photo: { className: "Photo", id: input.photoId ?? 11n, sizes: [], dcId: 2 },
     },
     expectedBytes: input.bytes,
   };
@@ -107,7 +107,7 @@ function photoMessage(input: { id: number; bytes: number }) {
 
 function documentMessage(input: {
   id: number;
-  documentId: bigint;
+  documentId: unknown;
   attributes: readonly Record<string, unknown>[];
 }) {
   return {
@@ -260,6 +260,35 @@ afterEach(() => {
 });
 
 describe("Telegram media bytes", () => {
+  it.each([
+    [
+      "photo",
+      photoMessage({ id: 7, bytes: 5, photoId: { value: 11n } }),
+      "photo",
+      "med_cTbYHpiy92mv4vHlI6lFWYUkxvIIbb9juDw3BNEPQK0",
+    ],
+    [
+      "document",
+      documentMessage({
+        id: 7,
+        documentId: { value: 99n },
+        attributes: [{ className: "DocumentAttributeVideo", w: 1280, h: 720, duration: 4 }],
+      }),
+      "video",
+      "med_jGtpofbTHnNa1GeFWIAEYDdZwwPEzj8DZPs3HWdTFWA",
+    ],
+  ])("resolves a teleproto BigInteger-like %s id", async (_name, raw, type, expectedMediaId) => {
+    const client = fakeMediaClient({ getMessages: async () => [raw] });
+
+    await expect(resolveMediaAsset(client, { sourceId: "@news", messageId: 7 }))
+      .resolves.toMatchObject({
+        descriptor: {
+          type,
+          media_id: expectedMediaId,
+        },
+      });
+  });
+
   it("streams a bounded asset to an exclusively created file", async () => {
     const directory = await mkdtemp(join(tmpdir(), "gramscope-download-test-"));
     const outputPath = join(directory, "asset.bin");
