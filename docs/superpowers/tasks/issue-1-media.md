@@ -57,7 +57,8 @@ created: 2026-08-30
 - Issue: `https://github.com/aartem1/GramScope/issues/1`
 - Voice/audio requirement: `https://github.com/aartem1/GramScope/issues/1#issuecomment-5467452008`
 - Approved design: `docs/superpowers/specs/2026-08-30-telegram-media-design.md`
-- Implementation plan: `docs/superpowers/plans/2026-08-30-telegram-media.md`
+- Original implementation plan: `docs/superpowers/plans/2026-08-30-telegram-media.md`
+- Link-only amendment plan: `docs/superpowers/plans/2026-09-01-telegram-media-link-only.md`
 - Acceptance journal: `docs/media-chatgpt-acceptance.md`
 - Existing Reading design: `docs/superpowers/specs/2026-08-27-gramscope-reading-design.md`
 - Existing Research design: `docs/superpowers/specs/2026-08-27-gramscope-research-design.md`
