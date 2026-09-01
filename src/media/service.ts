@@ -3,6 +3,7 @@ import { GramScopeError } from "../errors/taxonomy";
 import {
   MEDIA_RESULT_CODES,
   type GetMediaInput,
+  type MediaDescriptor,
   type GetMediaResult,
   type MediaResultCode,
 } from "../schemas/media";
@@ -15,6 +16,10 @@ import { issueMediaCapability, type MediaCapabilityClaims } from "./token";
 export type { MediaAsset } from "../telegram/media";
 
 const MEDIA_RESULT_CODE_SET = new Set<string>(MEDIA_RESULT_CODES);
+const MAX_MEDIA_ID_BYTES = 256;
+const MAX_MEDIA_TYPE_BYTES = 64;
+const MAX_MEDIA_FILENAME_BYTES = 160;
+const MAX_MEDIA_MIME_BYTES = 128;
 
 export type MediaLink = {
   uri: string;
@@ -99,19 +104,26 @@ async function issueLink(
     representation: plan,
   });
   const isOriginal = plan.kind === "original";
+  const descriptor = compactDescriptor(asset.descriptor);
   const uri = new URL(
     isOriginal
       ? `/api/media/${encodeURIComponent(issued.token)}`
       : `/api/media/view/${encodeURIComponent(issued.token)}`,
     deps.mediaOrigin,
   ).toString();
-  const mimeType = isOriginal ? asset.descriptor.mime_type : "image/jpeg";
-  const name = safeMediaFilename({
-    supplied: asset.descriptor.file_name,
-    kind: isOriginal ? asset.descriptor.type : "preview",
-    messageId: asset.messageId,
-    mimeType,
-  });
+  const mimeType = isOriginal
+    ? descriptor.mime_type
+    : plan.kind === "contact_sheet" ? "image/jpeg" : undefined;
+  const name = isOriginal
+    ? safeMediaFilename({
+      supplied: descriptor.file_name,
+      kind: descriptor.type,
+      messageId: asset.messageId,
+      mimeType,
+    })
+    : plan.kind === "contact_sheet"
+      ? `contact-sheet-${asset.messageId}.jpg`
+      : `preview-${asset.messageId}`;
   const representationKind = isOriginal
     ? originalRepresentationKind(asset)
     : "image";
@@ -121,14 +133,14 @@ async function issueLink(
       status: "ready",
       source_id: asset.sourceId,
       message_id: asset.messageId,
-      media: asset.descriptor,
+      media: descriptor,
       representation: {
         kind: representationKind,
         delivery: "resource_link",
         ...(mimeType ? { mime_type: mimeType } : {}),
         file_name: name,
-        ...(isOriginal && asset.descriptor.size !== undefined
-          ? { byte_size: asset.descriptor.size }
+        ...(isOriginal && descriptor.size !== undefined
+          ? { byte_size: descriptor.size }
           : {}),
       },
       download: {
@@ -140,8 +152,42 @@ async function issueLink(
       uri,
       name,
       ...(mimeType ? { mimeType } : {}),
-      ...(asset.descriptor.size !== undefined ? { size: asset.descriptor.size } : {}),
+      ...(isOriginal && descriptor.size !== undefined ? { size: descriptor.size } : {}),
     },
+  };
+}
+
+function compactUtf8(value: string, maxBytes: number): string {
+  let bytes = 0;
+  let compact = "";
+  for (const symbol of value) {
+    const symbolBytes = Buffer.byteLength(symbol, "utf8");
+    if (bytes + symbolBytes > maxBytes) break;
+    compact += symbol;
+    bytes += symbolBytes;
+  }
+  return compact;
+}
+
+function compactDescriptor(descriptor: MediaDescriptor): MediaDescriptor {
+  return {
+    media_id: compactUtf8(descriptor.media_id, MAX_MEDIA_ID_BYTES),
+    type: compactUtf8(descriptor.type, MAX_MEDIA_TYPE_BYTES),
+    ...(descriptor.file_name !== undefined
+      ? { file_name: compactUtf8(descriptor.file_name, MAX_MEDIA_FILENAME_BYTES) }
+      : {}),
+    ...(descriptor.mime_type !== undefined
+      ? { mime_type: compactUtf8(descriptor.mime_type, MAX_MEDIA_MIME_BYTES) }
+      : {}),
+    ...(descriptor.size !== undefined ? { size: descriptor.size } : {}),
+    ...(descriptor.width !== undefined ? { width: descriptor.width } : {}),
+    ...(descriptor.height !== undefined ? { height: descriptor.height } : {}),
+    ...(descriptor.duration_seconds !== undefined
+      ? { duration_seconds: descriptor.duration_seconds }
+      : {}),
+    ...(descriptor.has_thumbnail !== undefined
+      ? { has_thumbnail: descriptor.has_thumbnail }
+      : {}),
   };
 }
 
@@ -164,7 +210,7 @@ function errorOutcome(
       status: "error",
       source_id: asset.sourceId,
       message_id: asset.messageId,
-      media: asset.descriptor,
+      media: compactDescriptor(asset.descriptor),
       representation: { kind: "metadata" },
       code,
       retryable,

@@ -4,6 +4,7 @@ import { z } from "zod";
 export const INLINE_MEDIA_MAX_BYTES = 2 * 1024 * 1024;
 export const DEFAULT_MAX_FRAMES = 8;
 export const MAX_FRAMES = 10;
+export const MAX_MEDIA_SOURCE_ID_LENGTH = 256;
 export const MEDIA_MODES = ["auto", "preview", "frames", "original"] as const;
 export const MEDIA_RESULT_CODES = [
   "MEDIA_NOT_FOUND",
@@ -37,7 +38,7 @@ export const mediaDescriptorSchema = z.object({
 });
 
 export const getMediaInputSchema = z.object({
-  source_id: z.string().min(1),
+  source_id: z.string().min(1).max(MAX_MEDIA_SOURCE_ID_LENGTH),
   message_id: z.number().int().positive(),
   mode: z.enum(MEDIA_MODES).default("auto"),
   timestamps_seconds: z.array(z.number().finite().nonnegative()).max(MAX_FRAMES).optional(),

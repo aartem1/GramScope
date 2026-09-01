@@ -12,6 +12,7 @@ import {
   getMedia,
   type MediaAsset,
   type MediaDependencies,
+  type MediaOutcome,
 } from "@/media/service";
 import {
   downloadAssetToFile,
@@ -59,6 +60,13 @@ describe("get_media contract", () => {
       message_id: 7,
       mode: "original",
       timestamps_seconds: [1],
+    })).toThrow();
+  });
+
+  it("rejects an overlong source id before media resolution", () => {
+    expect(() => getMediaInputSchema.parse({
+      source_id: "x".repeat(257),
+      message_id: 7,
     })).toThrow();
   });
 
@@ -187,6 +195,26 @@ function input(overrides: Partial<GetMediaInput> = {}): GetMediaInput {
     mode: "auto",
     max_frames: 8,
     ...overrides,
+  };
+}
+
+function oversizedMediaOutcome(): MediaOutcome {
+  return {
+    result: {
+      status: "ready",
+      source_id: "-1001",
+      message_id: 7,
+      media: {
+        media_id: "med_test",
+        type: "document",
+        file_name: "🪁".repeat(20_000),
+      },
+      representation: { kind: "document", delivery: "resource_link" },
+    },
+    link: {
+      uri: "https://gramscope.test/api/media/capability",
+      name: "🪁".repeat(20_000),
+    },
   };
 }
 
@@ -585,6 +613,84 @@ describe("getMedia", () => {
     expect(tool.content.map((part) => part.type)).toEqual(["text", "resource_link"]);
     expect(tool.content.filter((part) => part.type === "audio")).toHaveLength(0);
     expect(outcome.result.download?.url).toBe((tool.content[1] as { uri: string }).uri);
+  });
+
+  it("does not advertise unknown generic image view metadata", async () => {
+    const outcome = await getMedia(input(), fakePlannerDeps({
+      asset: fakeAsset({
+        type: "photo",
+        mime_type: "image/webp",
+        file_name: "source.webp",
+        size: 12_345,
+      }),
+    }));
+
+    expect(outcome.link).toMatchObject({ name: "preview-7" });
+    expect(outcome.link).not.toHaveProperty("mimeType");
+    expect(outcome.link).not.toHaveProperty("size");
+    expect(outcome.result.representation).not.toHaveProperty("mime_type");
+    expect(outcome.result.representation?.file_name).toBe("preview-7");
+  });
+
+  it("advertises only the guaranteed metadata for a video contact sheet", async () => {
+    const outcome = await getMedia(input(), fakePlannerDeps({
+      asset: fakeAsset({ type: "video", mime_type: "video/mp4", size: 12_345 }),
+    }));
+
+    expect(outcome.link).toMatchObject({
+      mimeType: "image/jpeg",
+      name: "contact-sheet-7.jpg",
+    });
+    expect(outcome.link).not.toHaveProperty("size");
+    expect(outcome.result.representation).toMatchObject({
+      mime_type: "image/jpeg",
+      file_name: "contact-sheet-7.jpg",
+    });
+  });
+
+  it("preserves known source metadata for an original voice link", async () => {
+    const outcome = await getMedia(input(), fakePlannerDeps({
+      asset: fakeAsset({
+        type: "voice",
+        mime_type: "audio/ogg",
+        file_name: "voice-message.ogg",
+        size: 12_345,
+      }),
+    }));
+
+    expect(outcome.link).toMatchObject({
+      mimeType: "audio/ogg",
+      size: 12_345,
+      name: "voice-message.ogg",
+    });
+  });
+
+  it("compacts long multibyte Telegram metadata below the tool result limit", async () => {
+    const outcome = await getMedia(input(), fakePlannerDeps({
+      asset: fakeAsset({
+        type: "voice",
+        mime_type: "audio/ogg",
+        file_name: "🪁".repeat(20_000),
+      }),
+    }));
+    const tool = mediaToolResult(outcome);
+
+    expect(Buffer.byteLength(JSON.stringify(tool), "utf8")).toBeLessThan(32 * 1024);
+    expect(Buffer.byteLength(outcome.result.media?.file_name ?? "", "utf8")).toBeLessThanOrEqual(512);
+    expect(outcome.result.media?.file_name).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
+  it("rejects a direct oversized media outcome at the result builder boundary", () => {
+    expect(() => mediaToolResult(oversizedMediaOutcome()))
+      .toThrowError(/32 KiB response limit/);
+  });
+
+  it("converts an oversized media outcome into a compact safe error", async () => {
+    const result = await runGetMediaTool(input(), async () => oversizedMediaOutcome());
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({ code: "INTERNAL_ERROR" });
+    expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThan(32 * 1024);
   });
 
   it("keeps repeated photo, video, and voice results below the aggregate limit", async () => {
