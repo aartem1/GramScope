@@ -105,6 +105,31 @@ function photoMessage(input: { id: number; bytes: number; photoId?: unknown }) {
   };
 }
 
+function sizedPhotoMessage(
+  id: number,
+  sizes: readonly Record<string, unknown>[],
+) {
+  return {
+    className: "Message",
+    id,
+    media: {
+      className: "MessageMediaPhoto",
+      photo: {
+        className: "Photo",
+        flags: 0,
+        hasStickers: false,
+        id: 11n,
+        accessHash: 22n,
+        fileReference: Buffer.from([1, 2, 3]),
+        date: 1_777_593_600,
+        sizes,
+        videoSizes: [],
+        dcId: 2,
+      },
+    },
+  };
+}
+
 function documentMessage(input: {
   id: number;
   documentId: unknown;
@@ -348,6 +373,57 @@ describe("Telegram media bytes", () => {
     expect(asset.descriptor).toMatchObject({
       type: "photo",
       mime_type: "image/jpeg",
+      size: 171_114,
+      width: 1280,
+      height: 1024,
+    });
+  });
+
+  it.each([
+    ["NaN", Number.NaN],
+    ["positive infinity", Number.POSITIVE_INFINITY],
+    ["negative infinity", Number.NEGATIVE_INFINITY],
+    ["fractional", 171_114.5],
+    ["zero", 0],
+    ["negative", -1],
+    ["unsafe integer", Number.MAX_SAFE_INTEGER + 1],
+  ])("ignores a malformed %s photo byte size in scalar and progressive fields", async (_name, malformed) => {
+    const progressiveRaw = sizedPhotoMessage(7, [
+      { className: "PhotoSize", type: "x", w: 800, h: 640, size: 104_757 },
+      {
+        className: "PhotoSizeProgressive",
+        type: "y",
+        w: 1280,
+        h: 1024,
+        sizes: [120_000, malformed, 171_114],
+      },
+    ]);
+    const scalarRaw = sizedPhotoMessage(8, [
+      { className: "PhotoSize", type: "z", w: 1600, h: 1280, size: malformed },
+      {
+        className: "PhotoSizeProgressive",
+        type: "y",
+        w: 1280,
+        h: 1024,
+        sizes: [120_000, 171_114],
+      },
+    ]);
+
+    const progressiveAsset = await resolveMediaAsset(
+      fakeMediaClient({ getMessages: async () => [progressiveRaw] }),
+      { sourceId: "@news", messageId: 7 },
+    );
+    const scalarAsset = await resolveMediaAsset(
+      fakeMediaClient({ getMessages: async () => [scalarRaw] }),
+      { sourceId: "@news", messageId: 8 },
+    );
+
+    expect(progressiveAsset.descriptor).toMatchObject({
+      size: 171_114,
+      width: 1280,
+      height: 1024,
+    });
+    expect(scalarAsset.descriptor).toMatchObject({
       size: 171_114,
       width: 1280,
       height: 1024,

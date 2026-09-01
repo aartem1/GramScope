@@ -30,15 +30,22 @@ function positiveNumber(value: unknown): number | undefined {
     : undefined;
 }
 
+function positiveByteCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0
+    ? value
+    : undefined;
+}
+
 function photoBytes(size: Record<string, unknown>): number | undefined {
-  const bytes = positiveNumber(size.size);
+  const bytes = positiveByteCount(size.size);
   if (bytes !== undefined) return bytes;
   if (!Array.isArray(size.sizes)) return undefined;
-  return size.sizes.reduce<number | undefined>((largest, candidate) =>
-    typeof candidate === "number" && Number.isFinite(candidate) &&
-      Number.isInteger(candidate) && candidate > 0 && (largest === undefined || candidate > largest)
-      ? candidate
-      : largest, undefined);
+  return size.sizes.reduce<number | undefined>((largest, candidate) => {
+    const candidateBytes = positiveByteCount(candidate);
+    return candidateBytes !== undefined && (largest === undefined || candidateBytes > largest)
+      ? candidateBytes
+      : largest;
+  }, undefined);
 }
 
 function photoSize(photo: Record<string, unknown>): Record<string, unknown> | undefined {
