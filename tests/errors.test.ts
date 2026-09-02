@@ -60,6 +60,16 @@ describe("mapTelegramError", () => {
     ).toBe("AUTH_REQUIRED");
   });
 
+  it("maps a duplicated auth key to AUTH_REQUIRED", () => {
+    // Official MTProto code is AUTH_KEY_DUPLICATED; some surfaces echo
+    // AUTH_KEY_DUPLICATE. Either means Telegram already invalidated the session.
+    for (const code of ["AUTH_KEY_DUPLICATED", "AUTH_KEY_DUPLICATE"]) {
+      const mapped = mapTelegramError(new FakeRpcError(code, 406));
+      expect(mapped.code).toBe("AUTH_REQUIRED");
+      expect(mapped.message).toContain(code);
+    }
+  });
+
   it("maps the folder-editing wire rules to INVALID_INPUT", () => {
     // folder-edit.ts rejects an over-long title and an empty include list
     // before the call. These entries keep the wire-level answer actionable if

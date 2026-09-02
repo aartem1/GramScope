@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { loadConfig } from "../config";
 import {
+  isDeadTelegramSession,
   isUnresolvedEntity,
   mapTelegramError,
   telegramErrorCode,
@@ -10,6 +11,11 @@ import { peerKind } from "./peer-id";
 export type TelegramLike = {
   connected?: boolean;
   connect(): Promise<boolean>;
+  /**
+   * Closes the MTProto TCP session. Optional on test doubles that never open
+   * a real socket; production teleproto clients always implement it.
+   */
+  disconnect?(): Promise<void>;
   invoke(request: unknown): Promise<unknown>;
   /**
    * teleproto's public error hook (`set onError` on TelegramBaseClient). It is
@@ -62,10 +68,17 @@ export async function getApi(): Promise<ApiNamespace> {
   return apiNamespace;
 }
 
-// Module scope: on a warm Vercel instance this survives between invocations,
-// which is the point — a fresh MTProto handshake per tool call is wasteful and
-// invites FLOOD_WAIT.
+// The client object is reused on a warm isolate so reconnect is cheaper than
+// `new TelegramClient`. The TCP session is not: Telegram invalidates the auth
+// key (AUTH_KEY_DUPLICATED) if two main-DC connections use it at once. That
+// happens as soon as a second Vercel isolate connects — MCP and media are
+// separate functions, and a second MCP client (ChatGPT + Grok) can scale out.
+// Overlapping calls on this isolate share one socket (lease count). Closing it
+// when the last lease drops is what lets the next isolate in.
 let cached: TelegramLike | undefined;
+let leases = 0;
+let connecting: Promise<TelegramLike> | undefined;
+let disconnecting: Promise<void> | undefined;
 let testFactory: TestFactory | undefined;
 
 const defaultFactory: Factory = async () => {
@@ -86,6 +99,9 @@ export function __setClientFactoryForTests(factory: TestFactory | undefined): vo
 
 export function __resetClientForTests(): void {
   cached = undefined;
+  leases = 0;
+  connecting = undefined;
+  disconnecting = undefined;
 }
 
 /**
@@ -191,36 +207,69 @@ export async function toInputPeer(entity: unknown): Promise<unknown> {
   }
 }
 
+async function acquireClient(): Promise<TelegramLike> {
+  if (disconnecting) await disconnecting;
+
+  leases += 1;
+  try {
+    if (cached?.connected) return cached;
+    connecting ??= (async () => {
+      const factory = testFactory ?? defaultFactory;
+      let client = cached;
+      if (!client) {
+        client = (await factory()) as TelegramLike;
+        // Installed once per client, before it is ever used, so every resolution
+        // that runs on it can recover what teleproto swallows. Outside a
+        // resolveEntity scope this is a no-op, so the background sender and update
+        // loops — which call the same hook — record nothing.
+        client.onError = recordSwallowedError;
+        cached = client;
+      }
+      if (!client.connected) await client.connect();
+      return client;
+    })().finally(() => {
+      connecting = undefined;
+    });
+    return await connecting;
+  } catch (err) {
+    leases -= 1;
+    cached = undefined;
+    throw err;
+  }
+}
+
+async function releaseClient(client: TelegramLike, drop: boolean): Promise<void> {
+  if (drop) cached = undefined;
+  leases -= 1;
+  if (leases > 0) return;
+  disconnecting = Promise.resolve(client.disconnect?.())
+    .catch(() => undefined)
+    .finally(() => {
+      disconnecting = undefined;
+    });
+  await disconnecting;
+}
+
 /**
  * The only path to MTProto. No tool may import a Telegram client directly.
  */
 export async function withTelegram<T>(
   fn: (client: TelegramLike) => Promise<T>,
 ): Promise<T> {
-  const factory = testFactory ?? defaultFactory;
-
-  let client = cached;
-  if (!client) {
-    client = await factory() as TelegramLike;
-    // Installed once per client, before it is ever used, so every resolution
-    // that runs on it can recover what teleproto swallows. Outside a
-    // resolveEntity scope this is a no-op, so the background sender and update
-    // loops — which call the same hook — record nothing.
-    client.onError = recordSwallowedError;
-    cached = client;
-  }
-
+  let client: TelegramLike;
   try {
-    if (!client.connected) await client.connect();
+    client = await acquireClient();
   } catch (err) {
-    // A client that cannot connect must not be reused.
-    cached = undefined;
     throw mapTelegramError(err);
   }
 
+  let drop = false;
   try {
     return await fn(client);
   } catch (err) {
+    drop = isDeadTelegramSession(err);
     throw mapTelegramError(err);
+  } finally {
+    await releaseClient(client, drop);
   }
 }

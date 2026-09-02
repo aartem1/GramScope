@@ -13,6 +13,9 @@ const EXACT: Record<string, ErrorCode> = {
   PEER_ID_INVALID: "CHANNEL_NOT_FOUND",
   MSG_ID_INVALID: "MESSAGE_NOT_FOUND",
   AUTH_KEY_UNREGISTERED: "AUTH_REQUIRED",
+  AUTH_KEY_DUPLICATED: "AUTH_REQUIRED",
+  AUTH_KEY_DUPLICATE: "AUTH_REQUIRED",
+  AUTH_KEY_INVALID: "AUTH_REQUIRED",
   SESSION_REVOKED: "AUTH_REQUIRED",
   SESSION_EXPIRED: "AUTH_REQUIRED",
   USER_NOT_PARTICIPANT: "NOT_A_MEMBER",
@@ -37,6 +40,15 @@ export function telegramErrorCode(err: unknown): string | undefined {
   if (typeof err !== "object" || err === null) return undefined;
   const candidate = (err as { errorMessage?: unknown }).errorMessage;
   return typeof candidate === "string" ? candidate : undefined;
+}
+
+/**
+ * True when Telegram has already destroyed this auth key. The next call must
+ * build a new client; reconnecting the same object cannot revive the session.
+ */
+export function isDeadTelegramSession(err: unknown): boolean {
+  const raw = telegramErrorCode(err);
+  return raw !== undefined && Object.hasOwn(EXACT, raw) && EXACT[raw] === "AUTH_REQUIRED";
 }
 
 /**
