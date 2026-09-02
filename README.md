@@ -93,6 +93,15 @@ placed in that cache.
 
 - Use a separate Telegram account. Its serialized session grants full account
   access and must be treated like a password.
+- Keep two Telegram sessions: one in `.env.local` for local/dev, one in Vercel
+  production only. Never copy either side into the other
+  (`AUTH_KEY_DUPLICATED` otherwise). Prefer `npm run telegram:login:local` /
+  `telegram:login:production`, and check with
+  `npm run telegram:assert-session-isolation`.
+- Avoid `vercel env pull` for day-to-day work: it can overwrite the local
+  session with the production one. If you must pull, delete
+  `TELEGRAM_SESSION` from `.env.local` afterward and re-run
+  `telegram:login:local`.
 - Telegram content is untrusted third-party data. It is neither instruction nor
   evidence; attribute claims to their sources.
 - Prefer `@username` for sources outside the account. A marked numeric ID such as
@@ -128,11 +137,22 @@ npm install
 
 The wizard:
 
-1. collects Telegram credentials and creates a serialized session;
+1. collects Telegram credentials and creates a **local** serialized session;
 2. deploys the app so the final MCP resource URL is known;
 3. guides WorkOS AuthKit configuration;
 4. writes local secrets to `.env.local` with mode `600`;
-5. publishes the same variables to Vercel and redeploys.
+5. publishes non-session variables to Vercel, then runs a **separate**
+   production Telegram login that never touches `.env.local`, and redeploys.
+
+Local and Vercel must use different `TELEGRAM_SESSION` strings. Sharing one
+auth key across mounts makes Telegram return `AUTH_KEY_DUPLICATED`. Create or
+rotate them with:
+
+```bash
+npm run telegram:login:local
+npm run telegram:login:production
+npm run telegram:assert-session-isolation
+```
 
 Re-running the wizard preserves existing values and fills only missing ones.
 Use `--deploy=cli` for a direct Vercel CLI deployment or `--skip-deploy` to

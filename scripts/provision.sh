@@ -46,7 +46,12 @@ env_set() {
 # Everything entered is written to .env.local the moment it is answered, and
 # that write is atomic, so an interrupt at any point keeps what you have
 # already given. This reports what survived and how to pick up again.
-REQUIRED_KEYS="TELEGRAM_API_ID TELEGRAM_API_HASH TELEGRAM_SESSION WORKOS_ISSUER WORKOS_JWKS_URL OWNER_USER_ID MCP_RESOURCE_URL MEDIA_TOKEN_SECRET"
+# TELEGRAM_SESSION is intentionally absent from the publish list: the local
+# session and the Vercel session must be different StringSessions. Publishing
+# .env.local's value is what produces AUTH_KEY_DUPLICATED.
+LOCAL_KEYS="TELEGRAM_API_ID TELEGRAM_API_HASH TELEGRAM_SESSION WORKOS_ISSUER WORKOS_JWKS_URL OWNER_USER_ID MCP_RESOURCE_URL MEDIA_TOKEN_SECRET"
+PUBLISH_KEYS="TELEGRAM_API_ID TELEGRAM_API_HASH WORKOS_ISSUER WORKOS_JWKS_URL OWNER_USER_ID MCP_RESOURCE_URL MEDIA_TOKEN_SECRET"
+REQUIRED_KEYS="$LOCAL_KEYS"
 
 summarise() {
   local have=() missing=() k
@@ -103,8 +108,10 @@ GramScope setup.
 One pass, start to finish. Anything you have already provided is kept, so it is
 safe to re-run this after a step fails.
 
-Secrets go into .env.local (mode 600, gitignored) and into Vercel. Nothing is
-written into the repository, and the Telegram session is never printed.
+Secrets go into .env.local (mode 600, gitignored) and into Vercel. The
+Telegram session is the exception: local and production each get their own
+login, so the same StringSession is never mounted twice. Nothing is written
+into the repository, and session strings are never printed.
 INTRO
 
 # Create the file restricted BEFORE any secret goes into it. Writing first and
@@ -153,19 +160,27 @@ TXT
 ask_env TELEGRAM_API_ID   "TELEGRAM_API_ID: "
 ask_env TELEGRAM_API_HASH "TELEGRAM_API_HASH (hidden): " secret
 
-step "3/6  Telegram login"
+step "3/6  Telegram login (local session only)"
+cat <<'TXT'
+GramScope keeps TWO Telegram sessions on the same account:
+
+  - local      → .env.local          (npm run telegram:login:local)
+  - production → Vercel env only     (npm run telegram:login:production)
+
+Never copy one into the other. The same StringSession on two mounts makes
+Telegram return AUTH_KEY_DUPLICATED and kills every tool call.
+TXT
 if [ -n "$(env_get TELEGRAM_SESSION)" ]; then
-  note "TELEGRAM_SESSION already set — skipping login."
+  note "Local TELEGRAM_SESSION already set — skipping local login."
 else
   cat <<'TXT'
-Logging in now, in this terminal. Telegram will send a code to the account.
+Logging in now for LOCAL use. Telegram will send a code to the account.
 The resulting session is written straight into .env.local and is never shown.
 TXT
-  # Export only for the child process; the values stay out of the wizard's
-  # own environment beyond this call.
   TELEGRAM_API_ID="$(env_get TELEGRAM_API_ID)" \
   TELEGRAM_API_HASH="$(env_get TELEGRAM_API_HASH)" \
-    npx --no-install tsx scripts/create-telegram-session.ts --write-env "$ENV_FILE"
+    npx --no-install tsx scripts/create-telegram-session.ts \
+      --target local --write-env "$ENV_FILE"
 fi
 
 # ------------------------------------------------------------------ Vercel ---
@@ -258,19 +273,21 @@ ask_env OWNER_USER_ID   "OWNER_USER_ID (your WorkOS user id, the token 'sub'): "
 # ----------------------------------------------------------------- Publish ---
 step "6/6  Publish configuration and redeploy"
 cat <<'TXT'
-The variables are pushed with the Vercel CLI rather than pasted into the
-dashboard on purpose: `vercel env add` reads each value and sends it without
-displaying it, so TELEGRAM_SESSION never appears on your screen.
+Non-session variables are pushed with the Vercel CLI rather than pasted into
+the dashboard: `vercel env add` reads each value and sends it without
+displaying it. TELEGRAM_SESSION is NOT taken from .env.local — production
+gets its own login in the next step.
 TXT
 
 if [ "$DEPLOY_MODE" = "none" ]; then
-  note "Push the variables and redeploy yourself; they are all in $ENV_FILE."
-elif confirm "Push all variables to Vercel production now?"; then
+  note "Push the non-session variables yourself; they are in $ENV_FILE."
+  note "Then create the production session: npm run telegram:login:production"
+elif confirm "Push non-session variables to Vercel production now?"; then
   if [ ! -d "$ROOT/.vercel" ]; then
     note "Linking this directory to your Vercel project first."
     vercel link
   fi
-  for v in $REQUIRED_KEYS; do
+  for v in $PUBLISH_KEYS; do
     value="$(env_get "$v")"
     if [ -z "$value" ]; then
       echo "Missing $v — aborting before a half-configured deploy."
@@ -281,6 +298,19 @@ elif confirm "Push all variables to Vercel production now?"; then
     printf '%s' "$value" | vercel env add "$v" production >/dev/null
     echo "  pushed $v"
   done
+
+  cat <<'TXT'
+
+Create a SEPARATE production Telegram session now. This login writes only to
+Vercel and never into .env.local.
+TXT
+  if confirm "Run production Telegram login now?"; then
+    TELEGRAM_API_ID="$(env_get TELEGRAM_API_ID)" \
+    TELEGRAM_API_HASH="$(env_get TELEGRAM_API_HASH)" \
+      npx --no-install tsx scripts/create-telegram-session.ts --target production
+  else
+    note "Before the MCP works: npm run telegram:login:production"
+  fi
 
   cat <<'TXT'
 
@@ -300,6 +330,8 @@ TXT
   else
     note "Remember: press Redeploy in the Vercel dashboard before testing."
   fi
+
+  note "Verify local and Vercel sessions differ: npm run telegram:assert-session-isolation"
 fi
 
 summarise
