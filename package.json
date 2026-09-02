@@ -17,7 +17,8 @@
     "telegram:login": "tsx --env-file=.env.local scripts/create-telegram-session.ts --target local",
     "telegram:login:local": "tsx --env-file=.env.local scripts/create-telegram-session.ts --target local",
     "telegram:login:production": "tsx --env-file=.env.local scripts/create-telegram-session.ts --target production",
-    "telegram:assert-session-isolation": "tsx --env-file=.env.local scripts/assert-session-isolation.ts"
+    "telegram:assert-session-isolation": "tsx --env-file=.env.local scripts/assert-session-isolation.ts",
+    "telegram:rotate-sessions": "bash scripts/rotate-telegram-sessions.sh"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
