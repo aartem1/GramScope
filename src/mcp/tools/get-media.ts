@@ -5,10 +5,9 @@ import {
   type GetMediaInput,
 } from "../../schemas/media";
 import { getMedia, type MediaOutcome } from "../../media/service";
-import { type StructuredError } from "../../errors/taxonomy";
 import { logToolCall } from "../logging";
 import { mediaToolResult } from "../media-result";
-import { errorResult, type ToolResult } from "../tool-result";
+import { errorCodeOf, errorResult, type ToolResult } from "../tool-result";
 
 export async function runGetMediaTool(
   input: GetMediaInput,
@@ -32,11 +31,12 @@ export async function runGetMediaTool(
     return result;
   } catch (err) {
     const result = errorResult(err);
+    const code = errorCodeOf(result);
     logToolCall({
       name: "get_media",
       durationMs: Date.now() - started,
       status: "error",
-      code: (result.structuredContent as StructuredError).code,
+      ...(code ? { code } : {}),
     }, sink);
     return result;
   }

@@ -3,7 +3,9 @@ import { mapTelegramError } from "../errors/from-telegram";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { logToolCall } from "./logging";
 
-export type ToolResult = CallToolResult & { structuredContent: unknown };
+export type ToolResult = CallToolResult & {
+  structuredContent?: unknown;
+};
 
 export function okResult<T>(data: T): ToolResult {
   return {
@@ -12,15 +14,32 @@ export function okResult<T>(data: T): ToolResult {
   };
 }
 
+/**
+ * Taxonomy errors stay in the text content only. Cursor validates
+ * `structuredContent` against the tool's success `outputSchema` even when
+ * `isError` is true, so putting `{code,message}` there becomes -32602
+ * ("missing required … / additional properties") and hides the real failure.
+ */
 export function errorResult(err: unknown): ToolResult {
   const mapped: GramScopeError =
     err instanceof GramScopeError ? err : mapTelegramError(err);
   const structured: StructuredError = mapped.toStructured();
   return {
     content: [{ type: "text", text: JSON.stringify(structured) }],
-    structuredContent: structured,
     isError: true,
   };
+}
+
+export function errorCodeOf(result: ToolResult): string | undefined {
+  if (!result.isError) return undefined;
+  const block = result.content[0];
+  if (!block || block.type !== "text") return undefined;
+  try {
+    const parsed = JSON.parse(block.text) as { code?: unknown };
+    return typeof parsed.code === "string" ? parsed.code : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function messageCount(items: unknown[]): number | undefined {
@@ -81,12 +100,13 @@ export async function runTool<T>(
     return okResult(data);
   } catch (err) {
     const result = errorResult(err);
+    const code = errorCodeOf(result);
     logToolCall(
       {
         name,
         durationMs: Date.now() - started,
         status: "error",
-        code: (result.structuredContent as StructuredError).code,
+        ...(code ? { code } : {}),
       },
       sink,
     );

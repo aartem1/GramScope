@@ -13,12 +13,13 @@ describe("tool results", () => {
     expect(result.content[0]!.type).toBe("text");
   });
 
-  it("renders a taxonomy error as structured content", () => {
+  it("renders a taxonomy error as text content without structuredContent", () => {
     const result = errorResult(
       new GramScopeError("RATE_LIMITED", "slow down", 42),
     );
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({
+    expect(result.structuredContent).toBeUndefined();
+    expect(JSON.parse(String((result.content[0] as { text: string }).text))).toMatchObject({
       code: "RATE_LIMITED",
       retry_after_seconds: 42,
     });
@@ -26,7 +27,8 @@ describe("tool results", () => {
 
   it("maps an unknown throw to INTERNAL_ERROR without leaking its message", () => {
     const result = errorResult(new Error("session=SECRETVALUE"));
-    expect(result.structuredContent).toMatchObject({
+    expect(result.structuredContent).toBeUndefined();
+    expect(JSON.parse(String((result.content[0] as { text: string }).text))).toMatchObject({
       code: "INTERNAL_ERROR",
     });
     expect(JSON.stringify(result)).not.toContain("SECRETVALUE");

@@ -689,7 +689,10 @@ describe("getMedia", () => {
     const result = await runGetMediaTool(input(), async () => oversizedMediaOutcome());
 
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toMatchObject({ code: "INTERNAL_ERROR" });
+    expect(result.structuredContent).toBeUndefined();
+    expect(JSON.parse(String((result.content[0] as { text: string }).text))).toMatchObject({
+      code: "INTERNAL_ERROR",
+    });
     expect(Buffer.byteLength(JSON.stringify(result), "utf8")).toBeLessThan(32 * 1024);
   });
 
