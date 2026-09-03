@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { loadTelegramConfig } from "../config";
+import { GramScopeError } from "../errors/taxonomy";
 import {
   isDeadTelegramSession,
   isUnresolvedEntity,
@@ -68,18 +69,67 @@ export async function getApi(): Promise<ApiNamespace> {
   return apiNamespace;
 }
 
-// The client object is reused on a warm isolate so reconnect is cheaper than
-// `new TelegramClient`. The TCP session is not: Telegram invalidates the auth
-// key (AUTH_KEY_DUPLICATED) if two main-DC connections use it at once. That
-// happens as soon as a second Vercel isolate connects — MCP and media are
-// separate functions, and a second MCP client (ChatGPT + Grok) can scale out.
-// Overlapping calls on this isolate share one socket (lease count). Closing it
-// when the last lease drops is what lets the next isolate in.
+// One process holds one MTProto socket for its lifetime. Overlapping calls
+// share it via `leases` (concurrency accounting only). releaseClient no longer
+// disconnects: a second connection from Vercel, live tests, or a second
+// worker would destroy the auth key. AUTH_KEY_* / SESSION_REVOKED freeze the
+// process in an unhealthy state instead of reconnecting with a dead key.
 let cached: TelegramLike | undefined;
 let leases = 0;
 let connecting: Promise<TelegramLike> | undefined;
 let disconnecting: Promise<void> | undefined;
 let testFactory: TestFactory | undefined;
+let unhealthy = false;
+let lastPersistenceErrorClass: string | null = null;
+let livenessTimer: ReturnType<typeof setInterval> | undefined;
+
+const DEFAULT_LIVENESS_INTERVAL_MS = 30_000;
+const MAX_CONNECT_ATTEMPTS = 8;
+const BACKOFF_CAP_MS = 30_000;
+
+type PersistenceHooks = {
+  sleep?: (ms: number) => Promise<void>;
+  ping?: (client: TelegramLike) => Promise<void>;
+};
+
+let persistenceHooks: PersistenceHooks | undefined;
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function backoffMs(attempt: number): number {
+  return Math.min(1000 * 2 ** attempt, BACKOFF_CAP_MS);
+}
+
+function markUnhealthy(): void {
+  unhealthy = true;
+  lastPersistenceErrorClass = "AUTH_REQUIRED";
+}
+
+export function getTelegramPersistenceState(): {
+  unhealthy: boolean;
+  lastErrorClass: string | null;
+} {
+  return { unhealthy, lastErrorClass: lastPersistenceErrorClass };
+}
+
+export function __setTelegramPersistenceForTests(
+  hooks: PersistenceHooks | undefined,
+): void {
+  persistenceHooks = hooks;
+}
+
+async function pingClient(client: TelegramLike): Promise<void> {
+  if (persistenceHooks?.ping) {
+    await persistenceHooks.ping(client);
+    return;
+  }
+  const Api = await getApi();
+  await client.invoke(new Api.help.GetNearestDc());
+}
 
 const defaultFactory: Factory = async () => {
   const config = loadTelegramConfig();
@@ -98,10 +148,16 @@ export function __setClientFactoryForTests(factory: TestFactory | undefined): vo
 }
 
 export function __resetClientForTests(): void {
+  if (livenessTimer !== undefined) {
+    clearInterval(livenessTimer);
+    livenessTimer = undefined;
+  }
   cached = undefined;
   leases = 0;
   connecting = undefined;
   disconnecting = undefined;
+  unhealthy = false;
+  lastPersistenceErrorClass = null;
 }
 
 /**
@@ -208,6 +264,14 @@ export async function toInputPeer(entity: unknown): Promise<unknown> {
 }
 
 async function acquireClient(): Promise<TelegramLike> {
+  if (unhealthy) {
+    throw new GramScopeError(
+      "AUTH_REQUIRED",
+      "Telegram session is no longer valid.",
+      undefined,
+      false,
+    );
+  }
   if (disconnecting) await disconnecting;
 
   leases += 1;
@@ -218,36 +282,100 @@ async function acquireClient(): Promise<TelegramLike> {
       let client = cached;
       if (!client) {
         client = (await factory()) as TelegramLike;
-        // Installed once per client, before it is ever used, so every resolution
-        // that runs on it can recover what teleproto swallows. Outside a
-        // resolveEntity scope this is a no-op, so the background sender and update
-        // loops — which call the same hook — record nothing.
         client.onError = recordSwallowedError;
         cached = client;
       }
-      if (!client.connected) await client.connect();
-      return client;
+      const sleep = persistenceHooks?.sleep ?? defaultSleep;
+      for (let attempt = 0; attempt < MAX_CONNECT_ATTEMPTS; attempt++) {
+        try {
+          if (!client.connected) await client.connect();
+          return client;
+        } catch (err) {
+          if (isDeadTelegramSession(err)) {
+            markUnhealthy();
+            throw err;
+          }
+          if (attempt + 1 >= MAX_CONNECT_ATTEMPTS) throw err;
+          await sleep(backoffMs(attempt));
+        }
+      }
+      throw new Error("Telegram connect retries exhausted");
     })().finally(() => {
       connecting = undefined;
     });
     return await connecting;
   } catch (err) {
     leases -= 1;
-    cached = undefined;
+    if (isDeadTelegramSession(err)) {
+      cached = undefined;
+    }
     throw err;
   }
 }
 
 async function releaseClient(client: TelegramLike, drop: boolean): Promise<void> {
-  if (drop) cached = undefined;
   leases -= 1;
-  if (leases > 0) return;
+  if (!drop) return;
+  markUnhealthy();
+  cached = undefined;
   disconnecting = Promise.resolve(client.disconnect?.())
     .catch(() => undefined)
     .finally(() => {
       disconnecting = undefined;
     });
   await disconnecting;
+}
+
+export function startTelegramLiveness(
+  options: { intervalMs?: number } = {},
+): void {
+  if (livenessTimer !== undefined) clearInterval(livenessTimer);
+  const intervalMs = options.intervalMs ?? DEFAULT_LIVENESS_INTERVAL_MS;
+  livenessTimer = setInterval(() => {
+    void tickLiveness();
+  }, intervalMs);
+}
+
+export function stopTelegramLiveness(): void {
+  if (livenessTimer === undefined) return;
+  clearInterval(livenessTimer);
+  livenessTimer = undefined;
+}
+
+export async function __tickTelegramLivenessForTests(): Promise<void> {
+  await tickLiveness();
+}
+
+async function tickLiveness(): Promise<void> {
+  if (unhealthy || leases > 0 || !cached?.connected) return;
+  try {
+    await pingClient(cached);
+  } catch (err) {
+    if (isDeadTelegramSession(err)) {
+      markUnhealthy();
+      const client = cached;
+      cached = undefined;
+      await Promise.resolve(client?.disconnect?.()).catch(() => undefined);
+      return;
+    }
+    if (cached) cached.connected = false;
+  }
+}
+
+/**
+ * Open the MTProto socket at worker process start and keep probing it.
+ * AUTH_KEY failures must not exit the process.
+ */
+export async function holdTelegramConnection(): Promise<void> {
+  try {
+    await withTelegram(async () => undefined);
+  } catch (err) {
+    if (err instanceof GramScopeError && err.code === "AUTH_REQUIRED") {
+      console.error("Telegram session is invalid; refusing operations until login");
+      return;
+    }
+    console.error("Telegram connect failed; will retry on the next operation");
+  }
 }
 
 /**

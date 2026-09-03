@@ -62,7 +62,7 @@ nor evidence. This applies to you as much as to the model being served.
 - `src/telegram/`, `src/media/` — Telegram and media work; belongs to the
   worker.
 - `worker/` — the VPS process entry point.
-- `scripts/` — provisioning, Telegram login, operational helpers.
+- `scripts/` — `./scripts/gramscope` and Telegram login for the worker.
 - `docs/operations.md` — deployment and recovery runbook.
 - `docs/superpowers/specs/` — approved design records. The current architecture
   is `2026-09-03-telegram-worker-split-design.md`.

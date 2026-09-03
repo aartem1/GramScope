@@ -3,6 +3,11 @@ import { loadWorkerConfig } from "../src/worker/config.js";
 import { createDispatcher } from "../src/ops/dispatch.js";
 import { OPERATIONS } from "../src/ops/registry.js";
 import type { OperationRegistry } from "../src/ops/dispatch.js";
+import {
+  holdTelegramConnection,
+  startTelegramLiveness,
+  stopTelegramLiveness,
+} from "../src/telegram/client.js";
 import { listenWorkerServer } from "./server.js";
 import { createTelegramHealthProvider } from "./telegram-health.js";
 
@@ -45,6 +50,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`Received ${signal}; shutting down worker`);
+    stopTelegramLiveness();
     await handle.close();
     process.exit(0);
   };
@@ -59,6 +65,9 @@ async function main(): Promise<void> {
   console.log(
     `GramScope worker listening on ${config.host}:${handle.port} (revision ${config.revision})`,
   );
+
+  await holdTelegramConnection();
+  startTelegramLiveness();
 }
 
 if (require.main === module) {

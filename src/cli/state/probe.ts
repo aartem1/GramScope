@@ -37,6 +37,9 @@ export interface ProbeOptions {
 export const VERCEL_ENV_PULL_COMMAND =
   "vercel env pull --environment production --yes - 2>/dev/null || true";
 
+/** Names only. Secret values are Hidden and do not appear in env pull. */
+export const VERCEL_ENV_LS_COMMAND = "vercel env ls 2>/dev/null || true";
+
 export async function probeState(
   localShell: Shell,
   vpsShell: Shell,
@@ -58,6 +61,7 @@ export async function probeState(
     vercelLs,
     mcpProbe,
     vercelEnvPull,
+    vercelEnvLs,
     workerTokenRemote,
     clientCertRemote,
     workerPort,
@@ -84,6 +88,7 @@ export async function probeState(
     run(localShell, "vercel ls --prod 2>/dev/null | head -n 5 || true"),
     run(localShell, "test -n \"$MCP_RESOURCE_URL\" && curl -sS -o /dev/null -w '%{http_code}' \"$MCP_RESOURCE_URL\" || echo missing"),
     run(localShell, VERCEL_ENV_PULL_COMMAND),
+    run(localShell, VERCEL_ENV_LS_COMMAND),
     run(vpsShell, "sudo sed -n 's|^TELEGRAM_WORKER_TOKEN=||p' /etc/gramscope/worker.env 2>/dev/null || true"),
     run(
       vpsShell,
@@ -116,9 +121,10 @@ export async function probeState(
     "TELEGRAM_WORKER_CLIENT_CERT",
     "TELEGRAM_WORKER_CLIENT_KEY",
   ];
-  const workerVarsPresent = requiredWorkerVars.filter(
-    (key) => readEnvKey(vercelEnvContent, key) !== undefined,
-  );
+  const workerVarsPresent = requiredWorkerVars.filter((key) => {
+    if (readEnvKey(vercelEnvContent, key) !== undefined) return true;
+    return new RegExp(`(^|\\n)\\s*${key}\\b`).test(vercelEnvLs.stdout);
+  });
 
   const vpsPublicIp = vpsIp.stdout.trim() || null;
   const certSanCoversIp =

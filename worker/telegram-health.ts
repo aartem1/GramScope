@@ -1,7 +1,12 @@
 import { GramScopeError } from "../src/errors/taxonomy";
 import { mapTelegramError } from "../src/errors/from-telegram";
 import { sessionFingerprint } from "../src/session/fingerprint";
-import { getApi, withTelegram, type TelegramLike } from "../src/telegram/client";
+import {
+  getApi,
+  getTelegramPersistenceState,
+  withTelegram,
+  type TelegramLike,
+} from "../src/telegram/client";
 import type { HealthProvider, HealthSnapshot } from "./health";
 
 const DEFAULT_AUTHORIZATION_CACHE_MS = 60_000;
@@ -36,6 +41,20 @@ export function createTelegramHealthProvider(
 
   return {
     async getSnapshot(): Promise<HealthSnapshot> {
+      const persistence = getTelegramPersistenceState();
+      if (persistence.unhealthy) {
+        return {
+          uptimeSeconds: Math.floor((now() - options.startedAtMs) / 1000),
+          revision: options.revision,
+          telegram: {
+            connected: false,
+            sessionFingerprint: sessionFingerprint(options.session),
+            authorizationCount: cachedAuthorizationCount,
+            lastErrorClass: persistence.lastErrorClass,
+          },
+        };
+      }
+
       let connected = false;
       let authorizationCount = cachedAuthorizationCount;
 

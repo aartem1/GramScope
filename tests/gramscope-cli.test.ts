@@ -90,6 +90,17 @@ function baseLocalShell(): FakeShell {
     .when(/curl -sS -o \/dev\/null -w '%\{http_code\}'/, () => ok("401"))
     .when(/vercel env pull --environment production/, () =>
       ok(vercelEnvPullContent()),
+    )
+    .when(/vercel env ls/, () =>
+      ok(
+        [
+          "TELEGRAM_WORKER_URL",
+          "TELEGRAM_WORKER_TOKEN",
+          "TELEGRAM_WORKER_CA",
+          "TELEGRAM_WORKER_CLIENT_CERT",
+          "TELEGRAM_WORKER_CLIENT_KEY",
+        ].join("\n"),
+      ),
     );
 }
 
@@ -277,9 +288,6 @@ describe("Bugbot fix regressions", () => {
     expect(state.workerUrl).toBe(WORKER_URL);
     expect(local.runs.some((r) => r.command === VERCEL_ENV_PULL_COMMAND)).toBe(
       true,
-    );
-    expect(local.runs.some((r) => r.command.includes("vercel env ls"))).toBe(
-      false,
     );
   });
 
@@ -492,9 +500,9 @@ describe("repository hygiene", () => {
     expect(existsSync("scripts/gramscope")).toBe(true);
   });
 
-  it("keeps deferred scripts until Task 8", () => {
-    expect(existsSync("scripts/assert-session-isolation.ts")).toBe(true);
-    expect(existsSync("scripts/rotate-telegram-sessions.sh")).toBe(true);
+  it("removed two-session scripts after the worker cutover", () => {
+    expect(existsSync("scripts/assert-session-isolation.ts")).toBe(false);
+    expect(existsSync("scripts/rotate-telegram-sessions.sh")).toBe(false);
     expect(existsSync("scripts/env-file.ts")).toBe(true);
   });
 });

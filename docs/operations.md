@@ -12,26 +12,21 @@ Read those before acting.
 
 ## 1. Implementation status
 
-As of Task 4 (2026-09-03) the repository contains the worker skeleton and
-channel: `worker/` with `/rpc` and `/health`, mutual TLS and bearer
-authorization, `loadWorkerConfig`, a compiled `telegram:login:worker` entry
-point, `npm run build:worker`, and the systemd unit at
-`deploy/gramscope-worker.service`. **None of this is installed or running on
-the VPS yet.** Vercel still executes Telegram in-process from
-`TELEGRAM_SESSION`. The `./scripts/gramscope` CLI implements plan/apply
-operations for install, update, configure, login, rollback, migrate, doctor,
-and status; it has not been run against production yet.
+As of 1.6.0 (2026-09-03) both halves are in production. The VPS worker holds
+the single Telegram session and serves `/rpc`, `/media`, and `/health` over
+mTLS. Vercel owns MCP, OAuth, media capability tokens, and byte proxying, and
+holds no Telegram credentials. ChatGPT has exercised the connector against this
+layout without a reconnect.
 
-The four legacy npm aliases `telegram:login:local`,
-`telegram:login:production`, `telegram:assert-session-isolation`, and
-`telegram:rotate-sessions` remain in `package.json` until Task 8, but only
-`telegram:login:worker` is implemented now — the local and production login
-modes were removed from `scripts/create-telegram-session.ts` in Task 3.
-`scripts/provision.sh` was removed in Task 4; use `./scripts/gramscope install`
-instead. `telegram:assert-session-isolation` and
-`telegram:rotate-sessions` stay load-bearing until Task 8 replaces or retires
-them. Generic env helpers (`readEnvKey`, `readEnvFileKey`) live in
-`src/cli/env.ts`.
+Operate the system with `./scripts/gramscope` (`doctor`, `status`, `install`,
+`update`, `login`, `configure`, `rollback`). `provision.sh` and the two-session
+login/rotation scripts are gone. Telegram login on the VPS is
+`./scripts/gramscope login` / `npm run telegram:login:worker`.
+
+`doctor` still fails when `account.getAuthorizations` is not exactly one. The
+owner may keep a phone client alongside the worker; that is a Telegram device
+list choice, not a second GramScope MTProto connection. Do not run live tests
+or a second worker against the same session while production is up.
 
 Worker environment variables validated by `loadWorkerConfig`:
 
@@ -48,10 +43,8 @@ TELEGRAM_WORKER_SERVER_KEY_FILE
 GRAMSCOPE_REVISION
 ```
 
-Install the systemd unit from `deploy/gramscope-worker.service` when Task 4
-performs first-time VPS setup. Until then, §4–§8 describe the target system;
-Task 3 delivered the worker code and unit file in-repo, but §4 install
-procedures still require Task 4's CLI before they can run on the VPS.
+Install the systemd unit from `deploy/gramscope-worker.service` during
+`./scripts/gramscope install`. §4–§8 describe the running system.
 
 ## 2. Architecture
 
@@ -256,8 +249,8 @@ sudo chmod 600 /etc/gramscope/worker.env
 Fill in `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_WORKER_PORT`, and
 the three `TELEGRAM_WORKER_*_FILE` paths (adjust only if TLS files live
 elsewhere). `TELEGRAM_SESSION` is written by §4.4. `GRAMSCOPE_REVISION` is
-set on each deploy — Task 4's CLI writes the checked-out git sha; until then
-set it manually to the revision being installed. Generate the bearer token in
+set on each deploy to the checked-out git sha (`./scripts/gramscope update`).
+Generate the bearer token in
 place, so its value never reaches the terminal or the shell history:
 
 ```bash

@@ -70,9 +70,11 @@ Nothing is awaiting an owner decision.
 - 2026-09-03 — That CLI must be fully usable unattended (`--yes`, values as
   flags, `--json` output), because the owner intends to delegate deployment to
   an agent. Interactive prompting is a fallback, not the mechanism.
-- 2026-09-03 — The worker reports the account's active authorization count on
-  `/health`, and `doctor` fails when it is not one. This is the only signal
-  that predicts auth-key destruction instead of reporting it afterwards.
+- 2026-09-03 — Worker split 1.6.0 is in production: persistent MTProto
+  connection on the VPS, media proxy through Vercel, ChatGPT connector verified
+  without reconnect. Two-session scripts and `TELEGRAM_SESSION` on Vercel are
+  gone. `doctor` still requires authorization count 1; the owner may keep a
+  phone Telegram client in addition to the worker.
 
 # Review findings
 

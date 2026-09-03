@@ -43,8 +43,10 @@ export function telegramErrorCode(err: unknown): string | undefined {
 }
 
 /**
- * True when Telegram has already destroyed this auth key. The next call must
- * build a new client; reconnecting the same object cannot revive the session.
+ * True when Telegram has already destroyed this auth key. The worker must
+ * freeze in an unhealthy state rather than reconnect or exit: reconnecting
+ * the same object cannot revive the session, and a systemd restart loop would
+ * hide the cause.
  */
 export function isDeadTelegramSession(err: unknown): boolean {
   const raw = telegramErrorCode(err);
