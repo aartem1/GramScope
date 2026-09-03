@@ -1,6 +1,9 @@
-import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { getUnreadSummary } from "../../telegram/unread";
+import {
+  getUnreadSummary,
+  getUnreadSummaryInputSchema,
+  getUnreadSummaryOutputSchema,
+} from "../../ops";
 import { runTool } from "../tool-result";
 
 export function registerGetUnreadSummary(server: McpServer): void {
@@ -10,28 +13,8 @@ export function registerGetUnreadSummary(server: McpServer): void {
       title: "Summarize unread Telegram messages",
       description:
         "Report how many unread messages each source, or each folder, is holding. Sources are returned busiest first; a source flagged with mark_unread is also returned, with unread_mark true and a count that may be zero. Folder grouping counts messages only and ignores the flag. The oldest unread message's date is not reported; get_messages with unread_only and limit 1 answers that for one source. Read-only.",
-      inputSchema: z.object({
-        group_by: z.enum(["source", "folder"]).default("source"),
-        folder_ids: z
-          .array(z.string())
-          .optional()
-          .describe("Narrow the report to these folders."),
-      }),
-      outputSchema: z.object({
-        groups: z.array(
-          z.object({
-            source_id: z.string().optional(),
-            folder_id: z.string().optional(),
-            title: z.string(),
-            unread_count: z.number().int(),
-            read_inbox_max_id: z.number().int().optional(),
-            latest_message_id: z.number().int().optional(),
-            latest_message_date: z.string().optional(),
-            unread_mark: z.boolean().optional(),
-          }),
-        ),
-        total_unread: z.number().int(),
-      }),
+      inputSchema: getUnreadSummaryInputSchema,
+      outputSchema: getUnreadSummaryOutputSchema,
       annotations: { readOnlyHint: true },
     },
     async (input) =>

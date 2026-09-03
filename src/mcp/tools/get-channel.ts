@@ -1,7 +1,9 @@
-import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { getChannel } from "../../telegram/dialogs";
-import { telegramSourceSchema } from "../../schemas/source";
+import {
+  getChannel,
+  getChannelInputSchema,
+  getChannelOutputSchema,
+} from "../../ops";
 import { runTool } from "../tool-result";
 
 export function registerGetChannel(server: McpServer): void {
@@ -14,27 +16,8 @@ export function registerGetChannel(server: McpServer): void {
       // The "exactly one" rule is enforced in getChannel, but a runtime-only
       // rule is invisible to the caller: it has to be in the JSON Schema
       // ChatGPT reads, or it is discovered by failing a call.
-      inputSchema: z.object({
-        id: z
-          .string()
-          .optional()
-          .describe(
-            "Numeric peer id as returned by list_dialogs. Provide exactly one of id, username, or url.",
-          ),
-        username: z
-          .string()
-          .optional()
-          .describe(
-            "Public @username, with or without the @. Provide exactly one of id, username, or url.",
-          ),
-        url: z
-          .string()
-          .optional()
-          .describe(
-            "A t.me link, e.g. https://t.me/example. Provide exactly one of id, username, or url.",
-          ),
-      }),
-      outputSchema: telegramSourceSchema,
+      inputSchema: getChannelInputSchema,
+      outputSchema: getChannelOutputSchema,
       annotations: { readOnlyHint: true },
     },
     async (input) => runTool("get_channel", () => getChannel(input)),

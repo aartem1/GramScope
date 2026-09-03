@@ -4,7 +4,7 @@ import {
   getMediaResultSchema,
   type GetMediaInput,
 } from "../../schemas/media";
-import { getMedia, type MediaOutcome } from "../../media/service";
+import { getMedia, type MediaOutcome } from "../../ops";
 import { logToolCall } from "../logging";
 import { mediaToolResult } from "../media-result";
 import { errorCodeOf, errorResult, type ToolResult } from "../tool-result";
