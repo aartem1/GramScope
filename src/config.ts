@@ -4,7 +4,15 @@ export type TelegramConfig = {
   telegramSession: string;
 };
 
-export type Config = TelegramConfig & {
+export type WorkerClientConfig = {
+  workerUrl: string;
+  workerToken: string;
+  caPem: string;
+  clientCertPem: string;
+  clientKeyPem: string;
+};
+
+export type Config = {
   workosIssuer: string;
   workosJwksUrl: string;
   ownerUserId: string;
@@ -16,6 +24,8 @@ export type Config = TelegramConfig & {
    * accepted.
    */
   mcpResourceUrl: string;
+  telegram?: TelegramConfig;
+  worker?: WorkerClientConfig;
 };
 
 type Env = Record<string, string | undefined>;
@@ -52,13 +62,50 @@ export function loadTelegramConfig(env: Env = process.env): TelegramConfig {
   };
 }
 
-export function loadConfig(env: Env = process.env): Config {
+export function isRemoteDispatchEnabled(env: Env = process.env): boolean {
+  return Boolean(env.TELEGRAM_WORKER_URL?.trim());
+}
+
+function decodeBase64Pem(env: Env, name: string): string {
+  const encoded = required(env, name);
+  let decoded: string;
+  try {
+    decoded = Buffer.from(encoded, "base64").toString("utf8");
+  } catch {
+    throw new Error(`${name} must be valid base64`);
+  }
+  if (!decoded.includes("-----BEGIN")) {
+    throw new Error(`${name} must decode to a PEM block`);
+  }
+  return decoded;
+}
+
+/** Worker client credentials for the Vercel half when remote dispatch is on. */
+export function loadWorkerClientConfig(
+  env: Env = process.env,
+): WorkerClientConfig {
+  const workerUrl = required(env, "TELEGRAM_WORKER_URL").trim();
   return {
-    ...loadTelegramConfig(env),
+    workerUrl,
+    workerToken: required(env, "TELEGRAM_WORKER_TOKEN"),
+    caPem: decodeBase64Pem(env, "TELEGRAM_WORKER_CA"),
+    clientCertPem: decodeBase64Pem(env, "TELEGRAM_WORKER_CLIENT_CERT"),
+    clientKeyPem: decodeBase64Pem(env, "TELEGRAM_WORKER_CLIENT_KEY"),
+  };
+}
+
+export function loadConfig(env: Env = process.env): Config {
+  const common = {
     workosIssuer: required(env, "WORKOS_ISSUER"),
     workosJwksUrl: required(env, "WORKOS_JWKS_URL"),
     ownerUserId: required(env, "OWNER_USER_ID"),
     mcpResourceUrl: required(env, "MCP_RESOURCE_URL"),
     mediaTokenSecret: requiredMediaTokenSecret(env),
   };
+
+  if (isRemoteDispatchEnabled(env)) {
+    return { ...common, worker: loadWorkerClientConfig(env) };
+  }
+
+  return { ...common, telegram: loadTelegramConfig(env) };
 }

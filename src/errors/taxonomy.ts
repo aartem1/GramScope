@@ -17,6 +17,7 @@ export const ERROR_CODES = [
   "INLINE_LIMIT_EXCEEDED",
   "PROCESSING_TIMEOUT",
   "TELEGRAM_DOWNLOAD_FAILED",
+  "UPSTREAM_UNAVAILABLE",
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -32,6 +33,7 @@ const RETRYABLE_BY_DEFAULT = new Set<ErrorCode>([
   "RATE_LIMITED",
   "PROCESSING_TIMEOUT",
   "TELEGRAM_DOWNLOAD_FAILED",
+  "UPSTREAM_UNAVAILABLE",
 ]);
 
 function defaultRetryable(code: ErrorCode): boolean {

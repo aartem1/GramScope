@@ -6,11 +6,4 @@
  * carry `readOnlyHint: false` over a real MCP server. Kept here so tool
  * twenty moves one list rather than two that must agree.
  */
-export const WRITERS = [
-  "join_channel",
-  "leave_channel",
-  "manage_folder",
-  "mark_read",
-  "mark_unread",
-  "set_source_note",
-];
+export { WRITER_OPERATION_NAMES as WRITERS } from "@/ops/writer-ops";

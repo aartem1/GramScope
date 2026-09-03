@@ -2,6 +2,13 @@ export { createDispatcher } from "./dispatch";
 export type { OperationDefinition, OperationRegistry } from "./dispatch";
 export { operationNames } from "./registry";
 export {
+  createRemoteDispatcher,
+  createWorkerFetchAgent,
+} from "./remote";
+export type { RemoteDispatchOptions, UpstreamUnavailableError } from "./remote";
+export { isWriterOperation, WRITER_OPERATIONS } from "./writer-ops";
+export type { WriterOperation } from "./writer-ops";
+export {
   DEFAULT_RPC_DEADLINE_MS,
   RPC_REQUEST_BODY_MAX_BYTES,
   gramScopeErrorFromWire,

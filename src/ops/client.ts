@@ -1,6 +1,8 @@
 import type { z } from "zod";
 import type { MediaOutcome } from "../media/service";
+import { isRemoteDispatchEnabled, loadWorkerClientConfig } from "../config";
 import { createDispatcher } from "./dispatch";
+import { createRemoteDispatcher } from "./remote";
 import { OPERATIONS } from "./registry";
 import {
   getChannelInputSchema,
@@ -44,7 +46,17 @@ import {
   setSourceNoteOutputSchema,
 } from "./schemas";
 
-export const dispatch = createDispatcher(OPERATIONS);
+function createOpsDispatch() {
+  if (isRemoteDispatchEnabled()) {
+    return createRemoteDispatcher({
+      operations: OPERATIONS,
+      config: loadWorkerClientConfig(),
+    });
+  }
+  return createDispatcher(OPERATIONS);
+}
+
+export const dispatch = createOpsDispatch();
 
 type In<S extends z.ZodType> = z.input<S>;
 type Out<S extends z.ZodType> = z.output<S>;
