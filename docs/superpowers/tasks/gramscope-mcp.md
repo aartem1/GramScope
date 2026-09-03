@@ -73,8 +73,13 @@ Nothing is awaiting an owner decision.
 - 2026-09-03 — Worker split 1.6.0 is in production: persistent MTProto
   connection on the VPS, media proxy through Vercel, ChatGPT connector verified
   without reconnect. Two-session scripts and `TELEGRAM_SESSION` on Vercel are
-  gone. `doctor` still requires authorization count 1; the owner may keep a
-  phone Telegram client in addition to the worker.
+  gone. `doctor` accepts 1–2 Telegram authorizations (worker, optionally plus
+  one phone); three or more still fails.
+- 2026-09-03 — Removed the in-process live Telegram suite (`tests/live`,
+  `npm run test:live`). With the worker always serving the production session,
+  those tests would open a second MTProto connection and destroy the auth key.
+  Real-account acceptance is ChatGPT/Grok through the production path. Unit
+  tests with fakes remain.
 
 # Review findings
 

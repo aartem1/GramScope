@@ -71,8 +71,8 @@ export async function getApi(): Promise<ApiNamespace> {
 
 // One process holds one MTProto socket for its lifetime. Overlapping calls
 // share it via `leases` (concurrency accounting only). releaseClient no longer
-// disconnects: a second connection from Vercel, live tests, or a second
-// worker would destroy the auth key. AUTH_KEY_* / SESSION_REVOKED freeze the
+// disconnects: a second connection from another worker process or a local
+// script would destroy the auth key. AUTH_KEY_* / SESSION_REVOKED freeze the
 // process in an unhealthy state instead of reconnecting with a dead key.
 let cached: TelegramLike | undefined;
 let leases = 0;

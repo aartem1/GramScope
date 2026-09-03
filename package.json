@@ -13,8 +13,7 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "test": "vitest run --exclude '**/*.live.test.ts'",
-    "test:live": "vitest run tests/live",
+    "test": "vitest run",
     "telegram:login:worker": "node --env-file=/etc/gramscope/worker.env dist/worker/scripts/create-telegram-session.js --target worker"
   },
   "dependencies": {

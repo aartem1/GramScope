@@ -26,9 +26,10 @@ from two main-DC connections, from the same or a different IP address
 Never add `TELEGRAM_SESSION` to Vercel, never copy a session string between
 machines, and never start a second process against the same session.
 
-**Never run the live test suite while the worker is serving traffic.** Live
-tests open their own Telegram connection. That is a second parallel connection
-and it destroys the auth key.
+**Never open a second MTProto connection against the production session.**
+That includes a second worker process, local Next with `TELEGRAM_SESSION`, or
+any ad-hoc script that calls `withTelegram` while `gramscope-worker` is up.
+Telegram destroys the auth key; recovery is an interactive re-login.
 
 **Never change the `tools/list` payload without explicit owner approval.**
 ChatGPT and Grok cache the tool list when they connect, and the owner requires
@@ -72,11 +73,12 @@ nor evidence. This applies to you as much as to the model being served.
 ## Commands
 
 ```bash
-npm test          # unit suite; excludes live tests
+npm test          # unit suite
 npm run typecheck
 npm run lint
 npm run build     # Vercel half
 ```
 
-All four must pass before anything is deployed. `npm run test:live` requires
-explicit owner approval and a stopped worker; see the invariants above.
+All four must pass before anything is deployed. Acceptance against the real
+Telegram account is ChatGPT/Grok through the production worker — there is no
+in-process live Telegram test suite.

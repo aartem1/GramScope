@@ -411,8 +411,21 @@ describe("drift recognition", () => {
     expect(issues.some((i) => i.code === "telegram_disconnected")).toBe(true);
   });
 
-  it("detects authorization count != 1", () => {
-    const issues = detectDrift(driftState({ authorizationCount: 2 }));
+  it("accepts one worker authorization or worker plus a phone", () => {
+    expect(
+      detectDrift(driftState({ authorizationCount: 1 })).some(
+        (i) => i.code === "authorization_count",
+      ),
+    ).toBe(false);
+    expect(
+      detectDrift(driftState({ authorizationCount: 2 })).some(
+        (i) => i.code === "authorization_count",
+      ),
+    ).toBe(false);
+  });
+
+  it("detects more than worker plus phone authorizations", () => {
+    const issues = detectDrift(driftState({ authorizationCount: 3 }));
     expect(issues.some((i) => i.code === "authorization_count")).toBe(true);
   });
 });
@@ -504,6 +517,11 @@ describe("repository hygiene", () => {
     expect(existsSync("scripts/assert-session-isolation.ts")).toBe(false);
     expect(existsSync("scripts/rotate-telegram-sessions.sh")).toBe(false);
     expect(existsSync("scripts/env-file.ts")).toBe(true);
+  });
+
+  it("removed the in-process live Telegram suite", () => {
+    expect(existsSync("tests/live")).toBe(false);
+    expect(existsSync("tests/media-live-selectors.test.ts")).toBe(false);
   });
 });
 

@@ -1,6 +1,8 @@
 import type { CliContext, Step, StepCheckResult } from "../types";
 import {
   detectDrift,
+  isAcceptableTelegramAuthorizationCount,
+  MAX_TELEGRAM_AUTHORIZATIONS,
   probeState,
   type ObservedState,
 } from "../state/probe";
@@ -78,15 +80,19 @@ export function vpsStateSteps(): Step[] {
         ? satisfied("telegram connected")
         : actionable("run ./scripts/gramscope login");
     }),
-    step("vps.authorizations", "Exactly one Telegram authorization", async (ctx) => {
+    step("vps.authorizations", "Telegram authorizations within limit", async (ctx) => {
       const state = await getObservedState(ctx);
       if (state.authorizationCount === null) {
         return blocked("authorization count unavailable");
       }
-      return state.authorizationCount === 1
-        ? satisfied("authorization count is 1")
+      return isAcceptableTelegramAuthorizationCount(state.authorizationCount)
+        ? satisfied(
+            state.authorizationCount === 1
+              ? "authorization count is 1 (worker only)"
+              : `authorization count is ${state.authorizationCount} (worker plus phone)`,
+          )
         : blocked(
-            `authorization count is ${state.authorizationCount}, expected 1`,
+            `authorization count is ${state.authorizationCount}, expected 1–${MAX_TELEGRAM_AUTHORIZATIONS} (worker, optionally plus one phone)`,
           );
     }),
     step("vps.revision", "Worker revision matches local HEAD", async (ctx) => {
@@ -365,10 +371,17 @@ export function migrateSteps(): Step[] {
       "Owner terminates unused Telegram authorizations",
       async (ctx) => {
         const state = await getObservedState(ctx);
-        return state.authorizationCount === 1
-          ? satisfied("authorization count is 1")
+        if (state.authorizationCount === null) {
+          return blocked("authorization count unavailable");
+        }
+        return isAcceptableTelegramAuthorizationCount(state.authorizationCount)
+          ? satisfied(
+              state.authorizationCount === 1
+                ? "authorization count is 1 (worker only)"
+                : `authorization count is ${state.authorizationCount} (worker plus phone)`,
+            )
           : actionable(
-              "terminate unused authorizations in Telegram Settings → Devices and re-run doctor",
+              `terminate extra authorizations in Telegram Settings → Devices until at most ${MAX_TELEGRAM_AUTHORIZATIONS} remain (worker plus optional phone), then re-run doctor`,
             );
       },
     ),

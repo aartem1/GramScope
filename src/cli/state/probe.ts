@@ -33,6 +33,19 @@ export interface ProbeOptions {
   sshHost?: string;
 }
 
+/**
+ * Telegram Settings → Devices lists every authorized client. GramScope owns
+ * one (the VPS worker). A single phone client beside it is normal. Three or
+ * more usually means a leftover desktop/session that can destroy the auth key.
+ */
+export const MAX_TELEGRAM_AUTHORIZATIONS = 2;
+
+export function isAcceptableTelegramAuthorizationCount(
+  count: number,
+): boolean {
+  return count >= 1 && count <= MAX_TELEGRAM_AUTHORIZATIONS;
+}
+
 /** Pull production env to stdout; values stay in memory, never logged by probe. */
 export const VERCEL_ENV_PULL_COMMAND =
   "vercel env pull --environment production --yes - 2>/dev/null || true";
@@ -240,12 +253,12 @@ export function detectDrift(state: ObservedState): DriftDiagnosis[] {
 
   if (
     state.authorizationCount !== null &&
-    state.authorizationCount !== 1
+    !isAcceptableTelegramAuthorizationCount(state.authorizationCount)
   ) {
     issues.push({
       code: "authorization_count",
-      message: `Telegram authorization count is ${state.authorizationCount}, expected 1`,
-      fix: "Terminate extra GramScope authorizations in Telegram Settings → Devices",
+      message: `Telegram authorization count is ${state.authorizationCount}, expected 1–${MAX_TELEGRAM_AUTHORIZATIONS} (worker, optionally plus one phone)`,
+      fix: "Terminate extra GramScope/desktop authorizations in Telegram Settings → Devices; a phone next to the worker is fine",
     });
   }
 

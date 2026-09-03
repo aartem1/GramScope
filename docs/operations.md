@@ -23,10 +23,11 @@ Operate the system with `./scripts/gramscope` (`doctor`, `status`, `install`,
 login/rotation scripts are gone. Telegram login on the VPS is
 `./scripts/gramscope login` / `npm run telegram:login:worker`.
 
-`doctor` still fails when `account.getAuthorizations` is not exactly one. The
-owner may keep a phone client alongside the worker; that is a Telegram device
-list choice, not a second GramScope MTProto connection. Do not run live tests
-or a second worker against the same session while production is up.
+`doctor` accepts 1–2 Telegram authorizations: the VPS worker alone, or the
+worker plus one phone client. Three or more usually means a leftover desktop
+or second GramScope session and still fails the check. Do not start a second
+worker or any in-process Telegram client against the same session while
+production is up. There is no live Telegram unit suite.
 
 Worker environment variables validated by `loadWorkerConfig`:
 
@@ -276,9 +277,9 @@ The npm script loads credentials from the same file via
 `node --env-file=/etc/gramscope/worker.env`; override the write target in
 tests with `--write-env <path>` only.
 
-Confirm the account has exactly one GramScope authorization afterwards, in
-Telegram under Settings, Devices. More than one means an old session is still
-alive and must be terminated there.
+Confirm afterwards in Telegram under Settings → Devices: the GramScope worker
+should be present, optionally next to one phone. Extra desktops or a second
+GramScope session must be terminated there.
 
 ### 4.5 systemd unit
 
@@ -445,7 +446,7 @@ sudo bash -c 'set -a; . /etc/gramscope/worker.env; set +a
     --cacert /etc/gramscope/tls/ca.crt \
     -H "authorization: Bearer $TELEGRAM_WORKER_TOKEN" \
     "https://127.0.0.1:$TELEGRAM_WORKER_PORT/health"'
-# expect: {"uptimeSeconds":...,"revision":"<sha>","telegram":{"connected":true,"sessionFingerprint":"...","authorizationCount":1,"lastErrorClass":null}}
+# expect: {"uptimeSeconds":...,"revision":"<sha>","telegram":{"connected":true,"sessionFingerprint":"...","authorizationCount":1|2,"lastErrorClass":null}}
 ```
 
 `./scripts/gramscope doctor` does this and everything else in this section,
@@ -499,8 +500,8 @@ key as dead. The worker stays up on purpose so the cause is readable.
 
 This should not happen under the current architecture. Before re-logging in,
 find the second connection, because a new session will be destroyed the same
-way: check for a stray `node dist/worker/worker/index.js`, a live test run, a second
-host with a copy of the environment file, and the device list in Telegram.
+way: check for a stray `node dist/worker/worker/index.js`, a second host with
+a copy of the environment file, and the device list in Telegram.
 
 Then:
 
@@ -519,8 +520,9 @@ sudo systemctl restart gramscope-worker
 
 No Vercel change and no redeploy is involved.
 
-Afterwards confirm the account is back to exactly one authorization, otherwise
-the replacement session will be destroyed the same way:
+Afterwards run `./scripts/gramscope doctor`. Authorization count may be 1
+(worker only) or 2 (worker plus phone); three or more means leftover sessions
+that can destroy the replacement key:
 
 ```bash
 ./scripts/gramscope doctor
@@ -563,8 +565,9 @@ payloads.
 Vercel: `npx vercel logs <deployment-url>` for function logs. Media route paths
 are never logged because the path contains a bearer capability.
 
-Telegram: the device list under Settings, Devices, is the ground truth for how
-many sessions exist. It should always show exactly one GramScope device.
+Telegram: the device list under Settings → Devices is the ground truth.
+Expect the GramScope worker and at most one phone; extra desktops or a second
+GramScope session are not normal.
 
 ## 8. Routine maintenance
 

@@ -36,16 +36,12 @@ Record the final command results here only after they have completed:
 
 ## Real Telegram and deployed Vercel acceptance
 
-For each deliberately chosen message, set its
-`GRAMSCOPE_LIVE_*_MESSAGE_ID` and either the matching
-`GRAMSCOPE_LIVE_*_SOURCE` or the shared `GRAMSCOPE_LIVE_MEDIA_SOURCE` fallback,
-then run `GRAMSCOPE_LIVE=1 npm run test:live`. Partial runs execute only
-complete source/ID pairs and explicitly skip missing kinds. Use
-`GRAMSCOPE_LIVE_STRICT=1` when the complete eleven-kind fixture set exists; it
-requires the shared fallback and all message IDs. The suite never searches the
-account for fixtures.
+As of 1.6.0 the in-process live harness (`tests/live`, `GRAMSCOPE_LIVE`) was
+removed: it opened a second MTProto connection against the production session.
+Accept media through ChatGPT or Grok against the deployed worker instead.
 
-Recorded real-account results on 2026-09-01:
+Historical recorded real-account results on 2026-09-01 (pre-worker-split live
+harness):
 
 - all 17 runnable photo, image-document, video, oversized-video, video-note,
   GIF, voice, large-voice, audio, document, original, Range, token-integrity,
