@@ -1,7 +1,16 @@
 node_modules/
 .next/
+dist/
 .env
 .env.local
 *.session
 .DS_Store
 .vercel
+
+# TLS material for the Vercel-to-worker channel. Private CA keys and
+# certificates are generated on the VPS and must never enter git.
+*.pem
+*.key
+*.crt
+*.csr
+*.srl
