@@ -12,19 +12,45 @@ Read those before acting.
 
 ## 1. Implementation status
 
-As of 2026-09-03 only the Vercel half exists. The worker has not been built,
-the `gramscope` CLI does not exist, and Telegram still runs inside Vercel
-functions from a `TELEGRAM_SESSION` environment variable. Setup today is
-`./scripts/provision.sh`, which the CLI replaces.
+As of Task 3 (2026-09-03) the repository contains the worker skeleton and
+channel: `worker/` with `/rpc` and `/health`, mutual TLS and bearer
+authorization, `loadWorkerConfig`, a compiled `telegram:login:worker` entry
+point, `npm run build:worker`, and the systemd unit at
+`deploy/gramscope-worker.service`. **None of this is installed or running on
+the VPS yet.** Vercel still executes Telegram in-process from
+`TELEGRAM_SESSION`. The `gramscope` CLI does not exist; setup today remains
+`./scripts/provision.sh`.
 
-Sections 2 and 3 describe the target system and are already decided. Sections
-4 to 8 are the procedures for that target system; each names the spec subtask
-that delivers the code it depends on. A procedure whose subtask has not landed
-will not work yet, and the fix is to implement the subtask, not to improvise a
-substitute.
+The four legacy npm aliases `telegram:login:local`,
+`telegram:login:production`, `telegram:assert-session-isolation`, and
+`telegram:rotate-sessions` remain in `package.json` until Task 8, but only
+`telegram:login:worker` is implemented now — the local and production login
+modes were removed from `scripts/create-telegram-session.ts` in Task 3.
+`scripts/provision.sh`, `telegram:assert-session-isolation`, and
+`telegram:rotate-sessions` stay load-bearing until Tasks 4 and 8 replace or
+retire them. `scripts/telegram-session.ts` keeps `readEnvKey` and
+`readEnvFileKey` temporarily for the isolation script; Task 4 moves the
+generic env/shell helpers into the CLI.
 
-Keep this section accurate. Every subtask that changes deployment, secrets or
-recovery updates this document in the same change.
+Worker environment variables validated by `loadWorkerConfig`:
+
+```text
+TELEGRAM_API_ID
+TELEGRAM_API_HASH
+TELEGRAM_SESSION
+TELEGRAM_WORKER_TOKEN
+TELEGRAM_WORKER_HOST              optional; default 0.0.0.0
+TELEGRAM_WORKER_PORT
+TELEGRAM_WORKER_CA_FILE
+TELEGRAM_WORKER_SERVER_CERT_FILE
+TELEGRAM_WORKER_SERVER_KEY_FILE
+GRAMSCOPE_REVISION
+```
+
+Install the systemd unit from `deploy/gramscope-worker.service` when Task 4
+performs first-time VPS setup. Until then, §4–§8 describe the target system;
+Task 3 delivered the worker code and unit file in-repo, but §4 install
+procedures still require Task 4's CLI before they can run on the VPS.
 
 ## 2. Architecture
 
@@ -218,13 +244,19 @@ TELEGRAM_API_HASH=
 TELEGRAM_SESSION=
 TELEGRAM_WORKER_TOKEN=
 TELEGRAM_WORKER_PORT=
-TELEGRAM_WORKER_TLS_DIR=/etc/gramscope/tls
+TELEGRAM_WORKER_CA_FILE=/etc/gramscope/tls/ca.crt
+TELEGRAM_WORKER_SERVER_CERT_FILE=/etc/gramscope/tls/worker.crt
+TELEGRAM_WORKER_SERVER_KEY_FILE=/etc/gramscope/tls/worker.key
+GRAMSCOPE_REVISION=
 EOF
 sudo chmod 600 /etc/gramscope/worker.env
 ```
 
-Fill in `TELEGRAM_API_ID`, `TELEGRAM_API_HASH` and `TELEGRAM_WORKER_PORT` with
-an editor. `TELEGRAM_SESSION` is written by §4.4. Generate the bearer token in
+Fill in `TELEGRAM_API_ID`, `TELEGRAM_API_HASH`, `TELEGRAM_WORKER_PORT`, and
+the three `TELEGRAM_WORKER_*_FILE` paths (adjust only if TLS files live
+elsewhere). `TELEGRAM_SESSION` is written by §4.4. `GRAMSCOPE_REVISION` is
+set on each deploy — Task 4's CLI writes the checked-out git sha; until then
+set it manually to the revision being installed. Generate the bearer token in
 place, so its value never reaches the terminal or the shell history:
 
 ```bash
@@ -246,18 +278,26 @@ sudo npm run telegram:login:worker
 
 Telegram sends one login code. The script writes `TELEGRAM_SESSION` into
 `/etc/gramscope/worker.env` without printing it, which is why it runs as root.
-
-`telegram:login:worker` does not exist yet; subtask 3 adds it. The existing
-`telegram:login:local` and `telegram:login:production` are the wrong tool here:
-they target `.env.local` and Vercel, and both mounts are being removed. The new
-script must also run on a `--omit=dev` install, because §5.3 prunes `tsx` after
-building.
+The npm script loads credentials from the same file via
+`node --env-file=/etc/gramscope/worker.env`; override the write target in
+tests with `--write-env <path>` only.
 
 Confirm the account has exactly one GramScope authorization afterwards, in
 Telegram under Settings, Devices. More than one means an old session is still
 alive and must be terminated there.
 
 ### 4.5 systemd unit
+
+Install from the repository unit file (paths and env names match
+`loadWorkerConfig`):
+
+```bash
+sudo cp /opt/gramscope/deploy/gramscope-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now gramscope-worker
+```
+
+Or create it directly:
 
 ```bash
 sudo tee /etc/systemd/system/gramscope-worker.service >/dev/null <<'EOF'
@@ -272,13 +312,13 @@ User=gramscope
 Group=gramscope
 WorkingDirectory=/opt/gramscope
 EnvironmentFile=/etc/gramscope/worker.env
-ExecStart=/usr/bin/node dist/worker/server.js
+ExecStart=/usr/bin/node /opt/gramscope/dist/worker/worker/index.js
 Restart=always
 RestartSec=2
-NoNewPrivileges=yes
-PrivateTmp=yes
+NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=yes
+ProtectHome=true
+PrivateTmp=true
 ReadWritePaths=/opt/gramscope
 StandardOutput=journal
 StandardError=journal
@@ -349,7 +389,7 @@ change can touch either or both.
 ### 5.1 Before anything
 
 ```bash
-npm test && npm run typecheck && npm run lint && npm run build
+npm test && npm run typecheck && npm run lint && npm run build && npm run build:worker
 ```
 
 All four must pass. The unit suite includes the golden `tools/list` fixture; if
@@ -411,7 +451,7 @@ sudo bash -c 'set -a; . /etc/gramscope/worker.env; set +a
     --cacert /etc/gramscope/tls/ca.crt \
     -H "authorization: Bearer $TELEGRAM_WORKER_TOKEN" \
     "https://127.0.0.1:$TELEGRAM_WORKER_PORT/health"'
-# expect: {"status":"ok","telegram":{"connected":true,...},"revision":"<sha>"}
+# expect: {"uptimeSeconds":...,"revision":"<sha>","telegram":{"connected":true,"sessionFingerprint":"...","authorizationCount":1,"lastErrorClass":null}}
 ```
 
 `./scripts/gramscope doctor` does this and everything else in this section,
@@ -465,7 +505,7 @@ key as dead. The worker stays up on purpose so the cause is readable.
 
 This should not happen under the current architecture. Before re-logging in,
 find the second connection, because a new session will be destroyed the same
-way: check for a stray `node dist/worker/server.js`, a live test run, a second
+way: check for a stray `node dist/worker/worker/index.js`, a live test run, a second
 host with a copy of the environment file, and the device list in Telegram.
 
 Then:

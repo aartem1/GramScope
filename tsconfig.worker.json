@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist/worker",
+    "rootDir": ".",
+    "declaration": false
+  },
+  "include": [
+    "worker/**/*.ts",
+    "src/**/*.ts",
+    "scripts/create-telegram-session.ts",
+    "scripts/env-file.ts",
+    "scripts/telegram-session.ts",
+    "scripts/worker-login-args.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "app/**",
+    "tests/**",
+    "**/*.test.ts",
+    "src/mcp/**"
+  ]
+}

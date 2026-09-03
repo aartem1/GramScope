@@ -1,7 +1,10 @@
-export type Config = {
+export type TelegramConfig = {
   telegramApiId: number;
   telegramApiHash: string;
   telegramSession: string;
+};
+
+export type Config = TelegramConfig & {
   workosIssuer: string;
   workosJwksUrl: string;
   ownerUserId: string;
@@ -35,7 +38,8 @@ function requiredMediaTokenSecret(env: Env): Uint8Array {
   return new Uint8Array(bytes);
 }
 
-export function loadConfig(env: Env = process.env): Config {
+/** Telegram credentials only. Shared by Vercel and the VPS worker. */
+export function loadTelegramConfig(env: Env = process.env): TelegramConfig {
   const rawApiId = required(env, "TELEGRAM_API_ID");
   const telegramApiId = Number(rawApiId);
   if (!Number.isInteger(telegramApiId)) {
@@ -45,6 +49,12 @@ export function loadConfig(env: Env = process.env): Config {
     telegramApiId,
     telegramApiHash: required(env, "TELEGRAM_API_HASH"),
     telegramSession: required(env, "TELEGRAM_SESSION"),
+  };
+}
+
+export function loadConfig(env: Env = process.env): Config {
+  return {
+    ...loadTelegramConfig(env),
     workosIssuer: required(env, "WORKOS_ISSUER"),
     workosJwksUrl: required(env, "WORKOS_JWKS_URL"),
     ownerUserId: required(env, "OWNER_USER_ID"),

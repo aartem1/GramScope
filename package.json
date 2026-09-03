@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:worker": "tsc -p tsconfig.worker.json && node -e \"require('fs').writeFileSync('dist/worker/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\n')\"",
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
@@ -16,6 +17,7 @@
     "test:live": "vitest run tests/live",
     "telegram:login:local": "tsx --env-file=.env.local scripts/create-telegram-session.ts --target local",
     "telegram:login:production": "tsx --env-file=.env.local scripts/create-telegram-session.ts --target production",
+    "telegram:login:worker": "node --env-file=/etc/gramscope/worker.env dist/worker/scripts/create-telegram-session.js --target worker",
     "telegram:assert-session-isolation": "tsx --env-file=.env.local scripts/assert-session-isolation.ts",
     "telegram:rotate-sessions": "bash scripts/rotate-telegram-sessions.sh"
   },

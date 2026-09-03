@@ -76,12 +76,17 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const [path, key] = process.argv.slice(2);
-  if (!path || !key) {
-    console.error("usage: env-file.ts <path> <KEY>  (value on stdin)");
+if (require.main === module) {
+  void (async () => {
+    const [path, key] = process.argv.slice(2);
+    if (!path || !key) {
+      console.error("usage: env-file.ts <path> <KEY>  (value on stdin)");
+      process.exit(1);
+    }
+    const value = (await readStdin()).replace(/\r?\n$/, "");
+    await upsertEnvFile(path, key, value);
+  })().catch((err: unknown) => {
+    console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
-  }
-  const value = (await readStdin()).replace(/\r?\n$/, "");
-  await upsertEnvFile(path, key, value);
+  });
 }

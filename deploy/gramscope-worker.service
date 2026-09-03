@@ -1,0 +1,24 @@
+[Unit]
+Description=GramScope Telegram worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gramscope
+Group=gramscope
+WorkingDirectory=/opt/gramscope
+EnvironmentFile=/etc/gramscope/worker.env
+ExecStart=/usr/bin/node /opt/gramscope/dist/worker/worker/index.js
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/opt/gramscope
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

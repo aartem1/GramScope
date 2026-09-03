@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig } from "@/config";
+import { loadConfig, loadTelegramConfig } from "@/config";
 
-const complete = {
+const telegramOnly = {
   TELEGRAM_API_ID: "12345",
   TELEGRAM_API_HASH: "abc",
   TELEGRAM_SESSION: "sess",
+};
+
+const complete = {
+  ...telegramOnly,
   WORKOS_ISSUER: "https://auth.example.com",
   WORKOS_JWKS_URL: "https://auth.example.com/jwks",
   OWNER_USER_ID: "user_123",
@@ -12,11 +16,30 @@ const complete = {
   MEDIA_TOKEN_SECRET: Buffer.alloc(32, 7).toString("base64url"),
 };
 
+describe("loadTelegramConfig", () => {
+  it("parses Telegram credentials without WorkOS or media variables", () => {
+    const config = loadTelegramConfig(telegramOnly);
+    expect(config.telegramApiId).toBe(12345);
+    expect(config.telegramApiHash).toBe("abc");
+    expect(config.telegramSession).toBe("sess");
+  });
+
+  it("names the missing Telegram variable", () => {
+    expect(() =>
+      loadTelegramConfig({ ...telegramOnly, TELEGRAM_SESSION: undefined }),
+    ).toThrow(/TELEGRAM_SESSION/);
+  });
+});
+
 describe("loadConfig", () => {
   it("parses a complete environment", () => {
     const config = loadConfig(complete);
     expect(config.telegramApiId).toBe(12345);
     expect(config.ownerUserId).toBe("user_123");
+  });
+
+  it("still requires Vercel-only variables on top of Telegram config", () => {
+    expect(() => loadConfig(telegramOnly)).toThrow(/WORKOS_ISSUER|MCP_RESOURCE_URL/);
   });
 
   it("names the missing variable", () => {

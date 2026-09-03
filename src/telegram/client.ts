@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { loadConfig } from "../config";
+import { loadTelegramConfig } from "../config";
 import {
   isDeadTelegramSession,
   isUnresolvedEntity,
@@ -82,7 +82,7 @@ let disconnecting: Promise<void> | undefined;
 let testFactory: TestFactory | undefined;
 
 const defaultFactory: Factory = async () => {
-  const config = loadConfig();
+  const config = loadTelegramConfig();
   const { TelegramClient } = await import("teleproto");
   const { StringSession } = await import("teleproto/sessions");
   return new TelegramClient(
@@ -253,6 +253,48 @@ async function releaseClient(client: TelegramLike, drop: boolean): Promise<void>
 /**
  * The only path to MTProto. No tool may import a Telegram client directly.
  */
+export type TelegramLoginCallbacks = {
+  phoneNumber(): Promise<string>;
+  phoneCode(): Promise<string>;
+  password(): Promise<string>;
+  onError?(err: Error): void;
+};
+
+/**
+ * Interactive Telegram login for the worker entry point. Only client.ts may
+ * import teleproto; scripts reach login through this helper.
+ */
+export async function loginTelegramSession(
+  apiId: number,
+  apiHash: string,
+  callbacks: TelegramLoginCallbacks,
+): Promise<string> {
+  const { TelegramClient } = await import("teleproto");
+  const { StringSession } = await import("teleproto/sessions");
+  const client = new TelegramClient(new StringSession(""), apiId, apiHash, {
+    connectionRetries: 3,
+  });
+
+  try {
+    await client.start({
+      phoneNumber: callbacks.phoneNumber,
+      phoneCode: callbacks.phoneCode,
+      password: callbacks.password,
+      onError: (err) => {
+        callbacks.onError?.(err);
+      },
+    });
+
+    const session = client.session.save();
+    if (typeof session !== "string" || session.length === 0) {
+      throw new Error("Telegram returned an empty session string");
+    }
+    return session;
+  } finally {
+    await client.disconnect().catch(() => undefined);
+  }
+}
+
 export async function withTelegram<T>(
   fn: (client: TelegramLike) => Promise<T>,
 ): Promise<T> {

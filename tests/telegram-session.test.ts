@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  parseLoginTarget,
-  readEnvKey,
-  sessionFingerprint,
-} from "../scripts/telegram-session";
+import { sessionFingerprint } from "@/session/fingerprint";
 
 describe("sessionFingerprint", () => {
   it("is stable for the same session and differs across sessions", () => {
@@ -13,17 +9,9 @@ describe("sessionFingerprint", () => {
   });
 });
 
-describe("parseLoginTarget", () => {
-  it("requires an explicit local or production target", () => {
-    expect(parseLoginTarget(["--target", "local"])).toBe("local");
-    expect(parseLoginTarget(["--target", "production"])).toBe("production");
-    expect(() => parseLoginTarget([])).toThrow(/--target local or --target production/);
-    expect(() => parseLoginTarget(["--target", "staging"])).toThrow(/Unknown --target/);
-  });
-});
-
 describe("readEnvKey", () => {
-  it("reads an unquoted dotenv value and strips vercel pull quotes", () => {
+  it("reads an unquoted dotenv value and strips vercel pull quotes", async () => {
+    const { readEnvKey } = await import("../scripts/telegram-session");
     expect(readEnvKey("A=1\nTELEGRAM_SESSION=abc\n", "TELEGRAM_SESSION")).toBe(
       "abc",
     );
