@@ -21,6 +21,7 @@ import type { CliContext, Step } from "../src/cli/types";
 import {
   detectDrift,
   probeState,
+  VERCEL_ENV_PULL_COMMAND,
   type ObservedState,
 } from "../src/cli/state/probe";
 import {
@@ -55,6 +56,22 @@ const HEALTH_OK = JSON.stringify({
   },
 });
 
+const WORKER_URL = "https://203.0.113.10:8443";
+
+function vercelEnvPullContent(overrides: Partial<Record<string, string>> = {}): string {
+  const vars: Record<string, string> = {
+    TELEGRAM_WORKER_URL: WORKER_URL,
+    TELEGRAM_WORKER_TOKEN: "remote-token-value",
+    TELEGRAM_WORKER_CA: "YmFzZTY0Y2E=",
+    TELEGRAM_WORKER_CLIENT_CERT: "YmFzZTY0Y2VydA==",
+    TELEGRAM_WORKER_CLIENT_KEY: "YmFzZTY0a2V5",
+    ...overrides,
+  };
+  return Object.entries(vars)
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+}
+
 function baseLocalShell(): FakeShell {
   return new FakeShell("local")
     .whenEquals("git rev-parse HEAD", ok(HEAD))
@@ -64,28 +81,15 @@ function baseLocalShell(): FakeShell {
     .whenEquals("vercel --version", ok("41.0.0\n"))
     .whenEquals("test -d .vercel && echo linked || echo missing", ok("linked\n"))
     .when(
-      /ssh -o BatchMode=yes -o ConnectTimeout=5 gramscope-worker true/,
+      /ssh -o BatchMode=yes -o ConnectTimeout=5 'gramscope-worker' true/,
       () => ok(""),
     )
     .when(/vercel ls --prod/, () =>
       ok(`Production deployments\n  ${HEAD}  READY  https://gramscope.vercel.app\n`),
     )
     .when(/curl -sS -o \/dev\/null -w '%\{http_code\}'/, () => ok("401"))
-    .when(/vercel env ls production/, () =>
-      ok(
-        [
-          "TELEGRAM_WORKER_URL",
-          "TELEGRAM_WORKER_TOKEN",
-          "TELEGRAM_WORKER_CA",
-          "TELEGRAM_WORKER_CLIENT_CERT",
-          "TELEGRAM_WORKER_CLIENT_KEY",
-        ].join("\n"),
-      ),
-    )
-    .when(/vercel env pull/, () =>
-      ok(
-        "TELEGRAM_WORKER_TOKEN=remote-token-value\nTELEGRAM_WORKER_CLIENT_CERT=YmFzZTY0Y2VydA==\n",
-      ),
+    .when(/vercel env pull --environment production/, () =>
+      ok(vercelEnvPullContent()),
     );
 }
 
@@ -259,6 +263,59 @@ describe("plan/apply framework", () => {
         },
       ]),
     ).toBe(1);
+  });
+});
+
+describe("Bugbot fix regressions", () => {
+  beforeEach(() => {
+    resetObservedStateCache();
+  });
+
+  it("reads TELEGRAM_WORKER_URL from vercel env pull, not env ls", async () => {
+    const local = baseLocalShell();
+    const state = await probeState(local, baseVpsShell());
+    expect(state.workerUrl).toBe(WORKER_URL);
+    expect(local.runs.some((r) => r.command === VERCEL_ENV_PULL_COMMAND)).toBe(
+      true,
+    );
+    expect(local.runs.some((r) => r.command.includes("vercel env ls"))).toBe(
+      false,
+    );
+  });
+
+  it("uses --host for the SSH reachability probe", async () => {
+    const local = baseLocalShell().when(
+      /ssh -o BatchMode=yes -o ConnectTimeout=5 'my-worker' true/,
+      () => ok(""),
+    );
+    const state = await probeState(local, baseVpsShell(), {
+      sshHost: "my-worker",
+    });
+    expect(state.sshReachable).toBe(true);
+    expect(local.runs.some((r) => r.command.includes("'my-worker'"))).toBe(
+      true,
+    );
+    expect(
+      local.runs.some((r) => /gramscope-worker true/.test(r.command)),
+    ).toBe(false);
+  });
+
+  it("install apply publishes TELEGRAM_WORKER_URL over stdin", async () => {
+    const local = baseLocalShell()
+      .when(/vercel env pull --environment production/, () => ok(""))
+      .when(/vercel env rm/, () => ok(""))
+      .when(/vercel env add/, () => ok(""))
+      .when(/ssh gramscope-worker/, () => ok("YmFzZTY0Y2E="));
+    const vps = baseVpsShell();
+    const step = installSteps().find((s) => s.id === "install.vercel-vars");
+    await step!.apply!(ctx(local, vps));
+    const urlPublish = local.runs.find(
+      (r) =>
+        r.command === "vercel env add TELEGRAM_WORKER_URL production" &&
+        r.stdin === WORKER_URL,
+    );
+    expect(urlPublish).toBeDefined();
+    expect(urlPublish!.command).not.toContain(WORKER_URL);
   });
 });
 

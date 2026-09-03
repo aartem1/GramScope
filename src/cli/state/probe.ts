@@ -1,5 +1,6 @@
 import { readEnvKey } from "../env";
 import { contentFingerprint } from "../secrets";
+import { shellQuote } from "../shell/ssh";
 import type { Shell } from "../shell/types";
 import type { StatusReport } from "../types";
 
@@ -28,10 +29,21 @@ export interface ObservedState {
   clientCertMatches: boolean | null;
 }
 
+export interface ProbeOptions {
+  sshHost?: string;
+}
+
+/** Pull production env to stdout; values stay in memory, never logged by probe. */
+export const VERCEL_ENV_PULL_COMMAND =
+  "vercel env pull --environment production --yes - 2>/dev/null || true";
+
 export async function probeState(
   localShell: Shell,
   vpsShell: Shell,
+  options?: ProbeOptions,
 ): Promise<ObservedState> {
+  const sshHost = options?.sshHost ?? "gramscope-worker";
+
   const [
     localHead,
     gitStatus,
@@ -45,10 +57,8 @@ export async function probeState(
     health,
     vercelLs,
     mcpProbe,
-    vercelEnv,
-    workerTokenLocal,
+    vercelEnvPull,
     workerTokenRemote,
-    clientCertLocal,
     clientCertRemote,
     workerPort,
   ] = await Promise.all([
@@ -58,7 +68,10 @@ export async function probeState(
     run(localShell, "node -v"),
     run(localShell, "vercel --version"),
     run(localShell, "test -d .vercel && echo linked || echo missing"),
-    run(localShell, `ssh -o BatchMode=yes -o ConnectTimeout=5 gramscope-worker true`),
+    run(
+      localShell,
+      `ssh -o BatchMode=yes -o ConnectTimeout=5 ${shellQuote(sshHost)} true`,
+    ),
     run(vpsShell, "curl -sS https://api.ipify.org || true"),
     run(
       vpsShell,
@@ -70,16 +83,16 @@ export async function probeState(
     ),
     run(localShell, "vercel ls --prod 2>/dev/null | head -n 5 || true"),
     run(localShell, "test -n \"$MCP_RESOURCE_URL\" && curl -sS -o /dev/null -w '%{http_code}' \"$MCP_RESOURCE_URL\" || echo missing"),
-    run(localShell, "vercel env ls production 2>/dev/null || true"),
-    run(localShell, "vercel env pull --environment production --yes - 2>/dev/null | grep '^TELEGRAM_WORKER_TOKEN=' || true"),
+    run(localShell, VERCEL_ENV_PULL_COMMAND),
     run(vpsShell, "sudo sed -n 's|^TELEGRAM_WORKER_TOKEN=||p' /etc/gramscope/worker.env 2>/dev/null || true"),
-    run(localShell, "vercel env pull --environment production --yes - 2>/dev/null | grep '^TELEGRAM_WORKER_CLIENT_CERT=' || true"),
     run(
       vpsShell,
       "sudo openssl base64 -A -in /etc/gramscope/tls/vercel.crt 2>/dev/null || true",
     ),
     run(vpsShell, "sudo sed -n 's|^TELEGRAM_WORKER_PORT=||p' /etc/gramscope/worker.env 2>/dev/null || true"),
   ]);
+
+  const vercelEnvContent = vercelEnvPull?.stdout ?? "";
 
   const healthJson = parseJson(health.stdout);
   const workerRevision =
@@ -92,8 +105,8 @@ export async function probeState(
     | undefined;
 
   const legacyKeys = ["TELEGRAM_SESSION", "TELEGRAM_API_ID", "TELEGRAM_API_HASH"];
-  const legacyTelegramVars = legacyKeys.filter((key) =>
-    vercelEnv.stdout.includes(key),
+  const legacyTelegramVars = legacyKeys.filter(
+    (key) => readEnvKey(vercelEnvContent, key) !== undefined,
   );
 
   const requiredWorkerVars = [
@@ -103,8 +116,8 @@ export async function probeState(
     "TELEGRAM_WORKER_CLIENT_CERT",
     "TELEGRAM_WORKER_CLIENT_KEY",
   ];
-  const workerVarsPresent = requiredWorkerVars.filter((key) =>
-    vercelEnv.stdout.includes(key),
+  const workerVarsPresent = requiredWorkerVars.filter(
+    (key) => readEnvKey(vercelEnvContent, key) !== undefined,
   );
 
   const vpsPublicIp = vpsIp.stdout.trim() || null;
@@ -118,19 +131,16 @@ export async function probeState(
       ? `https://${vpsPublicIp}:${workerPortValue}`
       : null;
 
-  const workerUrlMatch = vercelEnv.stdout.match(/TELEGRAM_WORKER_URL[^\n]*/);
-  const workerUrl = workerUrlMatch
-    ? readEnvKey(`${workerUrlMatch[0]}\n`, "TELEGRAM_WORKER_URL")
-    : null;
+  const workerUrl = readEnvKey(vercelEnvContent, "TELEGRAM_WORKER_URL") ?? null;
 
-  const localToken = extractEnvValue(workerTokenLocal.stdout, "TELEGRAM_WORKER_TOKEN");
+  const localToken = readEnvKey(vercelEnvContent, "TELEGRAM_WORKER_TOKEN");
   const remoteToken = workerTokenRemote.stdout.trim();
   const workerTokenMatches =
     localToken && remoteToken
       ? contentFingerprint(localToken) === contentFingerprint(remoteToken)
       : null;
 
-  const localCert = extractEnvValue(clientCertLocal.stdout, "TELEGRAM_WORKER_CLIENT_CERT");
+  const localCert = readEnvKey(vercelEnvContent, "TELEGRAM_WORKER_CLIENT_CERT");
   const remoteCert = clientCertRemote.stdout.trim();
   const clientCertMatches =
     localCert && remoteCert
@@ -159,7 +169,7 @@ export async function probeState(
     mcpReturns401: mcpProbe.stdout.trim() === "401",
     legacyTelegramVars,
     workerVarsPresent,
-    workerUrl: workerUrl ?? null,
+    workerUrl,
     expectedWorkerUrl,
     workerTokenMatches,
     clientCertMatches,
@@ -274,14 +284,6 @@ function parseJson(text: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
-}
-
-function extractEnvValue(text: string, key: string): string | undefined {
-  const line = text
-    .split(/\r?\n/)
-    .find((entry) => entry.startsWith(`${key}=`));
-  if (!line) return undefined;
-  return readEnvKey(`${line}\n`, key);
 }
 
 function extractVercelRevision(output: string): string | null {

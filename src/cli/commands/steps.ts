@@ -10,7 +10,9 @@ let cachedState: ObservedState | null = null;
 
 export async function getObservedState(ctx: CliContext): Promise<ObservedState> {
   if (!cachedState) {
-    cachedState = await probeState(ctx.localShell, ctx.vpsShell);
+    cachedState = await probeState(ctx.localShell, ctx.vpsShell, {
+      sshHost: ctx.flags.host,
+    });
   }
   return cachedState;
 }
@@ -220,11 +222,7 @@ export function installSteps(): Step[] {
           : actionable(`publish: ${missing.join(", ")}`);
       },
       async (ctx) => {
-        await publishVercelFromVps(ctx, "TELEGRAM_WORKER_CA", "ca.crt");
-        await publishVercelFromVps(ctx, "TELEGRAM_WORKER_CLIENT_CERT", "vercel.crt");
-        await publishVercelFromVps(ctx, "TELEGRAM_WORKER_CLIENT_KEY", "vercel.key");
-        await publishVercelSecretFromWorkerEnv(ctx, "TELEGRAM_WORKER_TOKEN");
-        resetObservedStateCache();
+        await publishAllWorkerVercelVars(ctx);
       },
     ),
   ];
@@ -324,11 +322,7 @@ export function migrateSteps(): Step[] {
         ? satisfied("worker variables published")
         : actionable(`publish: ${missing.join(", ")}`);
     }, async (ctx) => {
-      await publishVercelFromVps(ctx, "TELEGRAM_WORKER_CA", "ca.crt");
-      await publishVercelFromVps(ctx, "TELEGRAM_WORKER_CLIENT_CERT", "vercel.crt");
-      await publishVercelFromVps(ctx, "TELEGRAM_WORKER_CLIENT_KEY", "vercel.key");
-      await publishVercelSecretFromWorkerEnv(ctx, "TELEGRAM_WORKER_TOKEN");
-      resetObservedStateCache();
+      await publishAllWorkerVercelVars(ctx);
     }),
     step(
       "migrate.deploy-vercel",
@@ -504,6 +498,19 @@ function systemdActiveCheck(): (ctx: CliContext) => Promise<StepCheckResult> {
       ? satisfied("gramscope-worker active")
       : actionable("install and start gramscope-worker");
   };
+}
+
+async function publishAllWorkerVercelVars(ctx: CliContext): Promise<void> {
+  const state = await getObservedState(ctx);
+  if (!state.expectedWorkerUrl) {
+    throw new Error("cannot derive TELEGRAM_WORKER_URL from VPS address and port");
+  }
+  await publishVercelFromVps(ctx, "TELEGRAM_WORKER_CA", "ca.crt");
+  await publishVercelFromVps(ctx, "TELEGRAM_WORKER_CLIENT_CERT", "vercel.crt");
+  await publishVercelFromVps(ctx, "TELEGRAM_WORKER_CLIENT_KEY", "vercel.key");
+  await publishVercelSecretFromWorkerEnv(ctx, "TELEGRAM_WORKER_TOKEN");
+  await publishVercelPlain(ctx, "TELEGRAM_WORKER_URL", state.expectedWorkerUrl);
+  resetObservedStateCache();
 }
 
 async function publishVercelFromVps(
