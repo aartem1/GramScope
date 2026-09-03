@@ -1,9 +1,10 @@
 import { FANOUT_CONCURRENCY, mapWithConcurrency } from "../concurrency";
 import { GramScopeError } from "../errors/taxonomy";
 import { mapTelegramError } from "../errors/from-telegram";
+import { MAX_SOURCES_PER_CALL } from "../limits";
 import type { TelegramLike } from "./client";
 import type { DialogIndex } from "./dialog-index";
-import { entityUsernames } from "./peer-id";
+import { entityUsernames } from "../peer-id";
 import {
   localSourceId,
   nameKey,
@@ -13,13 +14,7 @@ import {
   type ResolvedSource,
 } from "./peer-resolve";
 
-/**
- * Spec §5.1. A fan-out wider than this stops being one tool call and starts
- * being a job: 25 sources at limit 100 already fetches 2500 messages. Counted
- * over CANONICAL sources, because a caller naming one peer twice under two
- * names has still asked for one fan-out.
- */
-export const MAX_SOURCES_PER_CALL = 25;
+export { MAX_SOURCES_PER_CALL } from "../limits";
 
 /**
  * Canonicalisation can collapse aliases, so the public ceiling above cannot be

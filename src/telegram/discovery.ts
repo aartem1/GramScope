@@ -6,7 +6,7 @@ import {
   entityUsernames,
   readBigId,
   sourceType,
-} from "./peer-id";
+} from "../peer-id";
 import type { DiscoveredSource } from "../schemas/discovery";
 import type { TelegramLike } from "./client";
 import { getApi, withTelegram } from "./client";

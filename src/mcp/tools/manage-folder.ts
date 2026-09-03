@@ -7,11 +7,13 @@ import {
   removeFolderSources,
   renameFolder,
   reorderFolders,
-  MAX_FOLDERS,
+} from "../../telegram/folder-edit";
+import {
   MAX_FOLDER_SOURCES,
   MAX_FOLDER_TITLE,
-} from "../../telegram/folder-edit";
-import { MAX_SOURCES_PER_CALL } from "../../telegram/source-selection";
+  MAX_FOLDERS,
+  MAX_SOURCES_PER_CALL,
+} from "../../limits";
 import { telegramFolderSchema } from "../../schemas/folder";
 import { GramScopeError } from "../../errors/taxonomy";
 import { runTool } from "../tool-result";

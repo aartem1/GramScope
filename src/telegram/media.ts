@@ -5,7 +5,7 @@ import { mediaOf } from "../schemas/message";
 import { mediaError } from "../errors/taxonomy";
 import { fetchDialogIndex } from "./dialog-index";
 import { getApi, type TelegramLike } from "./client";
-import { readBigId } from "./peer-id";
+import { readBigId } from "../peer-id";
 import { resolveSource, type ResolvedSource } from "./peer-resolve";
 
 export type MediaAsset = {

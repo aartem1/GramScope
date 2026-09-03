@@ -11,7 +11,7 @@ import {
 } from "./dialog-index";
 import { mediaFilter, type MediaType } from "./message-slice";
 import { parseDateBound } from "./messages";
-import { inputPeerMarkedId } from "./peer-id";
+import { inputPeerMarkedId } from "../peer-id";
 import { nameKey } from "./peer-resolve";
 import {
   assertResolutionBudget,

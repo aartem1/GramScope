@@ -1,4 +1,4 @@
-import { entityMarkedId } from "./peer-id";
+import { entityMarkedId } from "../peer-id";
 
 const SUPPORTED_CLASSES = new Set([
   "messages.Messages",

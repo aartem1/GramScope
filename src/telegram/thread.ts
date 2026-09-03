@@ -1,7 +1,7 @@
 import { getApi, withTelegram } from "./client";
 import { fetchDialogIndex } from "./dialog-index";
 import { resolveSource } from "./peer-resolve";
-import { markedChannelId, readBigId } from "./peer-id";
+import { markedChannelId, readBigId } from "../peer-id";
 import { readMessagesPage } from "./tl-messages";
 import {
   assertSameScope,

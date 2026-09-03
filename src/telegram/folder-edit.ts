@@ -11,29 +11,15 @@ import {
   assertSourceIdsBounded,
   MAX_SOURCES_PER_CALL,
 } from "./source-selection";
+import {
+  MAX_FOLDER_SOURCES,
+  MAX_FOLDER_TITLE,
+  MAX_FOLDERS,
+} from "../limits";
 import { GramScopeError } from "../errors/taxonomy";
 import type { TelegramFolder } from "../schemas/folder";
 
-/** Telegram's non-Premium ceiling on chat folders. */
-export const MAX_FOLDERS = 10;
-
-/** Telegram's ceiling on peers in one folder, non-Premium. */
-export const MAX_FOLDER_SOURCES = 100;
-
-/**
- * Telegram's ceiling on a folder title, measured live on 2026-08-29 by
- * bisection against `messages.updateDialogFilter`: 12 characters is accepted,
- * 13 fails with MESSAGE_TOO_LONG. It appears in no TL schema and teleproto
- * does not model it, so it is checked here rather than discovered on the wire
- * — MESSAGE_TOO_LONG alone tells a caller nothing about which limit it hit.
- *
- * Counted in UTF-16 code units, which is what the measurement used. An emoji
- * title is therefore charged more than Telegram may charge it; the belt-and-
- * braces MESSAGE_TOO_LONG mapping in errors/from-telegram.ts keeps the other
- * direction actionable if the real rule ever turns out to be bytes or
- * codepoints.
- */
-export const MAX_FOLDER_TITLE = 12;
+export { MAX_FOLDER_SOURCES, MAX_FOLDER_TITLE, MAX_FOLDERS } from "../limits";
 
 /**
  * Telegram reserves filter id 0 for "All chats" and 1 for the archive, so a

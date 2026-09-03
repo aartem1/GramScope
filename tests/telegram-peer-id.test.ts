@@ -8,7 +8,7 @@ import {
   peerKind,
   readBigId,
   sourceType,
-} from "@/telegram/peer-id";
+} from "@/peer-id";
 
 describe("readBigId", () => {
   it("unwraps every shape teleproto uses for an id", () => {

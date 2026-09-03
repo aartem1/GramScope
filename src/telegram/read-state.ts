@@ -1,11 +1,12 @@
 import { FANOUT_CONCURRENCY, mapWithConcurrency } from "../concurrency";
 import { mapTelegramError } from "../errors/from-telegram";
 import { GramScopeError } from "../errors/taxonomy";
+import { MAX_MARK_READ_SOURCES } from "../limits";
 import { getApi, resolveEntity, toInputPeer, withTelegram } from "./client";
 import { fetchDialogIndex } from "./dialog-index";
 import { assertSourceIdsBounded } from "./source-selection";
 
-export const MAX_MARK_READ_SOURCES = 25;
+export { MAX_MARK_READ_SOURCES } from "../limits";
 
 export type MarkReadInput = {
   source_ids: string[];

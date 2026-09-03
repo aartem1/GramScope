@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { getMessage, MAX_CONTEXT } from "../../telegram/messages";
+import { getMessage } from "../../telegram/messages";
+import { MAX_CONTEXT } from "../../limits";
 import { telegramMessageSchema } from "../../schemas/message";
 import { runTool } from "../tool-result";
 

@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
 import { listSourceNotes } from "../../telegram/source-notes";
-import { MAX_SOURCES_PER_CALL } from "../../telegram/source-selection";
+import { MAX_SOURCES_PER_CALL } from "../../limits";
 import { sourceNoteSchema } from "../../schemas/source-note";
 import { runTool } from "../tool-result";
 

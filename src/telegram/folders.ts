@@ -1,5 +1,5 @@
 import { getApi, withTelegram } from "./client";
-import { inputPeerMarkedId } from "./peer-id";
+import { inputPeerMarkedId } from "../peer-id";
 import type { TelegramFolder } from "../schemas/folder";
 
 /**

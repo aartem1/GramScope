@@ -11,7 +11,7 @@ import {
   markedChannelId,
   readBigId,
   sourceType,
-} from "./peer-id";
+} from "../peer-id";
 import type { TelegramFolder } from "../schemas/folder";
 import type { TelegramSource } from "../schemas/source";
 import { decodeCursor, encodeCursor } from "../pagination";

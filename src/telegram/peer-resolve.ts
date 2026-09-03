@@ -1,6 +1,6 @@
 import { resolveEntity, type TelegramLike } from "./client";
 import type { DialogEntry, DialogIndex } from "./dialog-index";
-import { entityMarkedId, entityUsername } from "./peer-id";
+import { entityMarkedId, entityUsername } from "../peer-id";
 import { GramScopeError } from "../errors/taxonomy";
 
 /**

@@ -186,4 +186,16 @@ describe("tools/list over a real MCP server", () => {
     const route = readFileSync("app/api/mcp/route.ts", "utf8");
     expect(route).toContain("SERVER_INSTRUCTIONS");
   });
+
+  it("matches the committed tools/list golden fixture", async () => {
+    // ChatGPT and Grok cache this payload. Any drift in a name, title,
+    // description, schema bound or annotation is a reconnect for the owner.
+    // If this fails, restore the MCP surface — do not rewrite the fixture.
+    const fixturePath = new URL("./fixtures/tools-list.json", import.meta.url);
+    const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as {
+      tools: Json[];
+    };
+    const tools = JSON.parse(JSON.stringify(await listTools())) as Json[];
+    expect(tools).toEqual(fixture.tools);
+  });
 });

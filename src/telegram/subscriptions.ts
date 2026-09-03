@@ -2,7 +2,7 @@ import { getApi, resolveEntity, withTelegram } from "./client";
 import { fetchDialogIndex } from "./dialog-index";
 import { fetchChannelDetails, foldersByPeer, toSource } from "./dialogs";
 import { resolveSource } from "./peer-resolve";
-import { peerKind, sourceType } from "./peer-id";
+import { peerKind, sourceType } from "../peer-id";
 import { GramScopeError } from "../errors/taxonomy";
 import type { TelegramSource } from "../schemas/source";
 

@@ -13,6 +13,7 @@ import {
   MAX_SOURCES_PER_CALL,
   prepareSourceTargets,
 } from "./source-selection";
+import { MAX_CONTEXT } from "../limits";
 import { FANOUT_CONCURRENCY, mapWithConcurrency } from "../concurrency";
 import { decodeMessageCursor, encodeMessageCursor } from "../pagination";
 import { fitToSizeCap, MAX_RESPONSE_BYTES } from "../schemas/size";
@@ -25,10 +26,11 @@ import {
 } from "../schemas/message";
 
 /**
- * Re-exported from ./source-selection, which now owns both ceilings because
- * the effective one is counted after resolution. Kept here so callers and
- * tests that have always imported it from this module keep working.
+ * Re-exported so callers and tests that have always imported ceilings from
+ * this module keep working. Source-count and name ceilings still originate in
+ * ./source-selection; MAX_CONTEXT lives in ../limits.
  */
+export { MAX_CONTEXT };
 export {
   MAX_NETWORK_RESOLUTIONS_PER_CALL,
   MAX_SOURCE_NAMES_PER_CALL,
@@ -337,8 +339,6 @@ export async function getMessages(
 
   return renderPage(fetched);
 }
-
-export const MAX_CONTEXT = 20;
 
 export type GetMessageInput = {
   source_id: string;

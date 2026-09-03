@@ -7,7 +7,7 @@ import {
 import { fetchDialogIndex } from "./dialog-index";
 import { fetchChannelDetails, foldersByPeer, toSource } from "./dialogs";
 import { parseTelegramName, resolveSource } from "./peer-resolve";
-import { entityMarkedId, sourceType } from "./peer-id";
+import { entityMarkedId, sourceType } from "../peer-id";
 import { GramScopeError } from "../errors/taxonomy";
 
 export type ResolvedUrl = {

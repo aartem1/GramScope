@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { inputPeerMarkedId, readBigId } from "../telegram/peer-id";
+import { inputPeerMarkedId, readBigId } from "../peer-id";
 import { mediaDescriptorSchema, mediaId, type MediaDescriptor } from "./media";
 
 /**

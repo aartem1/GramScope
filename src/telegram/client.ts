@@ -6,7 +6,7 @@ import {
   mapTelegramError,
   telegramErrorCode,
 } from "../errors/from-telegram";
-import { peerKind } from "./peer-id";
+import { peerKind } from "../peer-id";
 
 export type TelegramLike = {
   connected?: boolean;

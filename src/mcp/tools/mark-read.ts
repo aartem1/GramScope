@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/server";
-import { markRead, MAX_MARK_READ_SOURCES } from "../../telegram/read-state";
+import { markRead } from "../../telegram/read-state";
+import { MAX_MARK_READ_SOURCES } from "../../limits";
 import { runTool } from "../tool-result";
 
 export function registerMarkRead(server: McpServer): void {

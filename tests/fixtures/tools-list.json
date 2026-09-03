@@ -1,0 +1,3290 @@
+{
+  "tools": [
+    {
+      "name": "list_dialogs",
+      "title": "List Telegram sources",
+      "description": "List channels, groups and chats on the account, with unread counts and folder membership. Filtering by folder_id honors the folder's included and excluded peers only; it ignores the folder's exclude-muted, exclude-read and chat-type flags, so results may differ from the folder tab in the Telegram app. Paginate with next_cursor. Read-only: this does not mark anything as read.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "folder_id": {
+            "type": "string"
+          },
+          "unread_only": {
+            "type": "boolean"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "channel",
+              "group",
+              "chat"
+            ]
+          },
+          "limit": {
+            "default": 50,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque continuation token from a previous response's next_cursor. Copy it back exactly as received, character for character; it is not human-readable and must not be shortened, re-typed or reconstructed."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "channel",
+                    "group",
+                    "chat"
+                  ]
+                },
+                "subscriber_count": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "folder_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "unread_count": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "read_inbox_max_id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "unread_mark": {
+                  "type": "boolean"
+                },
+                "linked_discussion_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "type"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "list_folders",
+      "title": "List Telegram folders",
+      "description": "List the Telegram chat folders (dialog filters) on the account, with the peers each includes and excludes. Use the returned id as folder_id for list_dialogs. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {}
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "included_peer_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "excluded_peer_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "order": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "included_peer_ids",
+                "excluded_peer_ids",
+                "order"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "folders"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_channel",
+      "title": "Get a Telegram source",
+      "description": "Get details for one channel, group or chat by numeric id, @username, or t.me URL. Provide exactly one identifier. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "id": {
+            "description": "Numeric peer id as returned by list_dialogs. Provide exactly one of id, username, or url.",
+            "type": "string"
+          },
+          "username": {
+            "description": "Public @username, with or without the @. Provide exactly one of id, username, or url.",
+            "type": "string"
+          },
+          "url": {
+            "description": "A t.me link, e.g. https://t.me/example. Provide exactly one of id, username, or url.",
+            "type": "string"
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "channel",
+              "group",
+              "chat"
+            ]
+          },
+          "subscriber_count": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "folder_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unread_count": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "read_inbox_max_id": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "unread_mark": {
+            "type": "boolean"
+          },
+          "linked_discussion_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_messages",
+      "title": "Read Telegram message history",
+      "description": "Read recent messages from one or many Telegram sources in a single call. Sources are named by source_ids, by folder_ids (expanded to their member channels), or both, minus exclude_source_ids; the effective set is capped at 25 sources. Results are grouped by source, newest first within each source, and limit applies PER SOURCE. Date filtering with from/to is independent of read state, so a date-windowed read returns messages whether or not they have been read. A source that was reached but matched nothing has an empty messages array; a source this page never reached is absent from the response and named in next_cursor. To continue, resend every filter unchanged together with next_cursor — the cursor supplies its own source set, so source_ids, folder_ids and exclude_source_ids are ignored when it is present. Read-only: this does not mark anything as read.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source_ids": {
+            "description": "Sources to read. Each may be a marked id from list_dialogs, a @username, or a t.me link — including a public channel the account has not joined, which then reports no unread state.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "folder_ids": {
+            "description": "Folder ids from list_folders, expanded to their member sources.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude_source_ids": {
+            "description": "Subtracted from the union of source_ids and folder_ids.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "from": {
+            "description": "ISO 8601. Inclusive lower bound on message date.",
+            "type": "string"
+          },
+          "to": {
+            "description": "ISO 8601. Inclusive upper bound on message date.",
+            "type": "string"
+          },
+          "unread_only": {
+            "description": "Return only messages above each source's read pointer.",
+            "type": "boolean"
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "photo",
+              "video",
+              "document",
+              "audio",
+              "voice",
+              "url",
+              "gif"
+            ]
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque continuation token from a previous response's next_cursor. Copy it back exactly as received, character for character; it is not human-readable and must not be shortened, re-typed or reconstructed."
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "messages": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "chat_id": {
+                        "type": "string"
+                      },
+                      "date": {
+                        "type": "string"
+                      },
+                      "edit_date": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      },
+                      "url": {
+                        "type": "string"
+                      },
+                      "author": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "views": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "forwards": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "replies": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "reactions": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "emoji": {
+                              "type": "string"
+                            },
+                            "count": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "emoji",
+                            "count"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "forwarded_from": {
+                        "type": "object",
+                        "properties": {
+                          "chat_id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "message_id": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "date": {
+                            "type": "string"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "media": {
+                        "type": "object",
+                        "properties": {
+                          "media_id": {
+                            "type": "string",
+                            "pattern": "^med_.*"
+                          },
+                          "type": {
+                            "type": "string"
+                          },
+                          "file_name": {
+                            "type": "string"
+                          },
+                          "mime_type": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "width": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "height": {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "duration_seconds": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "has_thumbnail": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "type"
+                        ],
+                        "additionalProperties": false
+                      },
+                      "is_read": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "chat_id",
+                      "date"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "has_more": {
+                  "type": "boolean"
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "source_id",
+                "title"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "sources"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_message",
+      "title": "Read one Telegram message",
+      "description": "Read a single message by source id and message id, optionally with the messages immediately before and after it. Context arrays are in ascending date order; missing context is a shorter array, not an error. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "description": "A marked id from list_dialogs, a @username, or a t.me link."
+          },
+          "message_id": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "context_before": {
+            "default": 0,
+            "description": "How many older messages to include.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20
+          },
+          "context_after": {
+            "default": 0,
+            "description": "How many newer messages to include.",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20
+          }
+        },
+        "required": [
+          "source_id",
+          "message_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string"
+          },
+          "source_title": {
+            "type": "string"
+          },
+          "message": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "chat_id": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "edit_date": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "author": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "views": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "forwards": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "replies": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "reactions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "emoji": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "emoji",
+                    "count"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "forwarded_from": {
+                "type": "object",
+                "properties": {
+                  "chat_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "message_id": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "date": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "media": {
+                "type": "object",
+                "properties": {
+                  "media_id": {
+                    "type": "string",
+                    "pattern": "^med_.*"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "file_name": {
+                    "type": "string"
+                  },
+                  "mime_type": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "width": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "height": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "duration_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "has_thumbnail": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "additionalProperties": false
+              },
+              "is_read": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "chat_id",
+              "date"
+            ],
+            "additionalProperties": false
+          },
+          "context_before": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "chat_id": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "edit_date": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "views": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "forwards": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "replies": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "reactions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "emoji": {
+                        "type": "string"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "emoji",
+                      "count"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "forwarded_from": {
+                  "type": "object",
+                  "properties": {
+                    "chat_id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "date": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "media": {
+                  "type": "object",
+                  "properties": {
+                    "media_id": {
+                      "type": "string",
+                      "pattern": "^med_.*"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "file_name": {
+                      "type": "string"
+                    },
+                    "mime_type": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "duration_seconds": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "has_thumbnail": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                "is_read": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "chat_id",
+                "date"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "context_after": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "chat_id": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "edit_date": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "views": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "forwards": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "replies": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "reactions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "emoji": {
+                        "type": "string"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "emoji",
+                      "count"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "forwarded_from": {
+                  "type": "object",
+                  "properties": {
+                    "chat_id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "date": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "media": {
+                  "type": "object",
+                  "properties": {
+                    "media_id": {
+                      "type": "string",
+                      "pattern": "^med_.*"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "file_name": {
+                      "type": "string"
+                    },
+                    "mime_type": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "duration_seconds": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "has_thumbnail": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                "is_read": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "chat_id",
+                "date"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "source_id",
+          "source_title",
+          "message",
+          "context_before",
+          "context_after"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_media",
+      "title": "Inspect Telegram media",
+      "description": "Retrieve media attached to one Telegram message when its contents may affect the answer. Pass source_id and message_id and normally omit mode. GramScope returns one short-lived resource link to the best representation. Open it once. Do not retry get_media automatically if file materialization is denied, fails, or the link expires.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "message_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "mode": {
+            "default": "auto",
+            "type": "string",
+            "enum": [
+              "auto",
+              "preview",
+              "frames",
+              "original"
+            ]
+          },
+          "timestamps_seconds": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "max_frames": {
+            "default": 8,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "source_id",
+          "message_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "fallback",
+              "error"
+            ]
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "media": {
+            "type": "object",
+            "properties": {
+              "media_id": {
+                "type": "string",
+                "pattern": "^med_.*"
+              },
+              "type": {
+                "type": "string"
+              },
+              "file_name": {
+                "type": "string"
+              },
+              "mime_type": {
+                "type": "string"
+              },
+              "size": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "width": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "height": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "duration_seconds": {
+                "type": "number",
+                "minimum": 0
+              },
+              "has_thumbnail": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "media_id",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          "representation": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "image",
+                  "audio",
+                  "document",
+                  "download",
+                  "metadata"
+                ]
+              },
+              "delivery": {
+                "type": "string",
+                "const": "resource_link"
+              },
+              "mime_type": {
+                "type": "string"
+              },
+              "file_name": {
+                "type": "string"
+              },
+              "byte_size": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "width": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "height": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "frame_count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10
+              },
+              "timestamps_seconds": {
+                "maxItems": 10,
+                "type": "array",
+                "items": {
+                  "type": "number",
+                  "minimum": 0
+                }
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          "download": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "expires_at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+              }
+            },
+            "required": [
+              "url",
+              "expires_at"
+            ],
+            "additionalProperties": false
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "MEDIA_NOT_FOUND",
+              "NO_MEDIA",
+              "UNSUPPORTED_MEDIA",
+              "INLINE_LIMIT_EXCEEDED",
+              "PROCESSING_TIMEOUT",
+              "TELEGRAM_DOWNLOAD_FAILED"
+            ]
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "source_id",
+          "message_id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_thread",
+      "title": "Read the comments under a Telegram post",
+      "description": "Read the discussion thread under one channel post: the post itself plus the comments left on it, newest first. Works without joining the channel's linked discussion group. Before calling, check the post's replies field, which every message-returning tool already reports: it is the comment count, and a post that has no replies field belongs to a channel with no discussion group at all (NO_DISCUSSION_THREAD). A post with zero comments returns an empty comments list, not an error. comment_count is the discussion group's own live count and can run slightly ahead of the post's replies field. discussion_chat_id identifies the linked group but is NOT an address: get_messages cannot read it, because the account is not a member. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "description": "The CHANNEL the post is in — a marked id, a @username, or a t.me link. Not the discussion group."
+          },
+          "post_id": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Message id of the post inside that channel."
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque continuation token from a previous response's next_cursor. Copy it back exactly as received, character for character; it is not human-readable and must not be shortened, re-typed or reconstructed. It is bound to this source_id and post_id."
+          }
+        },
+        "required": [
+          "source_id",
+          "post_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string"
+          },
+          "source_title": {
+            "type": "string"
+          },
+          "post": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "chat_id": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "edit_date": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "author": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "views": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "forwards": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "replies": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "reactions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "emoji": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "emoji",
+                    "count"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "forwarded_from": {
+                "type": "object",
+                "properties": {
+                  "chat_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "message_id": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "date": {
+                    "type": "string"
+                  }
+                },
+                "additionalProperties": false
+              },
+              "media": {
+                "type": "object",
+                "properties": {
+                  "media_id": {
+                    "type": "string",
+                    "pattern": "^med_.*"
+                  },
+                  "type": {
+                    "type": "string"
+                  },
+                  "file_name": {
+                    "type": "string"
+                  },
+                  "mime_type": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "width": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "height": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "duration_seconds": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "has_thumbnail": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "additionalProperties": false
+              },
+              "is_read": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "id",
+              "chat_id",
+              "date"
+            ],
+            "additionalProperties": false
+          },
+          "discussion_chat_id": {
+            "type": "string"
+          },
+          "comment_count": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "comments": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "chat_id": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "edit_date": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "views": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "forwards": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "replies": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "reactions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "emoji": {
+                        "type": "string"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "emoji",
+                      "count"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "forwarded_from": {
+                  "type": "object",
+                  "properties": {
+                    "chat_id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "date": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "media": {
+                  "type": "object",
+                  "properties": {
+                    "media_id": {
+                      "type": "string",
+                      "pattern": "^med_.*"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "file_name": {
+                      "type": "string"
+                    },
+                    "mime_type": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "duration_seconds": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "has_thumbnail": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                "is_read": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "chat_id",
+                "date"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_title",
+          "post",
+          "comment_count",
+          "comments"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_unread_summary",
+      "title": "Summarize unread Telegram messages",
+      "description": "Report how many unread messages each source, or each folder, is holding. Sources are returned busiest first; a source flagged with mark_unread is also returned, with unread_mark true and a count that may be zero. Folder grouping counts messages only and ignores the flag. The oldest unread message's date is not reported; get_messages with unread_only and limit 1 answers that for one source. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "group_by": {
+            "default": "source",
+            "type": "string",
+            "enum": [
+              "source",
+              "folder"
+            ]
+          },
+          "folder_ids": {
+            "description": "Narrow the report to these folders.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                },
+                "folder_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "unread_count": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "read_inbox_max_id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "latest_message_id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "latest_message_date": {
+                  "type": "string"
+                },
+                "unread_mark": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "title",
+                "unread_count"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total_unread": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "groups",
+          "total_unread"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "mark_read",
+      "title": "Mark Telegram sources as read",
+      "description": "Advance the read pointer on up to 25 sources, so the next unread sweep does not return the same messages. This CHANGES ACCOUNT STATE and is visible in every Telegram client on the account; reading never does. Without up_to_message_id each source is marked read through its latest message. A source that cannot be reached is reported in failures and does not fail the call.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source_ids": {
+            "minItems": 1,
+            "maxItems": 25,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "up_to_message_id": {
+            "description": "Mark read through this message id. Omit to use each source's latest message.",
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "source_ids"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                },
+                "read_inbox_max_id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "source_id",
+                "read_inbox_max_id"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "code",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "results",
+          "failures"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "mark_unread",
+      "title": "Flag Telegram sources to come back to",
+      "description": "Set or clear Telegram's manual come-back-to-this flag on up to 25 sources. This CHANGES ACCOUNT STATE. The flag is separate from the unread count: setting it does not make already-read messages readable again, and clearing it marks nothing read. Flagged sources appear in get_unread_summary and in list_dialogs with unread_mark true, even at a count of zero. A source that cannot be reached is reported in failures and does not fail the call.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source_ids": {
+            "minItems": 1,
+            "maxItems": 25,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "unread": {
+            "default": true,
+            "description": "true sets the flag; false clears it.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source_ids"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                },
+                "unread_mark": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "source_id",
+                "unread_mark"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "failures": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "source_id",
+                "code",
+                "message"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "results",
+          "failures"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "join_channel",
+      "title": "Join a Telegram channel",
+      "description": "Subscribe the account to one public channel or group, named by @username or t.me link. This CHANGES ACCOUNT STATE: the source starts appearing in list_dialogs and in unread sweeps. A channel the account already follows returns already_member true and changes nothing. Invite links (t.me/+hash) are not supported.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "One @username or t.me link. A bare numeric id resolves only for chats the account already belongs to, so it cannot name something to join."
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "channel",
+                  "group",
+                  "chat"
+                ]
+              },
+              "subscriber_count": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "folder_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "unread_count": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "read_inbox_max_id": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "unread_mark": {
+                "type": "boolean"
+              },
+              "linked_discussion_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          "already_member": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "already_member"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "leave_channel",
+      "title": "Leave a Telegram channel",
+      "description": "Unsubscribe the account from ONE channel or group. This CHANGES ACCOUNT STATE and takes exactly one source per call. A private channel cannot be re-joined afterwards without a new invite, so leaving one is irreversible. A source the account does not belong to returns was_member false and changes nothing. The response echoes the source as it was before leaving.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source": {
+            "type": "string",
+            "description": "One source: numeric id, @username, or t.me link."
+          }
+        },
+        "required": [
+          "source"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "channel",
+                  "group",
+                  "chat"
+                ]
+              },
+              "subscriber_count": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "folder_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "unread_count": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "read_inbox_max_id": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "unread_mark": {
+                "type": "boolean"
+              },
+              "linked_discussion_id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "type"
+            ],
+            "additionalProperties": false
+          },
+          "was_member": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "source",
+          "was_member"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "manage_folder",
+      "title": "Manage Telegram folders",
+      "description": "Create, rename, delete and reorder the account's chat folders, and move sources in and out of them. This CHANGES ACCOUNT STATE. Folders are this account's working lanes, so filing sources into them is how later reads get narrowed with list_dialogs(folder_id). delete removes one folder per call and does not touch the chats in it. An account holds at most 10 folders, a folder title at most 12 characters, and a folder at most 100 sources; create, add_sources and remove_sources take at most 25 sources per call. create must name at least one source: Telegram rejects an empty folder. reorder takes the complete list of folder ids. A shareable folder cannot be edited here.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "create",
+              "rename",
+              "delete",
+              "add_sources",
+              "remove_sources",
+              "reorder"
+            ]
+          },
+          "folder_id": {
+            "description": "Required by rename, delete, add_sources, remove_sources.",
+            "type": "string"
+          },
+          "title": {
+            "description": "Required by create and rename. At most 12 characters; Telegram rejects a longer folder title.",
+            "type": "string",
+            "maxLength": 12
+          },
+          "source_ids": {
+            "description": "Required by create, add_sources and remove_sources. create and add_sources take marked ids, @usernames or t.me links; remove_sources takes only the marked ids list_folders reports in included_peer_ids, because it matches them without resolving anything.",
+            "maxItems": 25,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "folder_ids": {
+            "description": "Required by reorder: every folder id the account holds, exactly once, in the wanted order.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "action"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "folder": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "included_peer_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "excluded_peer_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "order": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "included_peer_ids",
+              "excluded_peer_ids",
+              "order"
+            ],
+            "additionalProperties": false
+          },
+          "folders": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "included_peer_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "excluded_peer_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "order": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "included_peer_ids",
+                "excluded_peer_ids",
+                "order"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "deleted_folder_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_messages",
+      "title": "Search Telegram messages",
+      "description": "Full-text search over Telegram messages. With no source_ids and no folder_ids it searches EVERY chat the account participates in, in one call. Naming source_ids or folder_ids instead searches those sources only, up to 25 of them. There is no third mode and no engine to choose: it follows from the arguments. It cannot search public channels the account has not joined — that requires Telegram Premium and costs Stars — but it CAN search inside one such channel when you name it by @username or t.me link in source_ids. Results are a flat list ordered newest first, NOT grouped by source: every hit carries chat_id and source_title, and the sources roll-up says how many hits on THIS page came from each source. total_matches is Telegram's own estimate for the whole query and drifts; use it to decide whether to narrow, not to compute with. from/to and media_type are applied by Telegram, so a filtered page is never short for that reason. exclude_source_ids works only together with source_ids or folder_ids. To continue, resend every filter unchanged with next_cursor; changing the query or a filter invalidates it. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The text to search for."
+          },
+          "source_ids": {
+            "description": "Sources to search. Each may be a marked id from list_dialogs, a @username, or a t.me link — including channels the account has not joined.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "folder_ids": {
+            "description": "Folder ids from list_folders, expanded to their member sources.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclude_source_ids": {
+            "description": "Subtracted from the union of source_ids and folder_ids. Rejected without one of those, because an account-wide search cannot exclude.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "from": {
+            "description": "ISO 8601. Inclusive lower bound on message date.",
+            "type": "string"
+          },
+          "to": {
+            "description": "ISO 8601. Inclusive upper bound on message date.",
+            "type": "string"
+          },
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "photo",
+              "video",
+              "document",
+              "audio",
+              "voice",
+              "url",
+              "gif"
+            ]
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque continuation token from a previous response's next_cursor. Copy it back exactly as received, character for character; it is not human-readable and must not be shortened, re-typed or reconstructed. Resend the same query and filters with it."
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "chat_id": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "edit_date": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "views": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "forwards": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "replies": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "reactions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "emoji": {
+                        "type": "string"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "emoji",
+                      "count"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "forwarded_from": {
+                  "type": "object",
+                  "properties": {
+                    "chat_id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "date": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "media": {
+                  "type": "object",
+                  "properties": {
+                    "media_id": {
+                      "type": "string",
+                      "pattern": "^med_.*"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "file_name": {
+                      "type": "string"
+                    },
+                    "mime_type": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "duration_seconds": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "has_thumbnail": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                "is_read": {
+                  "type": "boolean"
+                },
+                "source_title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "chat_id",
+                "date",
+                "source_title"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "hit_count": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "error": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "message"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "source_id",
+                "title",
+                "hit_count"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total_matches": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "results",
+          "sources"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "resolve_telegram_url",
+      "title": "Resolve a Telegram link",
+      "description": "Turn a Telegram link, @username or bare name into something the other tools can call. Accepts t.me/name, t.me/name/123, t.me/name/123?comment=456, t.me/c/<id>/<msg>, t.me/+hash and t.me/joinchat/hash. kind says what the link points at: a source, a specific post, or an invite. joined says whether the account is a member; it does not have to be for get_messages, get_thread or search_messages to read a public channel. An invite preview has no source_id and cannot be read; joining is not supported. A t.me/c/ link resolves only for chats the account is already in. This tool never joins anything and changes nothing.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A t.me link, a @username, or a bare channel name."
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "source",
+              "post",
+              "invite"
+            ]
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "source_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "username": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "channel",
+                  "group",
+                  "chat"
+                ]
+              },
+              "subscriber_count": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "linked_discussion_id": {
+                "type": "string"
+              },
+              "joined": {
+                "type": "boolean"
+              },
+              "folder_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "title",
+              "type",
+              "joined"
+            ],
+            "additionalProperties": false
+          },
+          "message_id": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "comment_id": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_pinned_messages",
+      "title": "Read a source's pinned messages",
+      "description": "Read the pinned messages of one Telegram source, newest first. Pinned posts are usually a channel's rules, its navigation, or the announcement it wants read first, so this is the cheapest way to learn what a source is about. The source may be named by marked id, @username, or t.me link, including a public channel the account has not joined. A source with nothing pinned returns an empty list, not an error. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "description": "A marked id, a @username, or a t.me link."
+          },
+          "limit": {
+            "default": 20,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100
+          },
+          "cursor": {
+            "type": "string",
+            "description": "Opaque continuation token from a previous response's next_cursor. Copy it back exactly as received, character for character; it is not human-readable and must not be shortened, re-typed or reconstructed. It is bound to this source_id."
+          }
+        },
+        "required": [
+          "source_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "source_id": {
+            "type": "string"
+          },
+          "source_title": {
+            "type": "string"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "chat_id": {
+                  "type": "string"
+                },
+                "date": {
+                  "type": "string"
+                },
+                "edit_date": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "author": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "views": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "forwards": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "replies": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "reactions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "emoji": {
+                        "type": "string"
+                      },
+                      "count": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "emoji",
+                      "count"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "forwarded_from": {
+                  "type": "object",
+                  "properties": {
+                    "chat_id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "message_id": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    "date": {
+                      "type": "string"
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "media": {
+                  "type": "object",
+                  "properties": {
+                    "media_id": {
+                      "type": "string",
+                      "pattern": "^med_.*"
+                    },
+                    "type": {
+                      "type": "string"
+                    },
+                    "file_name": {
+                      "type": "string"
+                    },
+                    "mime_type": {
+                      "type": "string"
+                    },
+                    "size": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "width": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "height": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "duration_seconds": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "has_thumbnail": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                "is_read": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "chat_id",
+                "date"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_title",
+          "messages"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "search_channels",
+      "title": "Find public Telegram channels",
+      "description": "Find public Telegram channels by name. This searches titles and @usernames, not by topic: \"AI\" finds nothing while \"artificial intelligence\" finds channels whose name contains it. An empty result usually means the query was too short or abbreviated, NOT that no such channels exist — retry with the full name, or call get_similar_channels from a channel you already know, which is the better tool for \"find me more like this\". Telegram caps this at 10 candidates and offers no pagination or cursor; truncated says whether it capped. Order is Telegram's own and is never re-ranked, with channels this account already follows first. Each candidate carries verified, scam, fake and restricted so you can judge it before recommending it, and joined says whether the account already follows it. Inspect a candidate with get_pinned_messages or get_messages before trusting it. This tool joins nothing and changes nothing. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Words from the channel's name or its @username. Not a topic: use the fullest name you know."
+          },
+          "limit": {
+            "description": "How many candidates to return. 1-10, default 10.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        },
+        "required": [
+          "query"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "channel",
+                    "group",
+                    "chat"
+                  ]
+                },
+                "subscriber_count": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "joined": {
+                  "type": "boolean"
+                },
+                "verified": {
+                  "type": "boolean"
+                },
+                "scam": {
+                  "type": "boolean"
+                },
+                "fake": {
+                  "type": "boolean"
+                },
+                "restricted": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "type",
+                "joined",
+                "verified",
+                "scam",
+                "fake",
+                "restricted"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "candidates",
+          "truncated"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_similar_channels",
+      "title": "Telegram's own channel recommendations",
+      "description": "Telegram's own recommendations. With source supplied, total_similar is the number Telegram knows; only about 10 are served, the remainder requires Telegram Premium, and no argument reaches it. With source omitted, Telegram may offer about 100 ordinary account recommendations; GramScope safely returns only the first limit (maximum 10); there is no pagination or cursor; repeating the same call does not reach the remainder. Order is Telegram's own and is never re-ranked: read candidates with get_messages or get_pinned_messages and pick the best yourself. Each candidate carries verified, scam, fake and restricted, and joined says whether the account already follows it. This tool joins nothing and changes nothing. Read-only.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source": {
+            "description": "The channel to find neighbours of — marked id, @username, or t.me link. Omit it to get recommendations for the whole account.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "How many candidates to return. 1-10, default 10.",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "candidates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "username": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "channel",
+                    "group",
+                    "chat"
+                  ]
+                },
+                "subscriber_count": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "joined": {
+                  "type": "boolean"
+                },
+                "verified": {
+                  "type": "boolean"
+                },
+                "scam": {
+                  "type": "boolean"
+                },
+                "fake": {
+                  "type": "boolean"
+                },
+                "restricted": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "type",
+                "joined",
+                "verified",
+                "scam",
+                "fake",
+                "restricted"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "total_similar": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "candidates",
+          "truncated"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "get_source_notes",
+      "title": "Read what GramScope knows about its sources",
+      "description": "Return source routing notes. about, topics, kind, lang, cadence and derived_from are GramScope assessments based on posts read; id, handle and title are third-party Telegram metadata copied from the resolved source. Call with NO arguments to get the whole set — that is the intended use before deciding which sources to read for a question, and the set is small enough to read in one go. source_ids is a distinct, non-paged mode: it returns only the named sources, at most 25, and clients must omit query, limit and cursor. Otherwise query searches the note text; for whole-store and query pages, limit is 1..200 and cursor continues the same mode.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "source_ids": {
+            "maxItems": 25,
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "query": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "cursor": {
+            "type": "string"
+          }
+        }
+      },
+      "annotations": {
+        "readOnlyHint": true
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "handle": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "about": {
+                  "type": "string"
+                },
+                "topics": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "reporting",
+                    "aggregator",
+                    "opinion",
+                    "promo",
+                    "mixed"
+                  ]
+                },
+                "lang": {
+                  "type": "string"
+                },
+                "cadence": {
+                  "type": "string"
+                },
+                "derived_from": {
+                  "type": "string"
+                },
+                "updated": {
+                  "type": "string",
+                  "format": "date",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                }
+              },
+              "required": [
+                "id",
+                "title",
+                "about",
+                "topics",
+                "kind",
+                "updated"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "duplicates": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "source_id": {
+                  "type": "string"
+                },
+                "message_ids": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  }
+                }
+              },
+              "required": [
+                "source_id",
+                "message_ids"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "malformed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "message_id": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "message_id",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "notes",
+          "duplicates",
+          "malformed"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "set_source_note",
+      "title": "Record what this source is",
+      "description": "Write or delete the single note this server keeps about one source. This CHANGES ACCOUNT STATE. Setting replaces that source's previous note; there is one note per source and no history. about is at most 300 characters; topics at most 12 entries; each topic at most 32 characters; lang at most 16 characters; cadence at most 32 characters; derived_from at most 60 characters. These limits keep the store small enough to read whole. Write about, topics and kind from posts actually read: a channel's name and its own description are claims it makes about itself, not observations of what it publishes. id, handle and title are filled from the resolved source and cannot be supplied.",
+      "inputSchema": {
+        "type": "object",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "action": {
+            "default": "set",
+            "type": "string",
+            "enum": [
+              "set",
+              "delete"
+            ]
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "about": {
+            "type": "string"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "reporting",
+              "aggregator",
+              "opinion",
+              "promo",
+              "mixed"
+            ]
+          },
+          "lang": {
+            "type": "string"
+          },
+          "cadence": {
+            "type": "string"
+          },
+          "derived_from": {
+            "description": "What the note was made from, e.g. a message id range or 'last 40 posts'. With updated, this is how a stale note becomes visible.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_id"
+        ]
+      },
+      "annotations": {
+        "readOnlyHint": false
+      },
+      "outputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "handle": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "about": {
+                "type": "string"
+              },
+              "topics": {
+                "minItems": 1,
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "reporting",
+                  "aggregator",
+                  "opinion",
+                  "promo",
+                  "mixed"
+                ]
+              },
+              "lang": {
+                "type": "string"
+              },
+              "cadence": {
+                "type": "string"
+              },
+              "derived_from": {
+                "type": "string"
+              },
+              "updated": {
+                "type": "string",
+                "format": "date",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+              }
+            },
+            "required": [
+              "id",
+              "title",
+              "about",
+              "topics",
+              "kind",
+              "updated"
+            ],
+            "additionalProperties": false
+          },
+          "replaced": {
+            "type": "boolean"
+          },
+          "deleted": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  ]
+}

@@ -1,17 +1,8 @@
 import { getApi, type TelegramLike } from "./client";
+import type { MediaType } from "../limits";
 import { mapMessage, type TelegramMessage } from "../schemas/message";
 
-export const MEDIA_TYPES = [
-  "photo",
-  "video",
-  "document",
-  "audio",
-  "voice",
-  "url",
-  "gif",
-] as const;
-
-export type MediaType = (typeof MEDIA_TYPES)[number];
+export { MEDIA_TYPES, type MediaType } from "../limits";
 
 export type SliceRequest = {
   sourceId: string;
