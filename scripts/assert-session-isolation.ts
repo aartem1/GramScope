@@ -5,8 +5,8 @@ import { join } from "node:path";
 import {
   readEnvFileKey,
   readEnvKey,
-  sessionFingerprint,
-} from "./telegram-session";
+} from "../src/cli/env";
+import { sessionFingerprint } from "../src/session/fingerprint";
 
 const ROOT = join(import.meta.dirname, "..");
 const LOCAL_ENV = join(ROOT, ".env.local");

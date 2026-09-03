@@ -12,25 +12,26 @@ Read those before acting.
 
 ## 1. Implementation status
 
-As of Task 3 (2026-09-03) the repository contains the worker skeleton and
+As of Task 4 (2026-09-03) the repository contains the worker skeleton and
 channel: `worker/` with `/rpc` and `/health`, mutual TLS and bearer
 authorization, `loadWorkerConfig`, a compiled `telegram:login:worker` entry
 point, `npm run build:worker`, and the systemd unit at
 `deploy/gramscope-worker.service`. **None of this is installed or running on
 the VPS yet.** Vercel still executes Telegram in-process from
-`TELEGRAM_SESSION`. The `gramscope` CLI does not exist; setup today remains
-`./scripts/provision.sh`.
+`TELEGRAM_SESSION`. The `./scripts/gramscope` CLI implements plan/apply
+operations for install, update, configure, login, rollback, migrate, doctor,
+and status; it has not been run against production yet.
 
 The four legacy npm aliases `telegram:login:local`,
 `telegram:login:production`, `telegram:assert-session-isolation`, and
 `telegram:rotate-sessions` remain in `package.json` until Task 8, but only
 `telegram:login:worker` is implemented now — the local and production login
 modes were removed from `scripts/create-telegram-session.ts` in Task 3.
-`scripts/provision.sh`, `telegram:assert-session-isolation`, and
-`telegram:rotate-sessions` stay load-bearing until Tasks 4 and 8 replace or
-retire them. `scripts/telegram-session.ts` keeps `readEnvKey` and
-`readEnvFileKey` temporarily for the isolation script; Task 4 moves the
-generic env/shell helpers into the CLI.
+`scripts/provision.sh` was removed in Task 4; use `./scripts/gramscope install`
+instead. `telegram:assert-session-isolation` and
+`telegram:rotate-sessions` stay load-bearing until Task 8 replaces or retires
+them. Generic env helpers (`readEnvKey`, `readEnvFileKey`) live in
+`src/cli/env.ts`.
 
 Worker environment variables validated by `loadWorkerConfig`:
 

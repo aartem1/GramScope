@@ -11,7 +11,7 @@ describe("sessionFingerprint", () => {
 
 describe("readEnvKey", () => {
   it("reads an unquoted dotenv value and strips vercel pull quotes", async () => {
-    const { readEnvKey } = await import("../scripts/telegram-session");
+    const { readEnvKey } = await import("../src/cli/env");
     expect(readEnvKey("A=1\nTELEGRAM_SESSION=abc\n", "TELEGRAM_SESSION")).toBe(
       "abc",
     );

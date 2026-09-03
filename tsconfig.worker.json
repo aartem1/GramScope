@@ -24,6 +24,7 @@
     "node_modules",
     "app/**",
     "tests/**",
+    "src/cli/**",
     "**/*.test.ts",
     "src/mcp/**"
   ]
