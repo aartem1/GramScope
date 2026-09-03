@@ -95,16 +95,18 @@ async function issueLink(
   plan: MediaRepresentationPlan,
   deps: MediaDependencies,
 ): Promise<MediaOutcome> {
+  const isOriginal = plan.kind === "original";
+  const descriptor = compactDescriptor(asset.descriptor);
   const issued = await deps.issueCapability({
     v: 2,
     purpose: "telegram-media",
     sourceId: asset.sourceId,
     messageId: asset.messageId,
     ownerId: deps.ownerId,
-    representation: plan,
+    representation: isOriginal && descriptor.size !== undefined
+      ? { kind: "original", byteSize: descriptor.size }
+      : plan,
   });
-  const isOriginal = plan.kind === "original";
-  const descriptor = compactDescriptor(asset.descriptor);
   const uri = new URL(
     isOriginal
       ? `/api/media/${encodeURIComponent(issued.token)}`

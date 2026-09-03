@@ -722,7 +722,7 @@ describe("getMedia", () => {
       v: 2,
       purpose: "telegram-media",
       ownerId: "owner-1",
-      representation: { kind: "original" },
+      representation: { kind: "original", byteSize: 5 },
     }));
     expect(outcome.result).toMatchObject({
       status: "ready",

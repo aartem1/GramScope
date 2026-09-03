@@ -21,7 +21,10 @@ const mediaTokenPayloadSchema = mediaTokenClaimsSchema.extend({
 export type MediaTokenClaims = z.infer<typeof mediaTokenClaimsSchema>;
 
 const representationSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("original") }).strict(),
+  z.object({
+    kind: z.literal("original"),
+    byteSize: z.number().int().positive().optional(),
+  }).strict(),
   z.object({
     kind: z.literal("image"),
     source: z.enum(["auto", "thumbnail"]),

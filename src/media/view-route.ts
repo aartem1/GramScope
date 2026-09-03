@@ -1,12 +1,19 @@
-import { loadConfig } from "../config";
-import { GramScopeError } from "../errors/taxonomy";
+import {
+  isRemoteDispatchEnabled,
+  loadConfig,
+  loadWorkerClientConfig,
+  type WorkerClientConfig,
+} from "../config";
 import { withTelegram, type TelegramLike } from "../telegram/client";
 import { resolveMediaAsset, type MediaAsset } from "../telegram/media";
+import { viewRouteErrorResponse } from "./http-errors";
 import { materializeMediaView, type GeneratedMediaView } from "./materializer";
 import { safeMediaFilename } from "./names";
 import { contentDispositionAttachment } from "./original-route";
 import type { MediaRepresentationPlan } from "./representation";
 import { verifyMediaCapability, type VerifiedMediaCapability } from "./token";
+import { fetchMediaFromWorker } from "./worker-proxy";
+import type { MediaRepresentationWire } from "./wire";
 
 export type ViewRouteDependencies = {
   verifyToken(token: string): Promise<VerifiedMediaCapability>;
@@ -21,45 +28,98 @@ export type ViewRouteDependencies = {
     plan: Exclude<MediaRepresentationPlan, { kind: "original" }>,
   ): Promise<GeneratedMediaView>;
   ownerId: string;
+  workerConfig?: WorkerClientConfig;
+  fetchFromWorker?(
+    body: {
+      sourceId: string;
+      messageId: number;
+      representation: MediaRepresentationWire;
+    },
+    signal?: AbortSignal,
+  ): Promise<Response>;
 };
 
 function productionViewDependencies(): ViewRouteDependencies {
   const config = loadConfig();
-  return {
+  const deps: ViewRouteDependencies = {
     verifyToken: (token) => verifyMediaCapability(token, new Date(), config.mediaTokenSecret),
     withClient: withTelegram,
     resolveAsset: resolveMediaAsset,
     materialize: materializeMediaView,
     ownerId: config.ownerUserId,
   };
+  if (isRemoteDispatchEnabled() && config.worker) {
+    deps.workerConfig = loadWorkerClientConfig();
+    deps.fetchFromWorker = (body, signal) =>
+      fetchMediaFromWorker({
+        config: deps.workerConfig!,
+        body,
+        signal,
+      });
+  }
+  return deps;
 }
 
 function completeViewDependencies(
   value: Partial<ViewRouteDependencies>,
 ): value is ViewRouteDependencies {
-  return typeof value.verifyToken === "function" &&
+  const hasLocal =
     typeof value.withClient === "function" &&
     typeof value.resolveAsset === "function" &&
-    typeof value.materialize === "function" &&
-    typeof value.ownerId === "string";
+    typeof value.materialize === "function";
+  const hasRemote = typeof value.fetchFromWorker === "function";
+  return typeof value.verifyToken === "function" &&
+    typeof value.ownerId === "string" &&
+    (hasLocal || hasRemote);
 }
 
-function sanitizedViewError(error: unknown): Response {
-  if (error instanceof GramScopeError) {
-    if (error.code === "AUTH_REQUIRED" || error.code === "OWNER_FORBIDDEN") {
-      return new Response("Unauthorized", { status: 401 });
-    }
-    if (["MEDIA_NOT_FOUND", "NO_MEDIA"].includes(error.code)) {
-      return new Response("Not Found", { status: 404 });
-    }
-    if (["INLINE_LIMIT_EXCEEDED", "UNSUPPORTED_MEDIA"].includes(error.code)) {
-      return new Response("Unprocessable Media", { status: 422 });
-    }
-    if (error.code === "PROCESSING_TIMEOUT") {
-      return new Response("Media processing timed out", { status: 504 });
-    }
+function viewProxyHeaders(
+  upstream: Response,
+  claims: Extract<VerifiedMediaCapability, { v: 2 }>,
+): Headers {
+  const contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
+  const filename = safeMediaFilename({
+    kind: contentType === "image/jpeg" ? "photo" : "download",
+    messageId: claims.messageId,
+    mimeType: contentType,
+  });
+  const headers = new Headers({
+    "content-type": contentType,
+    "content-disposition": contentDispositionAttachment(filename),
+    "cache-control": "private, no-store",
+    "x-content-type-options": "nosniff",
+  });
+  const length = upstream.headers.get("content-length");
+  if (length) headers.set("content-length", length);
+  return headers;
+}
+
+async function handleViewProxy(
+  request: Request,
+  claims: Extract<VerifiedMediaCapability, { v: 2 }>,
+  deps: ViewRouteDependencies,
+): Promise<Response> {
+  void request;
+  const upstream = await deps.fetchFromWorker!(
+    {
+      sourceId: claims.sourceId,
+      messageId: claims.messageId,
+      representation: claims.representation,
+    },
+    request.signal,
+  );
+
+  if (upstream.status !== 200) {
+    return new Response(await upstream.text(), {
+      status: upstream.status,
+      headers: upstream.headers,
+    });
   }
-  return new Response("Media view failed", { status: 502 });
+
+  return new Response(upstream.body, {
+    status: 200,
+    headers: viewProxyHeaders(upstream, claims),
+  });
 }
 
 export async function handleViewRequest(
@@ -67,7 +127,6 @@ export async function handleViewRequest(
   token: string,
   overrides: Partial<ViewRouteDependencies> = {},
 ): Promise<Response> {
-  void request;
   const deps: ViewRouteDependencies = completeViewDependencies(overrides)
     ? overrides
     : { ...productionViewDependencies(), ...overrides };
@@ -78,6 +137,11 @@ export async function handleViewRequest(
     }
     if (claims.representation.kind === "original") return new Response("Unauthorized", { status: 401 });
     const representation = claims.representation;
+
+    if (deps.fetchFromWorker) {
+      return handleViewProxy(request, claims, deps);
+    }
+
     return await deps.withClient(async (client) => {
       const media = await deps.resolveAsset(client, {
         sourceId: claims.sourceId,
@@ -101,6 +165,9 @@ export async function handleViewRequest(
       });
     });
   } catch (error) {
-    return sanitizedViewError(error);
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw error;
+    }
+    return viewRouteErrorResponse(error);
   }
 }

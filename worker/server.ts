@@ -18,6 +18,14 @@ import {
 } from "./concurrency";
 import { healthPayloadSchema, type HealthProvider } from "./health";
 import { executeRpcOperation } from "./rpc-execution";
+import {
+  deliverMedia,
+  type MediaDeliveryResult,
+} from "./media-delivery";
+import {
+  MEDIA_REQUEST_BODY_MAX_BYTES,
+  mediaRequestSchema,
+} from "../src/media/wire";
 import { z } from "zod";
 
 export type WorkerTlsMaterial = {
@@ -36,6 +44,10 @@ export type WorkerServerOptions = {
   healthProvider: HealthProvider;
   rpcDeadlineMs?: number;
   gate?: OperationGate;
+  deliverMedia?: (
+    input: import("../src/media/wire").MediaRequestBody,
+    signal?: AbortSignal,
+  ) => Promise<MediaDeliveryResult>;
 };
 
 export type WorkerServerHandle = {
@@ -115,8 +127,112 @@ function hasJsonContentType(req: IncomingMessage): boolean {
   return value.toLowerCase().startsWith("application/json");
 }
 
+function sendText(
+  res: ServerResponse,
+  status: number,
+  message: string,
+  headers: Record<string, string> = {},
+): void {
+  res.writeHead(status, {
+    "content-type": "text/plain; charset=utf-8",
+    "content-length": Buffer.byteLength(message),
+    ...headers,
+  });
+  res.end(message);
+}
+
+async function writeMediaDelivery(
+  res: ServerResponse,
+  outcome: MediaDeliveryResult,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (outcome.kind === "error") {
+    sendText(res, outcome.status, outcome.message, outcome.headers ?? {});
+    return;
+  }
+
+  if (outcome.kind === "buffer") {
+    res.writeHead(outcome.status, outcome.headers);
+    res.end(outcome.data);
+    return;
+  }
+
+  res.writeHead(outcome.status, outcome.headers);
+  try {
+    for await (const chunk of outcome.chunks) {
+      if (signal?.aborted) break;
+      const canContinue = res.write(chunk);
+      if (!canContinue) {
+        await new Promise<void>((resolve) => res.once("drain", resolve));
+      }
+    }
+  } catch {
+    if (!res.headersSent) {
+      sendText(res, 502, "Media delivery failed");
+      return;
+    }
+  }
+  res.end();
+}
+
+async function handleMediaRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deliver: NonNullable<WorkerServerOptions["deliverMedia"]>,
+): Promise<void> {
+  if (!hasJsonContentType(req)) {
+    sendText(res, 415, "Content-Type must be application/json");
+    return;
+  }
+
+  let body: string;
+  try {
+    body = await readBody(req, MEDIA_REQUEST_BODY_MAX_BYTES);
+  } catch (err) {
+    if (err instanceof BodyTooLargeError) {
+      sendText(res, 413, "Request body too large");
+      return;
+    }
+    sendText(res, 400, "Invalid request body");
+    return;
+  }
+
+  let parsedBody: unknown;
+  try {
+    parsedBody = JSON.parse(body);
+  } catch {
+    sendText(res, 400, "Invalid JSON");
+    return;
+  }
+
+  const envelope = mediaRequestSchema.safeParse(parsedBody);
+  if (!envelope.success) {
+    sendText(res, 400, "Invalid media request");
+    return;
+  }
+
+  const abortController = new AbortController();
+  const abortFromClient = () => abortController.abort();
+  req.on("aborted", abortFromClient);
+
+  try {
+    const outcome = await deliver(envelope.data, abortController.signal);
+    res.on("close", () => {
+      if (!res.writableFinished) abortController.abort();
+    });
+    await writeMediaDelivery(res, outcome, abortController.signal);
+  } catch {
+    if (!res.headersSent) {
+      sendText(res, 500, "Internal server error");
+    }
+  } finally {
+    req.off("aborted", abortFromClient);
+  }
+}
+
 export function createWorkerServer(options: WorkerServerOptions): Server {
   const rpcDeadlineMs = options.rpcDeadlineMs ?? DEFAULT_RPC_DEADLINE_MS;
+  const deliverMediaImpl = options.deliverMedia ?? deliverMedia;
   const gate =
     options.gate ??
     new OperationGate(
@@ -157,7 +273,17 @@ export function createWorkerServer(options: WorkerServerOptions): Server {
         return;
       }
 
-      if (method !== "POST" || url !== "/rpc") {
+      if (method !== "POST") {
+        sendJson(res, 404, { error: "Not found" });
+        return;
+      }
+
+      if (url === "/media") {
+        await handleMediaRequest(req, res, deliverMediaImpl);
+        return;
+      }
+
+      if (url !== "/rpc") {
         sendJson(res, 404, { error: "Not found" });
         return;
       }
