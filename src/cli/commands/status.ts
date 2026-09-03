@@ -14,7 +14,9 @@ export async function runStatus(ctx: CliContext): Promise<{
   exitCode: number;
   output: string;
 }> {
-  const state = await probeState(ctx.localShell, ctx.vpsShell);
+  const state = await probeState(ctx.localShell, ctx.vpsShell, {
+    sshHost: ctx.flags.host,
+  });
   const status = observedToStatus(state);
   const drift = detectDrift(state);
   const exitCode = drift.length > 0 ? 1 : 0;
