@@ -117,7 +117,7 @@ function liveViewDependencies(now = new Date()) {
 
 async function openPlanned(outcome: Awaited<ReturnType<typeof getMedia>>) {
   const link = outcome.link;
-  if (!link) throw new Error("Expected a media link");
+  if (!link?.uri) throw new Error("Expected a sealed media link");
   const token = capabilityToken(link.uri);
   const request = new Request(link.uri);
   return new URL(link.uri).pathname.startsWith("/api/media/view/")
@@ -226,6 +226,7 @@ suite("Telegram media against explicit real-account selectors", () => {
     async () => {
       const outcome = await planned("PHOTO");
       const link = outcome.link!;
+      if (!link.uri) throw new Error("Expected a sealed media link");
       const response = await handleViewRequest(
         new Request(link.uri),
         `${capabilityToken(link.uri)}x`,

@@ -1,13 +1,28 @@
+import { planGetMedia } from "../src/media/service.js";
 import { loadWorkerConfig } from "../src/worker/config.js";
 import { createDispatcher } from "../src/ops/dispatch.js";
 import { OPERATIONS } from "../src/ops/registry.js";
+import type { OperationRegistry } from "../src/ops/dispatch.js";
 import { listenWorkerServer } from "./server.js";
 import { createTelegramHealthProvider } from "./telegram-health.js";
+
+function workerOperations(): OperationRegistry {
+  return {
+    ...OPERATIONS,
+    get_media: {
+      ...OPERATIONS.get_media,
+      // Plan only: MEDIA_TOKEN_SECRET must not live on the worker.
+      handler: (input) =>
+        planGetMedia(OPERATIONS.get_media.input.parse(input)),
+    },
+  };
+}
 
 async function main(): Promise<void> {
   const config = await loadWorkerConfig();
   const startedAtMs = Date.now();
-  const dispatch = createDispatcher(OPERATIONS);
+  const operations = workerOperations();
+  const dispatch = createDispatcher(operations);
   const healthProvider = createTelegramHealthProvider({
     session: config.telegramSession,
     revision: config.revision,
@@ -24,7 +39,7 @@ async function main(): Promise<void> {
       serverKeyPem: config.serverKeyPem,
     },
     dispatch,
-    registeredOperations: new Set(Object.keys(OPERATIONS)),
+    registeredOperations: new Set(Object.keys(operations)),
     healthProvider,
   });
 

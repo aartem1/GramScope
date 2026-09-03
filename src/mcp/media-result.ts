@@ -10,7 +10,7 @@ export function mediaToolResult(outcome: MediaOutcome): ToolResult {
     type: "text",
     text: `${result.status}: ${result.representation?.kind ?? "metadata"}`,
   }];
-  if (link) content.push({
+  if (link?.uri) content.push({
     type: "resource_link",
     uri: link.uri,
     name: link.name,

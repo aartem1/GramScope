@@ -20,7 +20,7 @@ const mediaTokenPayloadSchema = mediaTokenClaimsSchema.extend({
 
 export type MediaTokenClaims = z.infer<typeof mediaTokenClaimsSchema>;
 
-const representationSchema = z.discriminatedUnion("kind", [
+export const mediaRepresentationClaimsSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("original"),
     byteSize: z.number().int().positive().optional(),
@@ -37,13 +37,24 @@ const representationSchema = z.discriminatedUnion("kind", [
   }).strict(),
 ]);
 
+/** Worker→Vercel draft claims: ownerId is added only when Vercel seals the token. */
+export const unsignedMediaClaimsSchema = z.object({
+  v: z.literal(2),
+  purpose: z.literal("telegram-media"),
+  sourceId: z.string().min(1),
+  messageId: z.number().int().positive(),
+  representation: mediaRepresentationClaimsSchema,
+}).strict();
+
+export type UnsignedMediaClaims = z.infer<typeof unsignedMediaClaimsSchema>;
+
 const mediaCapabilityClaimsSchema = z.object({
   v: z.literal(2),
   purpose: z.literal("telegram-media"),
   sourceId: z.string().min(1),
   messageId: z.number().int().positive(),
   ownerId: z.string().min(1),
-  representation: representationSchema,
+  representation: mediaRepresentationClaimsSchema,
 }).strict();
 
 const mediaCapabilityPayloadSchema = mediaCapabilityClaimsSchema.extend({

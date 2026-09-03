@@ -11,6 +11,7 @@ import {
   getMediaInputSchema,
   getMediaResultSchema,
 } from "../schemas/media";
+import { unsignedMediaClaimsSchema } from "../media/token";
 import {
   MAX_CONTEXT,
   MAX_FOLDER_TITLE,
@@ -156,12 +157,13 @@ export const mediaOutcomeSchema = z.object({
   result: getMediaResultSchema,
   link: z
     .object({
-      uri: z.string(),
+      uri: z.string().optional(),
       name: z.string(),
       mimeType: z.string().optional(),
       size: z.number().optional(),
     })
     .optional(),
+  unsignedClaims: unsignedMediaClaimsSchema.optional(),
 });
 
 export const getThreadInputSchema = z.object({

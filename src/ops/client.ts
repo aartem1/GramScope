@@ -2,6 +2,7 @@ import type { z } from "zod";
 import type { MediaOutcome } from "../media/service";
 import { isRemoteDispatchEnabled, loadWorkerClientConfig } from "../config";
 import { createDispatcher } from "./dispatch";
+import { sealMediaOutcomeForClient } from "./media-finalize";
 import { createRemoteDispatcher } from "./remote";
 import { OPERATIONS } from "./registry";
 import {
@@ -104,7 +105,8 @@ export async function getMessage(
 export async function getMedia(
   input: In<typeof getMediaInputSchema>,
 ): Promise<MediaOutcome> {
-  return dispatch("get_media", input) as Promise<MediaOutcome>;
+  const raw = (await dispatch("get_media", input)) as MediaOutcome;
+  return sealMediaOutcomeForClient(raw);
 }
 
 export async function getThread(
