@@ -212,6 +212,10 @@ The MCP endpoint is `app/api/mcp/route.ts`. Tool registration is centralized in
 
 ## Documentation
 
+- [`AGENTS.md`](AGENTS.md) — invariants an agent working on this repository
+  must not break.
+- [`docs/operations.md`](docs/operations.md) — deployment, verification and
+  recovery runbook for both halves of the system.
 - [`docs/chatgpt-project-instructions.md`](docs/chatgpt-project-instructions.md)
   — the policy pasted into the ChatGPT Project.
 - [`docs/superpowers/tasks/gramscope-mcp.md`](docs/superpowers/tasks/gramscope-mcp.md)

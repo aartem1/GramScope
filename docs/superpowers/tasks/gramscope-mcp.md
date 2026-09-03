@@ -40,11 +40,76 @@ Nothing is awaiting an owner decision.
 - 2026-08-29 — A source note's Telegram identity fields are third-party data;
   its `about`, `topics`, `kind`, `lang`, `cadence`, and `derived_from` fields
   are GramScope assessments based only on posts actually read.
+- 2026-09-03 — `AUTH_KEY_DUPLICATED` is not an IP-address condition. Telegram
+  destroys the auth key when one authorized session sends requests in parallel
+  from two main-DC connections, from the same or different addresses
+  (<https://core.telegram.org/api/errors>). Every earlier statement in the code
+  and README describing it as "the same session on two IPs" is wrong, and no
+  egress-shaping measure can fix it.
+- 2026-09-03 — Move all Telegram execution to one always-on worker process on
+  the owner's VPS. Vercel keeps the MCP protocol, OAuth, tool schemas, and
+  media capability tokens, and stops holding a Telegram session at all.
+- 2026-09-03 — The Vercel-to-worker channel uses mutual TLS with a private CA
+  bound to the VPS IP address. The owner declined to buy a domain, so no
+  publicly trusted certificate is available and media bytes are proxied through
+  Vercel rather than served from the VPS.
+- 2026-09-03 — Keep exactly one `/api/mcp` endpoint. Per-consumer endpoints for
+  ChatGPT and Grok were considered and dropped: the worker makes them
+  unnecessary, and they would force a connector reconnect.
+- 2026-09-03 — The ChatGPT connector and the Grok bot must keep working without
+  being reconnected or reauthorized. The `tools/list` payload therefore stays
+  byte-identical, and `MCP_RESOURCE_URL`, the WorkOS audience and
+  `MEDIA_TOKEN_SECRET` are not changed. This is an acceptance gate, enforced by
+  a golden fixture rather than by review.
+- 2026-09-03 — The worker runs under systemd on a glibc host. Docker was
+  considered and dropped as unnecessary indirection for a single process.
+- 2026-09-03 — The whole system must be installable, updatable, configurable
+  and diagnosable through one CLI entry point that drives both hosts, so no
+  procedure requires reading the runbook and retyping commands across two
+  machines. It supersedes `scripts/provision.sh`.
+- 2026-09-03 — That CLI must be fully usable unattended (`--yes`, values as
+  flags, `--json` output), because the owner intends to delegate deployment to
+  an agent. Interactive prompting is a fallback, not the mechanism.
+- 2026-09-03 — The worker reports the account's active authorization count on
+  `/health`, and `doctor` fails when it is not one. This is the only signal
+  that predicts auth-key destruction instead of reporting it afterwards.
 
 # Review findings
 
 These findings were accepted as non-blocking. Keep them until they are moved to
 the issue tracker or explicitly closed.
+
+## Dead code and stale entry points (2026-09-03)
+
+Found while auditing the repository ahead of the worker split. None of these
+block the split; all are owner decisions because they touch shipped behaviour.
+
+- The v1 media token API is dead. `issueMediaToken` and `verifyMediaToken` in
+  `src/media/token.ts` have no production caller — only
+  `tests/media-token.test.ts`. The link-only amendment stopped issuing v1
+  tokens, and v1 tokens live ten minutes, so none can exist. Removing v1 would
+  also drop the `payload.v === 1` branch in `claimsFromPayload`, the
+  `claims.v === 2` guards in both media routes, and one arm of the
+  `VerifiedMediaCapability` union. Deferred rather than done: it changes what
+  the media routes accept on a released version, and the split does not need
+  it.
+- The bare `telegram:login` npm alias was removed on 2026-09-03. It duplicated
+  `telegram:login:local` under a name that did not say which mount it wrote,
+  and in this repository choosing the wrong mount costs an auth key. Only
+  historical specs and plans referenced it, and those are not rewritten.
+- A scan for exports referenced only inside their own file flagged about
+  seventy-five symbols. Almost all are the input and output types of domain
+  functions, which the operation registry is about to consume, so they are not
+  dead. The ones worth a second look are unrelated to that: `MediaLink` in
+  `src/media/service.ts`, `sourceBlockSchema` in
+  `src/mcp/tools/get-messages.ts`, `MEDIA_MODES` and
+  `mediaRepresentationSchema` in `src/schemas/media.ts`,
+  `messageMediaSchema` and `forwardedFromOf` in `src/schemas/message.ts`,
+  `discoveredSourceSchema` in `src/schemas/discovery.ts`,
+  `MAX_MEDIA_TOOL_RESULT_BYTES` in `src/mcp/media-result.ts`, and the unused
+  processor test seams in `src/media/ffmpeg-processor.ts` (`FrameRunner`,
+  `SpawnFfmpeg`, `SpawnContactSheet`, `createContactSheetAssembler` and
+  neighbours).
 
 ## Reading and MCP tests
 
