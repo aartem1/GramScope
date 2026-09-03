@@ -342,6 +342,16 @@ export function stopTelegramLiveness(): void {
   livenessTimer = undefined;
 }
 
+/** Close the held socket on process shutdown so a restart does not overlap. */
+export async function shutdownTelegramConnection(): Promise<void> {
+  stopTelegramLiveness();
+  const client = cached;
+  cached = undefined;
+  leases = 0;
+  connecting = undefined;
+  await Promise.resolve(client?.disconnect?.()).catch(() => undefined);
+}
+
 export async function __tickTelegramLivenessForTests(): Promise<void> {
   await tickLiveness();
 }

@@ -6,7 +6,7 @@ import type { OperationRegistry } from "../src/ops/dispatch.js";
 import {
   holdTelegramConnection,
   startTelegramLiveness,
-  stopTelegramLiveness,
+  shutdownTelegramConnection,
 } from "../src/telegram/client.js";
 import { listenWorkerServer } from "./server.js";
 import { createTelegramHealthProvider } from "./telegram-health.js";
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
 
   const shutdown = async (signal: string): Promise<void> => {
     console.log(`Received ${signal}; shutting down worker`);
-    stopTelegramLiveness();
+    await shutdownTelegramConnection();
     await handle.close();
     process.exit(0);
   };
