@@ -5,6 +5,7 @@ import { loginTelegramSession } from "../src/telegram/client.js";
 import { sessionFingerprint } from "../src/session/fingerprint.js";
 import { upsertEnvFile } from "./env-file.js";
 import {
+  createPasswordPrompt,
   parseWorkerLoginTarget,
   resolveWorkerEnvPath,
 } from "./worker-login-args.js";
@@ -40,7 +41,7 @@ async function main() {
 
   const phone = argValue("--phone") ?? env.TELEGRAM_LOGIN_PHONE;
   const codeFile = argValue("--code-file") ?? env.TELEGRAM_LOGIN_CODE_FILE;
-  const password = argValue("--password") ?? env.TELEGRAM_LOGIN_PASSWORD ?? "";
+  const password = argValue("--password") ?? env.TELEGRAM_LOGIN_PASSWORD;
 
   console.log("Creating a worker Telegram session.");
   console.log(
@@ -54,10 +55,9 @@ async function main() {
       if (codeFile) return waitForCodeFile(codeFile);
       return rl.question("Login code from Telegram: ");
     },
-    password: async () => {
-      if (phone || codeFile) return password;
-      return rl.question("Two-factor password (blank if unset): ");
-    },
+    password: createPasswordPrompt(password, () =>
+      rl.question("Two-factor password (blank if unset): "),
+    ),
     onError: (err) => {
       console.error("Login failed:", err.message);
     },

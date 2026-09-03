@@ -17,6 +17,10 @@ export async function executeRpcOperation(
 ): Promise<RpcExecutionResult> {
   await gate.acquire();
   const operationPromise = operation();
+  const settled = operationPromise.finally(() => {
+    gate.release();
+  });
+  void settled.catch(() => undefined);
 
   try {
     const result = await Promise.race([
@@ -31,8 +35,5 @@ export async function executeRpcOperation(
       return { kind: "deadline" };
     }
     return { kind: "error", error: err };
-  } finally {
-    await operationPromise.catch(() => undefined);
-    gate.release();
   }
 }

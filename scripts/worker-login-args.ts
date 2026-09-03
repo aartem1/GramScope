@@ -28,3 +28,10 @@ export function resolveWorkerEnvPath(argv: string[]): string {
   }
   return path;
 }
+
+export function createPasswordPrompt(
+  provided: string | undefined,
+  ask: () => Promise<string>,
+): () => Promise<string> {
+  return async () => (provided !== undefined ? provided : ask());
+}

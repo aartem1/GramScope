@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  createPasswordPrompt,
   DEFAULT_WORKER_ENV_PATH,
   parseWorkerLoginTarget,
   resolveWorkerEnvPath,
@@ -38,5 +39,13 @@ describe("worker login args", () => {
     expect(packageJson.scripts["telegram:login:worker"]).not.toMatch(
       /TELEGRAM_(API_ID|API_HASH|SESSION)/,
     );
+  });
+
+  it("prompts for 2FA only when no password was supplied", async () => {
+    const ask = async () => "asked";
+    await expect(createPasswordPrompt("provided", ask)()).resolves.toBe(
+      "provided",
+    );
+    await expect(createPasswordPrompt(undefined, ask)()).resolves.toBe("asked");
   });
 });
