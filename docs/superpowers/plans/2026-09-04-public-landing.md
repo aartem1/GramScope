@@ -68,6 +68,55 @@ No file under `app/api/`, `src/mcp/`, `src/ops/`, `src/media/`, `src/telegram/`,
 
 ---
 
+## Cursor execution handoff
+
+This plan is the implementation boundary for Cursor. Before changing a file,
+the Cursor agent must read, in order:
+
+1. `AGENTS.md`;
+2. `docs/superpowers/tasks/public-landing.md`;
+3. `docs/superpowers/specs/2026-09-04-public-landing-design.md`;
+4. this plan; and
+5. `docs/operations.md`.
+
+Resume through the Superpowers pipeline in Cursor with:
+
+```text
+/sp-next docs/superpowers/tasks/public-landing.md
+```
+
+The repository evidence should resolve to an approved spec and an unstarted
+implementation plan. Execute in the current checkout on `main`; do not create a
+branch or worktree, because the owner explicitly approved `main`. Use the
+`executing-plans` path when Cursor asks how to execute, unless the owner chooses
+its subagent-driven path inside Cursor.
+
+Cursor owns Tasks 1–7. Task 8 contains production and public-visibility actions
+and begins only after Task 7 has produced a clean, locally committed candidate.
+Task 8 Step 6 is an owner-assisted acceptance gate: Cursor must ask the owner to
+confirm one read-only call from the already-connected ChatGPT and Grok Bot
+clients. Cursor cannot infer that result from HTTP or Vercel health checks.
+
+Stop and report a redacted blocker instead of continuing when any of these is
+true:
+
+- the initial or final `./scripts/gramscope doctor --json` exits non-zero;
+- a planned edit would touch a protected path;
+- the golden `tools/list` checksum or test changes;
+- a secret scanner finding cannot be proven synthetic without revealing it;
+- the local environment or any Next.js environment file defines
+  `TELEGRAM_SESSION`;
+- any required test, typecheck, lint, Vercel build, or worker build fails;
+- Vercel does not report the pushed revision ready; or
+- either existing AI client fails acceptance.
+
+Do not “fix” any red gate by updating the golden fixture, reconnecting an AI
+client, rotating production credentials, running raw deployment commands,
+starting Telegram locally, or weakening a test. Diagnose through the supported
+CLI and return to the first failed task step.
+
+---
+
 ### Task 1: Establish the protected baseline and typed landing content
 
 **Files:**
@@ -696,6 +745,7 @@ describe("landing isolation", () => {
     const paths = [
       "app/page.tsx",
       "app/layout.tsx",
+      "app/opengraph-image.tsx",
       "app/_components/landing/content.ts",
       "app/_components/landing/brand-mark.tsx",
       "app/_components/landing/header.tsx",
@@ -711,6 +761,11 @@ describe("landing isolation", () => {
       "process.env",
       "fetch(",
       "/api/mcp",
+      "@/mcp",
+      "@/ops",
+      "@/media",
+      "@/telegram",
+      "@/worker",
       "src/mcp",
       "src/ops",
       "src/media",
@@ -759,11 +814,20 @@ Use container queries for the request path and workflow canvas. At narrow widths
 Run:
 
 ```bash
+for gramscope_env_file in .env .env.local .env.development .env.development.local; do
+  if test -f "$gramscope_env_file" && rg -q '^TELEGRAM_SESSION=' "$gramscope_env_file"; then
+    echo "Blocked: TELEGRAM_SESSION is defined in $gramscope_env_file"
+    exit 1
+  fi
+done
 test -z "${TELEGRAM_SESSION+x}"
 npm run dev
 ```
 
-Expected: the environment-presence check exits 0 without printing a value, then the root page becomes available locally. Do not invoke MCP or any Telegram operation from the local server.
+Expected: both environment-presence checks exit 0 without printing a value,
+then the root page becomes available locally. Do not invoke MCP or any Telegram
+operation from the local server. If a named file contains the variable, stop;
+do not print or inspect its value.
 
 - [ ] **Step 5: Run automated browser verification**
 
@@ -1073,7 +1137,16 @@ Expected: push succeeds and triggers the existing Vercel production integration.
 
 - [ ] **Step 3: Wait for and inspect the production deployment**
 
-Use the linked Vercel project only to observe the deployment created by the push. Expected: build succeeds, the new production deployment becomes active atomically, and the previous deployment remains available for rollback.
+Run:
+
+```bash
+npx vercel ls --prod
+```
+
+Use the linked Vercel project only to observe the deployment created by the
+push. Expected: the newest production deployment is `READY`, its revision is
+the pushed local `HEAD`, and the previous deployment remains available for
+rollback.
 
 If it fails, stop. Use `./scripts/gramscope status` and the Vercel build logs; do not alter worker credentials or start Telegram locally.
 
@@ -1082,6 +1155,20 @@ If it fails, stop. Use `./scripts/gramscope status` and the Vercel build logs; d
 Open the production root page and verify hero, workflow controls, deployment links, Open Graph image, and the responsive matrix's representative desktop and mobile widths.
 
 Verify `/api/mcp` still enforces its existing authentication and that the OAuth metadata and media routes retain their prior status behavior. Do not call a media capability URL from logs or fabricate a token.
+
+If the page, MCP authentication boundary, OAuth metadata, or existing route
+behavior regresses, immediately restore the previous Vercel production
+deployment:
+
+```bash
+npx vercel rollback --yes
+./scripts/gramscope doctor --json
+```
+
+Expected: the previous deployment is active and production health is restored.
+Stop the release after rollback. Do not run `./scripts/gramscope rollback` for
+a landing-only release failure because that command also rolls back the
+unchanged VPS worker.
 
 - [ ] **Step 5: Verify production topology through the supported CLI**
 
@@ -1095,7 +1182,11 @@ Expected: exit 0 with the same single-worker/single-session topology. Keep the o
 
 - [ ] **Step 6: Perform real-client acceptance without reconnecting**
 
-Using the already-connected ChatGPT and Grok Bot integrations, list the existing tools and invoke one read-only operation in each. Expected: both integrations work without reconnecting, reauthorizing, fixture changes, or a second Telegram connection.
+Ask the owner to use the already-connected ChatGPT and Grok Bot integrations,
+list the existing tools, and invoke one read-only operation in each. Record only
+the owner's pass/fail confirmation, never Telegram output. Expected: both
+integrations work without reconnecting, reauthorizing, fixture changes, or a
+second Telegram connection.
 
 If either client fails, stop public release and diagnose through the production logs and `./scripts/gramscope`; do not reconnect until the failure is understood.
 
@@ -1121,3 +1212,31 @@ Run one final read-only health check:
 ```
 
 Expected: production remains healthy after the repository visibility change.
+
+---
+
+## Definition of done
+
+The release is complete only when all of these statements are true:
+
+- the landing page is live at the existing Vercel application's `/` route;
+- the approved five-section content and Prismatic Relay presentation are
+  present, responsive, keyboard-operable, reduced-motion safe, and useful
+  without JavaScript;
+- standard viewports from 320 CSS pixels upward have no horizontal page or
+  component scrolling;
+- the repository contains only English reader-facing prose while preserving
+  neutral Unicode test coverage;
+- `LICENSE` and `SECURITY.md` are public and correct;
+- current files, the staged candidate, and every reachable Git commit passed
+  redacted secret review;
+- every unit, type, lint, Vercel build, worker build, isolation, and golden
+  `tools/list` gate passed from the committed revision;
+- the protected MCP, OAuth, media, worker, and Telegram paths are unchanged;
+- Vercel serves the same pushed revision that was locally tested;
+- `./scripts/gramscope doctor --json` is healthy after deployment and again
+  after the visibility change;
+- the owner confirmed read-only acceptance in the already-connected ChatGPT
+  and Grok Bot clients without reconnecting either client; and
+- GitHub reports `aartem1/GramScope` as public with `main` as its default
+  branch.

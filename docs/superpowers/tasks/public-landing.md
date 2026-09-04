@@ -46,6 +46,10 @@ Nothing is awaiting an owner decision.
 - 2026-09-04 — owner approved
   `docs/superpowers/specs/2026-09-04-public-landing-design.md` and requested the
   next pipeline stage.
+- 2026-09-04 — owner assigned implementation code to Cursor. This Codex task
+  must finish the design, plan, and execution handoff without writing
+  application code; the checked-in documents must let Cursor complete the
+  release without reconstructing prior conversation context.
 
 # Links
 
