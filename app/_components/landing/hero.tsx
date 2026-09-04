@@ -11,11 +11,11 @@ export function Hero() {
             <span aria-hidden="true" />
             Self-hosted · Open source
           </p>
-          <h1 id="hero-title">Your Telegram. Inside your AI.</h1>
+          <h1 id="hero-title">Your Telegram. Inside your AI</h1>
           <p className="hero__lead">
-            A private MCP bridge that lets compatible AI clients read, research
-            and organize Telegram — without handing your session to a hosted
-            service.
+            A private MCP bridge for reading Telegram channels, posts, and news
+            with compatible AI clients — research and organize sources, not
+            chats — without handing your session to a hosted service.
           </p>
           <div className="hero__actions">
             <a

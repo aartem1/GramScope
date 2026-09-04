@@ -58,7 +58,7 @@ export default function OpenGraphImage() {
             lineHeight: 1,
           }}
         >
-          Your Telegram. Inside your AI.
+          Your Telegram. Inside your AI
         </div>
 
         <svg width="600" height="64" viewBox="0 0 600 64">

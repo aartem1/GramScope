@@ -8,7 +8,7 @@ export function Footer() {
         <div className="site-footer__panel">
           <div>
             <p className="eyebrow">Open source</p>
-            <h2>Bring Telegram context into your AI.</h2>
+            <h2>Bring your channels into your AI</h2>
           </div>
 
           <a

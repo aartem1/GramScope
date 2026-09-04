@@ -6,7 +6,7 @@ export function TrustBoundaries() {
       <div className="section-shell">
         <header className="section-heading">
           <p className="eyebrow">Trust boundaries</p>
-          <h2 id="trust-title">Private by architecture.</h2>
+          <h2 id="trust-title">Private by architecture</h2>
           <p>
             Every boundary is explicit, narrow, and owned by the person running
             GramScope.

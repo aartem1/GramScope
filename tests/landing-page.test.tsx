@@ -5,7 +5,9 @@ import HomePage from "../app/page";
 describe("landing page", () => {
   it("renders the product promise, explicit actions, and request path", () => {
     const html = renderToStaticMarkup(<HomePage />);
-    expect(html).toContain("Your Telegram. Inside your AI.");
+    expect(html).toContain("Your Telegram. Inside your AI");
+    expect(html).toContain("channels, posts, and news");
+    expect(html).toContain("not chats");
     expect(html).toContain("View on GitHub");
     expect(html).toContain("Deployment guide");
     expect(html).toContain("Any compatible AI client");

@@ -17,7 +17,7 @@ export function DeploymentGuide() {
       <div className="section-shell deployment-guide__layout">
         <header className="section-heading deployment-guide__heading">
           <p className="eyebrow">Deployment</p>
-          <h2 id="deploy-title">From repository to private relay.</h2>
+          <h2 id="deploy-title">From repository to private relay</h2>
           <p>
             Bring the infrastructure, then follow the operations CLI through a
             repeatable setup.

@@ -64,7 +64,7 @@ export const workflows = [
   {
     id: "catch-up",
     label: "Catch up",
-    title: "Turn unread channels into a focused briefing.",
+    title: "Turn unread channels into a focused briefing",
     prompt:
       "Catch me up on unread posts from my Research folder. Prioritize recurring themes and link every conclusion to its source.",
     outcome: "A bounded summary built from your current Telegram read state.",
@@ -73,7 +73,7 @@ export const workflows = [
   {
     id: "research",
     label: "Research",
-    title: "Search across the sources you already trust.",
+    title: "Search across the sources you already trust",
     prompt:
       "Find recent discussions of local AI models across my joined channels and compare the strongest claims.",
     outcome: "Search results with enough surrounding context to verify the synthesis.",
@@ -82,7 +82,7 @@ export const workflows = [
   {
     id: "discover",
     label: "Discover",
-    title: "Find useful public sources without leaving the conversation.",
+    title: "Find useful public sources without leaving the conversation",
     prompt:
       "Find public channels about practical home automation, then show related sources for the two most relevant results.",
     outcome: "Telegram-native discovery results that you choose whether to join.",
@@ -91,7 +91,7 @@ export const workflows = [
   {
     id: "organize",
     label: "Organize",
-    title: "Keep Telegram folders aligned with how you work.",
+    title: "Keep Telegram folders aligned with how you work",
     prompt:
       "Show my folders, then move the sources I approve into a new Robotics folder.",
     outcome: "Explicit, bounded folder changes after you select the sources.",
@@ -100,7 +100,7 @@ export const workflows = [
   {
     id: "media",
     label: "Media",
-    title: "Inspect media attached to a message on demand.",
+    title: "Inspect media attached to a post on demand",
     prompt:
       "Open the image attached to the selected post so we can discuss the chart it contains.",
     outcome: "One bounded representation or short-lived link for the chosen message.",

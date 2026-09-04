@@ -17,7 +17,7 @@ export function WorkflowExplorer() {
       <div className="workflow-explorer__inner">
         <header className="workflow-explorer__heading">
           <p className="eyebrow">Workflows</p>
-          <h2 id="workflows-title">Put your Telegram context to work.</h2>
+          <h2 id="workflows-title">Put your Telegram context to work</h2>
           <p>
             Explore focused workflows built from the messages, sources, and
             structure you already have.

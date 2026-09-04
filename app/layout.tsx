@@ -5,11 +5,11 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "GramScope — Your Telegram inside your AI",
   description:
-    "A self-hosted MCP bridge for reading, researching, and organizing Telegram with compatible AI clients.",
+    "A self-hosted MCP bridge for reading Telegram channels, posts, and news with compatible AI clients — not a messaging bot.",
   openGraph: {
     title: "GramScope — Your Telegram inside your AI",
     description:
-      "A private MCP bridge. The Telegram session stays on your VPS.",
+      "Read channels and posts through your AI. The Telegram session stays on your VPS.",
     type: "website",
   },
   twitter: { card: "summary_large_image" },
