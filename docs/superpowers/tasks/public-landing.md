@@ -43,11 +43,16 @@ Nothing is awaiting an owner decision.
 - 2026-09-04 — owner explicitly approved implementing this slice directly on
   `main`, with the binding requirement that MCP remain working at every stage.
   Nothing may be pushed until all local acceptance gates pass.
+- 2026-09-04 — owner approved
+  `docs/superpowers/specs/2026-09-04-public-landing-design.md` and requested the
+  next pipeline stage.
 
 # Links
 
 - Approved design:
   `docs/superpowers/specs/2026-09-04-public-landing-design.md`
+- Implementation plan:
+  `docs/superpowers/plans/2026-09-04-public-landing.md`
 - Existing production architecture:
   `docs/superpowers/specs/2026-09-03-telegram-worker-split-design.md`
 - Operations runbook: `docs/operations.md`
