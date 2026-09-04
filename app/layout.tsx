@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://gramscope.vercel.app"),
   title: "GramScope — Your Telegram inside your AI",
   description:
     "A self-hosted MCP bridge for reading, researching, and organizing Telegram with compatible AI clients.",
