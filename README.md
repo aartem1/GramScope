@@ -1,10 +1,10 @@
 # GramScope
 
-GramScope is a private MCP server that lets ChatGPT and a Grok bot use one
-dedicated Telegram account as a personal information workspace. It can read and
-search channels, inspect discussions, discover sources, manage subscriptions
-and folders, track read state, keep compact notes about sources, and fetch
-bounded media.
+GramScope is a self-hosted, single-owner MCP server that lets ChatGPT and a
+Grok bot use one dedicated Telegram account as a personal information
+workspace. It can read and search channels, inspect discussions, discover
+sources, manage subscriptions and folders, track read state, keep compact
+notes about sources, and fetch bounded media.
 
 Version **1.6.0** exposes 20 tools. Telegram work runs on a single always-on
 worker on the owner's VPS. Vercel owns MCP, OAuth, tool schemas, and media
@@ -205,6 +205,10 @@ Telegram session.
 Do not paste `TELEGRAM_SESSION`, API credentials, OAuth secrets, worker bearer
 tokens, TLS private keys, or media capability URLs into chat, logs, commits,
 issues, or documentation.
+
+## License
+
+GramScope is available under the [MIT License](LICENSE).
 
 ## Design principle
 

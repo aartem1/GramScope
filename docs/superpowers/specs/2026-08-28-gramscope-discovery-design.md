@@ -59,7 +59,7 @@ rather than on the API documentation.
 | --- | --- |
 | `contacts.search` matching | **By name, not by topic.** `q=AI` returned zero public channels; `q=artificial intelligence` returned nine. It matches titles and usernames. |
 | `contacts.search` volume | Caps global results at **10** whatever `limit` says — 50 and 200 returned the same page. No offset, no cursor. |
-| `contacts.search` `broadcasts: true` | Drops users **and refills the quota with channels**: `q=нейросети` went from 9 mixed results (4 chats, 5 users) to 10 channels. |
+| `contacts.search` `broadcasts: true` | Drops users **and refills the quota with channels**: the original Unicode query, represented in public examples as `q=AI research 🔎`, went from 9 mixed results (4 chats, 5 users) to 10 channels. |
 | `contacts.search` fields | `title`, `participantsCount`, `verified`, `scam`, `fake`, `restricted`, `left`, `broadcast`, `megagroup`, `accessHash`. **No `about`.** |
 | `contacts.search` usernames | Often `username: null` with the live handle in `usernames[]` (`chatgptv`, `neiroseti` both arrived that way). |
 | `channels.getChannelRecommendations({channel})` | `messages.ChatsSlice`, `count: 79`, **10 chats served**. Non-Premium truncation, and no parameter reaches the rest. |

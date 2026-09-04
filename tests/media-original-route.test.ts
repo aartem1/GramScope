@@ -171,10 +171,10 @@ describe("original media route", () => {
     expect(deps.resolveAsset).not.toHaveBeenCalled();
   });
 
-  it("sanitizes Cyrillic, quotes, and CR/LF in attachment filenames", () => {
-    const value = contentDispositionAttachment("при\"вет\r\n.txt");
+  it("sanitizes Unicode, quotes, and CR/LF in attachment filenames", () => {
+    const value = contentDispositionAttachment("résumé-notes.txt\"\r\n");
     expect(value).toBe(
-      "attachment; filename=\"_________.txt\"; filename*=UTF-8''%D0%BF%D1%80%D0%B8_%D0%B2%D0%B5%D1%82__.txt",
+      "attachment; filename=\"r_sum_-notes.txt___\"; filename*=UTF-8''r%C3%A9sum%C3%A9-notes.txt___",
     );
     expect(value).not.toMatch(/[\r\n]/);
   });

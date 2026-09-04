@@ -14,3 +14,4 @@ dist/
 *.crt
 *.csr
 *.srl
+.superpowers/brainstorm/

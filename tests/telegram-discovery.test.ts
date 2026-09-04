@@ -302,14 +302,14 @@ afterEach(() => {
 describe("searchChannels", () => {
   it("always asks Telegram for broadcasts only", async () => {
     const sent = installSearch(found({}));
-    await searchChannels({ query: "нейросети" });
+    await searchChannels({ query: "AI research 🔎" });
     const search = sent.find((r) => requestName(r) === "contacts.Search");
-    expect(search).toMatchObject({ q: "нейросети", broadcasts: true });
+    expect(search).toMatchObject({ q: "AI research 🔎", broadcasts: true });
   });
 
   it("asks Telegram for its full page when the caller limit is smaller", async () => {
     const sent = installSearch(found({}));
-    await searchChannels({ query: "нейросети", limit: 2 });
+    await searchChannels({ query: "AI research 🔎", limit: 2 });
     const search = sent.find((r) => requestName(r) === "contacts.Search");
     expect(search).toMatchObject({ limit: 10 });
   });

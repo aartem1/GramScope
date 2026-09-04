@@ -51,8 +51,8 @@ update that any change to accepted tool input requires.
 `save_message` ("prefer native forwarding/saving semantics so the original
 source remains traceable") describes a feature the owner rejected outright on
 2026-08-29. Saved Messages hold GramScope's own notes and nothing else. A
-store that also accumulates forwarded posts is the "свалка" the owner named as
-the one thing this must not become.
+store that also accumulates forwarded posts is the "dump" (translation of the
+owner's wording) that the owner named as the one thing this must not become.
 
 **Out of scope — a processed/unprocessed status on notes.** A note is current
 knowledge about a source, not a work item. There is no queue to drain.
@@ -332,10 +332,10 @@ message, and the file must leave it there.
 
 ## 13. Open questions
 
-None. The owner delegated the shape of a note explicitly ("подумай как лучше
-всего организовать, я не знаю"), with one binding constraint — the store stays
-compact and does not become a dump — which §5's one-note-per-source model and
-§5's caps implement.
+None. The owner delegated the shape of a note explicitly ("think through the
+best way to organize it; I don't know" [translation]), with one binding
+constraint — the store stays compact and does not become a dump — which §5's
+one-note-per-source model and §5's caps implement.
 
 ## 14. Decisions carried forward
 

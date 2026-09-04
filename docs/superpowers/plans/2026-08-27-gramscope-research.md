@@ -3801,9 +3801,9 @@ import { __resetPeerCacheForTests } from "@/telegram/peer-resolve";
 const enabled = process.env.GRAMSCOPE_LIVE === "1";
 const suite = enabled ? describe : describe.skip;
 
-/** A Russian stopword: something every Russian-language account has matched
- *  thousands of times, so the query is not a guess about this account. */
-const QUERY = "не";
+/** A Unicode search query that exercises accented text and emoji without
+ *  depending on one language's script. */
+const QUERY = "AI research 🔎";
 
 /** A large public channel the dedicated account is not subscribed to. If it
  *  turns out to be subscribed, the outside-source tests skip visibly rather

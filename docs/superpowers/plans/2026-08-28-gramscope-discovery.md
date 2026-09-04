@@ -609,9 +609,9 @@ afterEach(() => {
 describe("searchChannels", () => {
   it("always asks Telegram for broadcasts only", async () => {
     const sent = installSearch(found({}));
-    await searchChannels({ query: "нейросети" });
+    await searchChannels({ query: "AI research 🔎" });
     expect(requestName(sent[0])).toBe("contacts.Search");
-    expect(sent[0]).toMatchObject({ q: "нейросети", broadcasts: true });
+    expect(sent[0]).toMatchObject({ q: "AI research 🔎", broadcasts: true });
   });
 
   it("rejects an empty query without calling Telegram", async () => {
@@ -1255,7 +1255,7 @@ suite("Discovery against the real account", () => {
   it("finds public channels by name", async () => {
     // Measured 2026-08-28 to return ten channels on this account. A one-word
     // abbreviation would return nothing and prove only that the tool runs.
-    const { candidates } = await searchChannels({ query: "нейросети" });
+    const { candidates } = await searchChannels({ query: "AI research 🔎" });
     expect(candidates.length).toBeGreaterThan(0);
     for (const candidate of candidates) {
       expect(candidate.id).toBeTruthy();
@@ -1271,7 +1271,7 @@ suite("Discovery against the real account", () => {
     // The threshold is half rather than all: the failure being guarded is
     // all-or-nothing — a predicate that drops every collectible handle — so
     // half catches it while one odd handle-less channel cannot flake the run.
-    const { candidates } = await searchChannels({ query: "нейросети" });
+    const { candidates } = await searchChannels({ query: "AI research 🔎" });
     expect(candidates.length).toBeGreaterThan(0);
     const named = candidates.filter((c) => c.username);
     expect(named.length).toBeGreaterThanOrEqual(
@@ -1283,7 +1283,7 @@ suite("Discovery against the real account", () => {
   });
 
   it("describes at least one found channel", async () => {
-    const { candidates } = await searchChannels({ query: "нейросети" });
+    const { candidates } = await searchChannels({ query: "AI research 🔎" });
     expect(candidates.length).toBeGreaterThan(0);
     expect(candidates.some((c) => (c.description ?? "").length > 0)).toBe(true);
   });
