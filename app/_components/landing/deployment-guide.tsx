@@ -2,7 +2,6 @@ import { deploymentSteps, OPERATIONS_URL } from "./content";
 
 const prerequisites = [
   "Dedicated Telegram account",
-  "Node.js 20+",
   "Debian or Ubuntu VPS",
   "Vercel and WorkOS AuthKit",
 ] as const;

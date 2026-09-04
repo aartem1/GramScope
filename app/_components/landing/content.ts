@@ -127,7 +127,7 @@ export const deploymentSteps = [
   {
     index: "01",
     title: "Prepare",
-    body: "Bring a dedicated Telegram account, API credentials, Node.js 20+, a Debian or Ubuntu VPS, Vercel, and WorkOS AuthKit.",
+    body: "Bring a dedicated Telegram account, API credentials, a Debian or Ubuntu VPS, Vercel, and WorkOS AuthKit.",
   },
   {
     index: "02",
