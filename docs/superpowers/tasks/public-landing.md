@@ -50,6 +50,15 @@ Nothing is awaiting an owner decision.
   must finish the design, plan, and execution handoff without writing
   application code; the checked-in documents must let Cursor complete the
   release without reconstructing prior conversation context.
+- 2026-09-04 — owner override for Tasks 1–6: continue while `./scripts/gramscope
+  doctor` reports local git/drift actionable items, as long as worker health
+  and Telegram connectivity remain satisfied. Doctor exit 0 is not required
+  mid-implementation; real service health is the gate.
+- 2026-09-04 — owner confirmed ChatGPT and Grok Bot still work after the
+  landing release (Task 8 Step 6). Repository visibility set to public.
+- 2026-09-04 — production landing URL is `https://gram-scope-roan.vercel.app/`
+  (project alias). `gramscope.vercel.app` is a different product and must not
+  be used as GramScope MCP/landing metadataBase.
 
 # Links
 
@@ -60,3 +69,5 @@ Nothing is awaiting an owner decision.
 - Existing production architecture:
   `docs/superpowers/specs/2026-09-03-telegram-worker-split-design.md`
 - Operations runbook: `docs/operations.md`
+- Public repository: `https://github.com/aartem1/GramScope`
+- Live landing: `https://gram-scope-roan.vercel.app/`
