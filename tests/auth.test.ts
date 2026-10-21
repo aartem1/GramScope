@@ -126,3 +126,46 @@ describe("verifyOwnerToken", () => {
     await expect(verifyOwnerToken(request, "not.a.jwt")).rejects.toBeTruthy();
   });
 });
+
+// --- Owner API token (GRAMSCOPE_OWNER_API_TOKEN) ---
+
+describe("verifyOwnerToken with GRAMSCOPE_OWNER_API_TOKEN", () => {
+  const STATIC = "static-owner-token-0123456789abcdef"; // 35 chars, >= 32
+
+  afterEach(() => {
+    delete process.env.GRAMSCOPE_OWNER_API_TOKEN;
+  });
+
+  it("accepts the configured static token as the owner", async () => {
+    process.env.GRAMSCOPE_OWNER_API_TOKEN = STATIC;
+    const info = await verifyOwnerToken(request, STATIC);
+    expect(info?.extra.sub).toBe("user_owner");
+    expect(info?.clientId).toBe("owner-api-token");
+  });
+
+  it("does not accept a different token when the static path is on", async () => {
+    process.env.GRAMSCOPE_OWNER_API_TOKEN = STATIC;
+    await expect(
+      verifyOwnerToken(request, "static-owner-token-ffffffffffffffff"),
+    ).rejects.toThrow();
+  });
+
+  it("does not accept the static token when it is not configured", async () => {
+    delete process.env.GRAMSCOPE_OWNER_API_TOKEN;
+    await expect(verifyOwnerToken(request, STATIC)).rejects.toThrow();
+  });
+
+  it("fails closed on a too-short configured token", async () => {
+    process.env.GRAMSCOPE_OWNER_API_TOKEN = "short";
+    await expect(verifyOwnerToken(request, "short")).rejects.toThrow(
+      /GRAMSCOPE_OWNER_API_TOKEN/,
+    );
+  });
+
+  it("still accepts the OAuth owner alongside the static path", async () => {
+    process.env.GRAMSCOPE_OWNER_API_TOKEN = STATIC;
+    await withLocalKeys();
+    const info = await verifyOwnerToken(request, await token("user_owner"));
+    expect(info?.extra.sub).toBe("user_owner");
+  });
+});
