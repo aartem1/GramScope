@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { loadConfig } from "../config";
 import { GramScopeError } from "../errors/taxonomy";
@@ -26,6 +27,16 @@ function resolver(jwksUrl: string): KeyResolver {
   return remoteResolver;
 }
 
+function ownerApiTokenMatches(
+  configured: string,
+  presented: string,
+): boolean {
+  const a = Buffer.from(configured, "utf8");
+  const b = Buffer.from(presented, "utf8");
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
 export async function verifyOwnerToken(
   _req: Request,
   bearerToken?: string,
@@ -33,6 +44,23 @@ export async function verifyOwnerToken(
   if (!bearerToken) return undefined;
 
   const config = loadConfig();
+
+  // Optional static owner token (GRAMSCOPE_OWNER_API_TOKEN): a non-OAuth
+  // path for clients that cannot complete the OAuth flow. This service has
+  // exactly one owner, so a constant-time match is the owner — the same
+  // identity the JWT path returns below. Unset means the path does not
+  // exist; a non-match falls through to JWT verification unchanged.
+  if (
+    config.ownerApiToken &&
+    ownerApiTokenMatches(config.ownerApiToken, bearerToken)
+  ) {
+    return {
+      token: bearerToken,
+      clientId: "owner-api-token",
+      scopes: [],
+      extra: { sub: config.ownerUserId },
+    };
+  }
 
   // Audience is checked unconditionally. Skipping it when unconfigured meant
   // a token minted for any other application in the same WorkOS environment —

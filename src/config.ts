@@ -24,6 +24,13 @@ export type Config = {
    * accepted.
    */
   mcpResourceUrl: string;
+  /**
+   * Optional static bearer token accepted as the owner, for MCP clients
+   * that cannot complete the WorkOS OAuth flow. Single-owner service, so
+   * presenting this token IS being the owner. Environment only — never
+   * committed. When unset, OAuth is the only path.
+   */
+  ownerApiToken?: string;
   telegram?: TelegramConfig;
   worker?: WorkerClientConfig;
 };
@@ -46,6 +53,17 @@ function requiredMediaTokenSecret(env: Env): Uint8Array {
     throw new Error("MEDIA_TOKEN_SECRET must decode to exactly 32 bytes");
   }
   return new Uint8Array(bytes);
+}
+
+function optionalOwnerApiToken(env: Env): string | undefined {
+  const value = env.GRAMSCOPE_OWNER_API_TOKEN?.trim();
+  if (!value) return undefined;
+  if (value.length < 32) {
+    throw new Error(
+      "GRAMSCOPE_OWNER_API_TOKEN must be at least 32 characters",
+    );
+  }
+  return value;
 }
 
 /** Telegram credentials only. Shared by Vercel and the VPS worker. */
@@ -101,6 +119,7 @@ export function loadConfig(env: Env = process.env): Config {
     ownerUserId: required(env, "OWNER_USER_ID"),
     mcpResourceUrl: required(env, "MCP_RESOURCE_URL"),
     mediaTokenSecret: requiredMediaTokenSecret(env),
+    ownerApiToken: optionalOwnerApiToken(env),
   };
 
   if (isRemoteDispatchEnabled(env)) {
